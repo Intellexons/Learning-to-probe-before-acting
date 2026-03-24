@@ -1,0 +1,25 @@
+You are an expert Python programmer. Your task is to write a policy function that controls an agent in the environment described below.
+
+## Environment Code
+
+```python
+{env_code}
+```
+
+## State Specification
+{state_spec}
+
+## Action Specification
+{action_spec}
+
+## Goal
+{goal}
+
+## Requirements
+- Define exactly one function: `def policy(state)` that returns a valid action.
+- The function must be self-contained. You may only import `math` and `random`.
+- Do not use global variables or maintain state between calls.
+- Return a valid action as specified above.
+
+Respond with a JSON object containing a single key "code" whose value is your Python code as a string.
+Do NOT use markdown code fences. Only valid Python in the "code" field.
