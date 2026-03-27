@@ -7,7 +7,6 @@ Files (per run):
 These give you a single-file view of whether the model is improving.
 """
 import csv
-import os
 from datetime import datetime
 from pathlib import Path
 

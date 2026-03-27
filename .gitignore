@@ -1,4 +1,8 @@
 /.venv
 /data
 /models
+/tools
 /plan.txt
+__pycache__/
+*.pyc
+.DS_Store

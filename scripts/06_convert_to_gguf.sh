@@ -25,7 +25,7 @@ fi
 
 if [ ! -f "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" ]; then
     echo "ERROR: llama.cpp not found at $LLAMA_CPP_DIR"
-    echo "Run scripts/00_setup_env.sh first."
+    echo "Clone it manually: git clone https://github.com/ggml-org/llama.cpp tools/llama.cpp && cd tools/llama.cpp && cmake -B build && cmake --build build --config Release"
     exit 1
 fi
 

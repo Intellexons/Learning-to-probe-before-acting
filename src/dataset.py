@@ -109,11 +109,3 @@ def build_dpo_pairs(
 
     logger.info(f"Built {len(pairs)} DPO pairs from {len(by_task)} tasks")
     return pairs
-
-
-def jsonl_to_hf_dataset(path: str):
-    """Convert JSONL file to HuggingFace Dataset."""
-    from datasets import Dataset
-
-    data = load_jsonl(path)
-    return Dataset.from_list(data)
