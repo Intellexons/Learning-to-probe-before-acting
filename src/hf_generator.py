@@ -23,6 +23,14 @@ def load_model_for_generation(
     """
     from pathlib import Path
 
+    # Check base model exists
+    base_path = Path(base_model_path)
+    if not base_path.exists() or not any(base_path.iterdir()):
+        raise FileNotFoundError(
+            f"Base model not found at {base_model_path}. "
+            f"Run 'bash scripts/00_setup_env.sh' to download it."
+        )
+
     use_mps = torch.backends.mps.is_available()
     dtype = torch.float16 if use_mps else torch.bfloat16
 
@@ -40,6 +48,11 @@ def load_model_for_generation(
             lora_dir = lora_dir / run_name
         for i in range(iter_num):
             adapter_path = str(lora_dir / f"iter_{i:03d}")
+            if not Path(adapter_path).exists():
+                raise FileNotFoundError(
+                    f"LoRA adapter not found at {adapter_path}. "
+                    f"Expected adapters 0..{iter_num - 1} to exist."
+                )
             logger.info(f"  Merging adapter iter_{i:03d}...")
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()

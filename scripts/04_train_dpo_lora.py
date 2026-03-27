@@ -42,6 +42,14 @@ def main():
     dpo_data_path = str(dpo_base / f"iter_{iter_num:03d}_train.jsonl")
     output_path = str(lora_base / f"iter_{iter_num:03d}")
 
+    # Check base model exists
+    if not Path(base_model_path).exists():
+        logger.error(
+            f"Base model not found at {base_model_path}. "
+            f"Run 'bash scripts/00_setup_env.sh' to download it."
+        )
+        sys.exit(1)
+
     logger.info(f"Original base: {base_model_path}")
     logger.info(f"Will merge adapters 0..{iter_num - 1} before training adapter {iter_num}")
     logger.info(f"DPO data: {dpo_data_path}")
