@@ -5,7 +5,7 @@ import re
 
 import torch
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessor, LogitsProcessorList
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ def load_model_for_generation(
         )
 
     use_mps = torch.backends.mps.is_available()
-    dtype = torch.float16 if use_mps else torch.bfloat16
+    # Use float32 on MPS to avoid inf/nan during sampling with fp16 logits
+    dtype = torch.float32 if use_mps else torch.bfloat16
 
     logger.info(f"Loading base model from {base_model_path} (dtype={dtype})")
     model = AutoModelForCausalLM.from_pretrained(
@@ -107,11 +108,6 @@ def generate_code(
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
     try:
-        # Cast logits to float32 before sampling to avoid inf/nan on fp16/MPS
-        class Float32Logits(LogitsProcessor):
-            def __call__(self, input_ids, scores):
-                return scores.float()
-
         with torch.no_grad():
             output = model.generate(
                 **inputs,
@@ -120,7 +116,6 @@ def generate_code(
                 top_p=top_p,
                 do_sample=True,
                 pad_token_id=tokenizer.eos_token_id,
-                logits_processor=LogitsProcessorList([Float32Logits()]),
             )
 
         response = tokenizer.decode(
