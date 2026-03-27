@@ -1,17 +1,14 @@
 #!/bin/bash
-# One-time setup: uv sync, Ollama model, HF model, llama.cpp
+# One-time setup: uv sync, HF model download, directory structure
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-echo "=== 1/5 Installing dependencies with uv ==="
+echo "=== 1/3 Installing dependencies with uv ==="
 uv sync
 
-echo "=== 2/5 Pulling Ollama model ==="
-ollama pull qwen2.5-coder:3b-instruct
-
-echo "=== 3/5 Downloading HF model + tokenizer ==="
+echo "=== 2/3 Downloading HF model + tokenizer ==="
 uv run python -c "
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
@@ -29,18 +26,9 @@ model.save_pretrained(save_path)
 print(f'Saved to {save_path}')
 "
 
-echo "=== 4/5 Cloning and building llama.cpp ==="
-if [ ! -d "tools/llama.cpp" ]; then
-    git clone https://github.com/ggml-org/llama.cpp tools/llama.cpp
-fi
-cd tools/llama.cpp
-cmake -B build
-cmake --build build --config Release
-cd "$PROJECT_ROOT"
-
-echo "=== 5/5 Creating directory structure ==="
+echo "=== 3/3 Creating directory structure ==="
 mkdir -p data/rollouts data/dpo
-mkdir -p models/hf_base models/lora models/gguf
+mkdir -p models/hf_base models/lora
 
 echo ""
-echo "Setup complete. Run scripts with: uv run python scripts/<script>.py"
+echo "Setup complete. Run the loop with: uv run python scripts/09_run_loop.py --config configs/loop.yaml"

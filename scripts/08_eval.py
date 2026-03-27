@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.ollama_client import OllamaClient
+from src.hf_generator import load_model_for_generation, generate_batch
 from src.prompts import load_template, render_prompt
 from src.runner import score_sample
 from src.dataset import load_jsonl, save_jsonl
@@ -26,7 +26,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iter", type=int, required=True)
     parser.add_argument("--config", default="configs/loop.yaml")
-    parser.add_argument("--ollama_model", default=None)
     parser.add_argument("--run_name", default=None, help="Run name for output directories")
     args = parser.parse_args()
 
@@ -35,23 +34,17 @@ def main():
     gen_cfg = cfg["generation"]
     score_cfg = cfg["scoring"]
 
-    # Determine Ollama model
-    if args.ollama_model:
-        ollama_model = args.ollama_model
-    elif iter_num == 0:
-        ollama_model = cfg["base_model"]["ollama"]
-    else:
-        prefix = cfg["loop"]["ollama_model_prefix"]
-        ollama_model = f"{prefix}:iter{iter_num:03d}"
-
-    client = OllamaClient(
-        base_url=gen_cfg["ollama_base_url"],
-        schema_path="configs/schema.json",
+    # Load model with all adapters merged up to this iteration
+    base_model_path = str(Path(cfg["paths"]["hf_base_dir"]) / "iter_000")
+    model, tokenizer = load_model_for_generation(
+        base_model_path=base_model_path,
+        lora_base=cfg["paths"]["lora_dir"],
+        iter_num=iter_num,
+        run_name=args.run_name,
     )
 
-    if not client.check_health():
-        logger.error("Ollama is not running.")
-        sys.exit(1)
+    model_label = f"hf_iter_{iter_num:03d}"
+    logger.info(f"Evaluating model with {iter_num} merged adapters")
 
     template = load_template("configs/prompt_template.txt")
     eval_tasks = load_jsonl(cfg["paths"]["tasks_eval"])
@@ -65,8 +58,9 @@ def main():
         prompt = render_prompt(template, task)
         logger.info(f"Eval task {task_id}: generating {N_EVAL_SAMPLES} samples")
 
-        samples = client.generate_batch(
-            model=ollama_model,
+        samples = generate_batch(
+            model=model,
+            tokenizer=tokenizer,
             prompt=prompt,
             n_samples=N_EVAL_SAMPLES,
             temperature=gen_cfg["temperature"],
@@ -125,7 +119,7 @@ def main():
     all_bests = [r["best_reward"] for r in results.values()]
     summary = {
         "iter": iter_num,
-        "ollama_model": ollama_model,
+        "model": model_label,
         "per_task": results,
         "mean_best_reward": sum(all_bests) / len(all_bests) if all_bests else 0.0,
         "n_eval_tasks": len(eval_tasks),
@@ -156,7 +150,7 @@ def main():
     from src.progress import append_eval_progress
     append_eval_progress(
         iter_num=iter_num,
-        model_name=ollama_model,
+        model_name=model_label,
         n_samples=len(all_scores),
         n_success=n_success,
         mean_reward=sum(all_rewards) / len(all_rewards) if all_rewards else 0.0,

@@ -5,7 +5,6 @@ Usage: uv run python scripts/09_run_loop.py --config configs/loop.yaml
 """
 import argparse
 import logging
-import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -43,8 +42,6 @@ def main():
 
     cfg = yaml.safe_load(open(args.config))
     K = cfg["loop"]["iterations"]
-    prefix = cfg["loop"]["ollama_model_prefix"]
-    quant = cfg["gguf"]["quantization"]
 
     # Generate run name if not provided
     run_name = args.run_name
@@ -61,17 +58,10 @@ def main():
         logger.info(f"# ITERATION {k}")
         logger.info(f"{'#' * 60}")
 
-        # Determine Ollama model for this iteration
-        if k == 0:
-            ollama_model = cfg["base_model"]["ollama"]
-        else:
-            ollama_model = f"{prefix}:iter{k:03d}"
-
-        # Step 1: Generate samples
+        # Step 1: Generate samples (loads base + merges adapters 0..k-1)
         run_step(
-            f"uv run python scripts/01_generate.py --iter {k} --config {args.config} "
-            f"--ollama_model {ollama_model} {run_flag}",
-            f"Iteration {k}: Generating code samples with {ollama_model}",
+            f"uv run python scripts/01_generate.py --iter {k} --config {args.config} {run_flag}",
+            f"Iteration {k}: Generating code samples",
         )
 
         # Step 2: Score samples
@@ -86,52 +76,20 @@ def main():
             f"Iteration {k}: Building DPO preference pairs",
         )
 
-        # Step 4: Train DPO LoRA
+        # Step 4: Train DPO LoRA (loads base + merges adapters 0..k-1, trains adapter k)
         run_step(
             f"uv run python scripts/04_train_dpo_lora.py --iter {k} --config {args.config} {run_flag}",
             f"Iteration {k}: Training DPO LoRA adapter",
         )
 
-        # Step 5: Merge LoRA into base
-        run_step(
-            f"uv run python scripts/05_merge_lora.py --iter {k} --config {args.config} {run_flag}",
-            f"Iteration {k}: Merging LoRA into base model",
-        )
-
-        # Step 6: Convert to GGUF
+        # Step 5: Evaluate (loads base + merges adapters 0..k)
         next_iter = k + 1
         run_step(
-            f"bash scripts/06_convert_to_gguf.sh {next_iter} {quant} {run_name}",
-            f"Iteration {k}: Converting merged model to GGUF",
-        )
-
-        # Step 7: Create Ollama model
-        run_step(
-            f"bash scripts/07_ollama_create.sh {next_iter} {quant} {run_name}",
-            f"Iteration {k}: Creating Ollama model {prefix}:iter{next_iter:03d}",
-        )
-
-        # Step 8: Evaluate
-        run_step(
             f"uv run python scripts/08_eval.py --iter {next_iter} --config {args.config} {run_flag}",
-            f"Iteration {k}: Evaluating {prefix}:iter{next_iter:03d}",
+            f"Iteration {k}: Evaluating model with {next_iter} adapters merged",
         )
 
-        # Step 9: Cleanup — delete temporary merged HF weights and old GGUF
-        hf_base = Path(cfg["paths"]["hf_base_dir"]) / run_name
-        merged_hf = hf_base / f"iter_{next_iter:03d}"
-        if merged_hf.exists():
-            logger.info(f"Cleaning up merged HF weights: {merged_hf}")
-            shutil.rmtree(merged_hf)
-
-        if k > 0:
-            gguf_base = Path(cfg["paths"]["gguf_dir"]) / run_name
-            old_gguf = gguf_base / f"iter_{k:03d}"
-            if old_gguf.exists():
-                logger.info(f"Cleaning up old GGUF: {old_gguf}")
-                shutil.rmtree(old_gguf)
-
-        logger.info(f"\nIteration {k} complete. Next model: {prefix}:iter{next_iter:03d}")
+        logger.info(f"\nIteration {k} complete.")
 
         # Print progress so far
         from src.progress import print_progress_table

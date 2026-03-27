@@ -1,5 +1,4 @@
 base_model:
-  ollama: "qwen2.5-coder:3b-instruct"
   hf: "Qwen/Qwen2.5-Coder-3B-Instruct"
 
 paths:
@@ -14,14 +13,12 @@ paths:
 
 loop:
   iterations: 20
-  ollama_model_prefix: "policycoder"
 
 generation:
   n_samples_per_task: 16
   temperature: 0.8
   top_p: 0.95
   max_tokens: 900
-  ollama_base_url: "http://localhost:11434"
 
 scoring:
   timeout_seconds: 30
@@ -56,6 +53,3 @@ lora:
   alpha: 32
   dropout: 0.05
   task_type: "CAUSAL_LM"
-
-gguf:
-  quantization: "Q8_0"

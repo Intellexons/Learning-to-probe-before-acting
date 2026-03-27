@@ -9,7 +9,6 @@ dependencies = [
     "accelerate>=0.27.0",
     "peft>=0.10.0",
     "trl>=0.8.0",
-    "requests>=2.31.0",
     "pyyaml>=6.0",
     "sentencepiece>=0.1.99",
 ]

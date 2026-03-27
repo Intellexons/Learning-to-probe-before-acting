@@ -1,4 +1,4 @@
-"""Generate N code samples per task using Ollama.
+"""Generate N code samples per task using HuggingFace model directly.
 
 Usage: python scripts/01_generate.py --iter 0 --config configs/loop.yaml
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.ollama_client import OllamaClient
+from src.hf_generator import load_model_for_generation, generate_batch
 from src.prompts import load_template, render_prompt
 from src.dataset import load_jsonl, save_jsonl
 
@@ -22,33 +22,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iter", type=int, required=True)
     parser.add_argument("--config", default="configs/loop.yaml")
-    parser.add_argument("--ollama_model", default=None, help="Override Ollama model name")
     parser.add_argument("--run_name", default=None, help="Run name for output directories")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
     iter_num = args.iter
-
-    # Determine Ollama model
-    if args.ollama_model:
-        ollama_model = args.ollama_model
-    elif iter_num == 0:
-        ollama_model = cfg["base_model"]["ollama"]
-    else:
-        prefix = cfg["loop"]["ollama_model_prefix"]
-        ollama_model = f"{prefix}:iter{iter_num:03d}"
-
     gen_cfg = cfg["generation"]
-    client = OllamaClient(
-        base_url=gen_cfg["ollama_base_url"],
-        schema_path="configs/schema.json",
+
+    # Load model with all previous adapters merged
+    base_model_path = str(Path(cfg["paths"]["hf_base_dir"]) / "iter_000")
+    model, tokenizer = load_model_for_generation(
+        base_model_path=base_model_path,
+        lora_base=cfg["paths"]["lora_dir"],
+        iter_num=iter_num,
+        run_name=args.run_name,
     )
 
-    if not client.check_health():
-        logger.error("Ollama is not running. Start it with: ollama serve")
-        sys.exit(1)
-
-    logger.info(f"Using model: {ollama_model}")
+    logger.info(f"Generating with base + {iter_num} merged adapters")
     template = load_template("configs/prompt_template.txt")
     tasks = load_jsonl(cfg["paths"]["tasks_train"])
 
@@ -58,8 +48,9 @@ def main():
         prompt = render_prompt(template, task)
         logger.info(f"Task {task_id}: generating {gen_cfg['n_samples_per_task']} samples")
 
-        results = client.generate_batch(
-            model=ollama_model,
+        results = generate_batch(
+            model=model,
+            tokenizer=tokenizer,
             prompt=prompt,
             n_samples=gen_cfg["n_samples_per_task"],
             temperature=gen_cfg["temperature"],

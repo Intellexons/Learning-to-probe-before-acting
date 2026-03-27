@@ -21,5 +21,4 @@ You are an expert Python programmer. Your task is to write a policy function tha
 - Do not use global variables or maintain state between calls.
 - Return a valid action as specified above.
 
-Respond with a JSON object containing a single key "code" whose value is your Python code as a string.
-Do NOT use markdown code fences. Only valid Python in the "code" field.
+Respond ONLY with valid Python code. Do NOT include markdown fences, explanations, or any text besides the code itself.
