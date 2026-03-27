@@ -69,7 +69,12 @@ def extract_code(text: str) -> str:
     if m:
         return m.group(1).strip()
 
-    # Return raw text
+    # Try to find the policy function definition and take everything from there
+    m = re.search(r"((?:import\s+\w+.*\n)*def policy\b.*)", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Return raw text as last resort
     return text.strip()
 
 

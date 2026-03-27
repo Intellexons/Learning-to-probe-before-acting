@@ -7,12 +7,12 @@ Iterative post-training loop that teaches an LLM to write better policy code thr
 ## How it works
 
 ```
-For each iteration:
-  1. Generate code candidates with HF model       (01_generate.py)
-  2. Score them by running in the environment      (02_score.py)
-  3. Build preference pairs from scores            (03_build_dpo.py)
-  4. Train a LoRA adapter with DPO                 (04_train_dpo_lora.py)
-  5. Evaluate on held-out tasks                    (08_eval.py)
+For each iteration k:
+  1. Generate code candidates    — loads base model + adapters 0..k-1 on GPU
+  2. Score by running in env     — sandboxed subprocess execution
+  3. Build DPO preference pairs  — best vs median/worst by reward
+  4. Train LoRA adapter k        — loads base + adapters 0..k-1, trains new adapter
+  5. Evaluate                    — loads base + adapters 0..k, scores on held-out tasks
 ```
 
 Generation and evaluation load the base model and merge all previous LoRA adapters in GPU memory (bfloat16), so there is no need for disk-based merging, GGUF conversion, or Ollama.
@@ -44,7 +44,17 @@ This is the main entry point. It runs all steps sequentially for each iteration 
 
 ## Scripts
 
-### `scripts/09_run_loop.py` — Main orchestrator
+### Main entry points
+
+#### `scripts/00_setup_env.sh` — One-time setup
+
+Installs dependencies, downloads HF weights to `models/hf_base/iter_000/`, and creates the directory structure.
+
+```bash
+bash scripts/00_setup_env.sh
+```
+
+#### `scripts/09_run_loop.py` — Main orchestrator
 
 Runs the full training loop for the number of iterations specified in the config. This is the script you should use.
 
@@ -67,17 +77,9 @@ uv run python scripts/09_run_loop.py --config configs/loop.yaml --run_name my_ex
 
 ---
 
-### `scripts/00_setup_env.sh` — One-time setup
+### Loop steps (called by the orchestrator)
 
-Installs dependencies, downloads HF weights to `models/hf_base/iter_000/`, and creates the directory structure.
-
-```bash
-bash scripts/00_setup_env.sh
-```
-
----
-
-### `scripts/01_generate.py` — Generate code samples
+#### Step 1: `scripts/01_generate.py` — Generate code samples
 
 Loads the base HF model, merges all previous LoRA adapters in GPU memory, and generates N code candidates per task using `model.generate()`.
 
@@ -93,9 +95,7 @@ uv run python scripts/01_generate.py --iter 0 --config configs/loop.yaml
 
 **Output:** `data/rollouts/[<run_name>/]iter_000/samples.jsonl`
 
----
-
-### `scripts/02_score.py` — Score generated samples
+#### Step 2: `scripts/02_score.py` — Score generated samples
 
 Executes each generated policy in the environment across all scenarios and records rewards. Each policy runs in a sandboxed subprocess with a timeout. Dangerous imports (os, subprocess, etc.) are blocked via static analysis.
 
@@ -113,9 +113,7 @@ uv run python scripts/02_score.py --iter 0 --config configs/loop.yaml
 
 Also appends a row to the train progress CSV (`data/progress/<run_name>/train.csv`).
 
----
-
-### `scripts/03_build_dpo.py` — Build DPO preference pairs
+#### Step 3: `scripts/03_build_dpo.py` — Build DPO preference pairs
 
 Takes the scored samples and builds (chosen, rejected) pairs for DPO training. For each task, the highest-reward sample is paired against the median and worst samples.
 
@@ -131,9 +129,7 @@ uv run python scripts/03_build_dpo.py --iter 0 --config configs/loop.yaml
 
 **Output:** `data/dpo/[<run_name>/]iter_000_train.jsonl` (and `_eval.jsonl` if eval scores exist)
 
----
-
-### `scripts/04_train_dpo_lora.py` — Train LoRA adapter with DPO
+#### Step 4: `scripts/04_train_dpo_lora.py` — Train LoRA adapter with DPO
 
 Loads the original base model, replays all previous LoRA adapters on top (merge-on-the-fly), then trains a new LoRA adapter using TRL's DPOTrainer. Automatically detects MPS (Apple Silicon) and adjusts settings.
 
@@ -149,47 +145,7 @@ uv run python scripts/04_train_dpo_lora.py --iter 0 --config configs/loop.yaml
 
 **Output:** `models/lora/[<run_name>/]iter_000/` (adapter weights + tokenizer)
 
----
-
-### `scripts/05_merge_lora.py` — Merge LoRA into base weights (standalone utility)
-
-Loads the original base model and sequentially applies all LoRA adapters (0 through current iteration) to produce a fully merged checkpoint. Done in float32 on CPU for numerical stability. Not called by the main loop — useful for exporting a final model.
-
-```bash
-uv run python scripts/05_merge_lora.py --iter 0 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required) |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `models/hf_base/[<run_name>/]iter_001/`
-
----
-
-### `scripts/06_convert_to_gguf.sh` — Convert to GGUF (standalone utility)
-
-Converts merged HF weights to GGUF format using llama.cpp, then quantizes (default: Q8_0). Not called by the main loop — useful for exporting to Ollama.
-
-```bash
-bash scripts/06_convert_to_gguf.sh <iter_num> [quantization] [run_name]
-```
-
----
-
-### `scripts/07_ollama_create.sh` — Register model in Ollama (standalone utility)
-
-Creates an Ollama model from the GGUF file with the ChatML template baked in. Not called by the main loop.
-
-```bash
-bash scripts/07_ollama_create.sh <iter_num> [quantization] [run_name]
-```
-
----
-
-### `scripts/08_eval.py` — Evaluate on held-out tasks
+#### Step 5: `scripts/08_eval.py` — Evaluate on held-out tasks
 
 Loads the model with all adapters merged, generates a small number of samples (4 by default) on eval tasks, scores them, and writes a summary with per-task best and mean rewards.
 
@@ -206,6 +162,38 @@ uv run python scripts/08_eval.py --iter 1 --config configs/loop.yaml
 **Output:** `data/rollouts/[<run_name>/]iter_001/eval_summary.json`
 
 Also appends a row to the eval progress CSV (`data/progress/<run_name>/eval.csv`).
+
+---
+
+### Standalone utilities (not called by the loop)
+
+These scripts are useful for exporting a trained model to Ollama after the loop completes.
+
+#### `scripts/05_merge_lora.py` — Merge LoRA into base weights
+
+Loads the original base model and sequentially applies all LoRA adapters (0 through current iteration) to produce a fully merged checkpoint. Done in float32 on CPU for numerical stability.
+
+```bash
+uv run python scripts/05_merge_lora.py --iter 0 --config configs/loop.yaml
+```
+
+**Output:** `models/hf_base/[<run_name>/]iter_001/`
+
+#### `scripts/06_convert_to_gguf.sh` — Convert to GGUF
+
+Converts merged HF weights to GGUF format using llama.cpp, then quantizes (default: Q8_0). Requires llama.cpp to be built (see the old setup steps or clone it manually).
+
+```bash
+bash scripts/06_convert_to_gguf.sh <iter_num> [quantization] [run_name]
+```
+
+#### `scripts/07_ollama_create.sh` — Register model in Ollama
+
+Creates an Ollama model from the GGUF file with the ChatML template baked in.
+
+```bash
+bash scripts/07_ollama_create.sh <iter_num> [quantization] [run_name]
+```
 
 ## Project structure
 

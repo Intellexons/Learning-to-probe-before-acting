@@ -4,12 +4,10 @@ base_model:
 paths:
   hf_base_dir: "models/hf_base"
   lora_dir: "models/lora"
-  gguf_dir: "models/gguf"
   rollouts_dir: "data/rollouts"
   dpo_dir: "data/dpo"
   tasks_train: "data/tasks/train.jsonl"
   tasks_eval: "data/tasks/eval.jsonl"
-  llama_cpp_dir: "tools/llama.cpp"
 
 loop:
   iterations: 20
