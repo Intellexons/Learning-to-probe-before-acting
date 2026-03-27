@@ -5,7 +5,7 @@ import re
 
 import torch
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessor, LogitsProcessorList
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,11 @@ def generate_code(
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
     try:
+        # Cast logits to float32 before sampling to avoid inf/nan on fp16/MPS
+        class Float32Logits(LogitsProcessor):
+            def __call__(self, input_ids, scores):
+                return scores.float()
+
         with torch.no_grad():
             output = model.generate(
                 **inputs,
@@ -115,6 +120,7 @@ def generate_code(
                 top_p=top_p,
                 do_sample=True,
                 pad_token_id=tokenizer.eos_token_id,
+                logits_processor=LogitsProcessorList([Float32Logits()]),
             )
 
         response = tokenizer.decode(
