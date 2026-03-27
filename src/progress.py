@@ -95,19 +95,18 @@ def print_progress_table(run_name: str | None = None):
         if not p.exists():
             print(f"\n{label}: no data yet")
             continue
-        print(f"\n{'=' * 70}")
-        print(f" {label} PROGRESS")
-        print(f"{'=' * 70}")
         with open(p) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
         if not rows:
-            print("  (empty)")
+            print(f"\n{label}: (empty)")
             continue
-        # Print header
         fields = list(rows[0].keys())
-        header = " | ".join(f"{f:>15}" for f in fields)
+        # Auto-size columns to content
+        widths = {f: max(len(f), *(len(row[f]) for row in rows)) for f in fields}
+        header = "  ".join(f"{f:>{widths[f]}}" for f in fields)
+        print(f"\n {label} PROGRESS")
         print(header)
         print("-" * len(header))
         for row in rows:
-            print(" | ".join(f"{row[f]:>15}" for f in fields))
+            print("  ".join(f"{row[f]:>{widths[f]}}" for f in fields))
