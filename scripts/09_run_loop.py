@@ -53,6 +53,15 @@ def main():
     logger.info(f"Starting training loop: {K} iterations from iter {args.start_iter}")
     logger.info(f"Run name: {run_name}")
 
+    # Clear stale progress CSVs when starting fresh (not resuming)
+    if args.start_iter == 0:
+        from src.progress import _get_csv_paths
+        for csv_path in _get_csv_paths(run_name):
+            p = Path(csv_path)
+            if p.exists():
+                p.unlink()
+                logger.info(f"Cleared stale progress file: {p}")
+
     for k in range(args.start_iter, K):
         logger.info(f"\n{'#' * 60}")
         logger.info(f"# ITERATION {k}")
