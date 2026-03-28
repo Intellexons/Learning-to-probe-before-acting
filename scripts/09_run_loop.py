@@ -108,7 +108,6 @@ def main():
     logger.info(f"# TRAINING LOOP COMPLETE ({K} iterations)")
     logger.info(f"{'#' * 60}")
 
-    from src.progress import print_progress_table
     print_progress_table(run_name=run_name)
 
 

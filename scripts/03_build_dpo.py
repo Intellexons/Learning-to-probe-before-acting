@@ -55,7 +55,6 @@ def main():
     pairs = build_dpo_pairs(
         merged,
         prompt_map=prompt_map,
-        strategy=dpo_cfg["strategy"],
         min_chosen_reward=dpo_cfg["min_chosen_reward"],
         pairs_per_task=dpo_cfg["pairs_per_task"],
     )
@@ -84,7 +83,6 @@ def main():
         eval_pairs = build_dpo_pairs(
             eval_merged,
             prompt_map=eval_prompt_map,
-            strategy=dpo_cfg["strategy"],
             min_chosen_reward=dpo_cfg["min_chosen_reward"],
             pairs_per_task=dpo_cfg["pairs_per_task"],
         )

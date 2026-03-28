@@ -1,4 +1,4 @@
-"""Direct HuggingFace model generation — replaces Ollama."""
+"""Direct HuggingFace model generation."""
 import json
 import logging
 import re

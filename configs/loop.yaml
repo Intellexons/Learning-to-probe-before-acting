@@ -23,7 +23,6 @@ scoring:
   max_steps: 500
 
 dpo_pairs:
-  strategy: "best_vs_rest"
   min_chosen_reward: 1.0
   pairs_per_task: 2
 

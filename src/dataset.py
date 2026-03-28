@@ -46,7 +46,6 @@ def merge_samples_and_scores(
 def build_dpo_pairs(
     merged: list[dict],
     prompt_map: dict[str, str],
-    strategy: str = "best_vs_rest",
     min_chosen_reward: float = 1.0,
     pairs_per_task: int = 2,
 ) -> list[dict]:
@@ -55,7 +54,6 @@ def build_dpo_pairs(
     Args:
         merged: list of dicts with task_id, sample_id, code, reward_total, prompt
         prompt_map: {task_id: rendered_prompt_text}
-        strategy: pairing strategy
         min_chosen_reward: skip tasks where best reward is below this
         pairs_per_task: max pairs per task
 

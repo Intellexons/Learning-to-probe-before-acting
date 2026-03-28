@@ -163,38 +163,6 @@ uv run python scripts/08_eval.py --iter 1 --config configs/loop.yaml
 
 Also appends a row to the eval progress CSV (`data/progress/<run_name>/eval.csv`).
 
----
-
-### Standalone utilities (not called by the loop)
-
-These scripts are useful for exporting a trained model to Ollama after the loop completes.
-
-#### `scripts/05_merge_lora.py` — Merge LoRA into base weights
-
-Loads the original base model and sequentially applies all LoRA adapters (0 through current iteration) to produce a fully merged checkpoint. Done in float32 on CPU for numerical stability.
-
-```bash
-uv run python scripts/05_merge_lora.py --iter 0 --config configs/loop.yaml
-```
-
-**Output:** `models/hf_base/[<run_name>/]iter_001/`
-
-#### `scripts/06_convert_to_gguf.sh` — Convert to GGUF
-
-Converts merged HF weights to GGUF format using llama.cpp, then quantizes (default: Q8_0). Requires llama.cpp to be built (see the old setup steps or clone it manually).
-
-```bash
-bash scripts/06_convert_to_gguf.sh <iter_num> [quantization] [run_name]
-```
-
-#### `scripts/07_ollama_create.sh` — Register model in Ollama
-
-Creates an Ollama model from the GGUF file with the ChatML template baked in.
-
-```bash
-bash scripts/07_ollama_create.sh <iter_num> [quantization] [run_name]
-```
-
 ## Project structure
 
 ```
