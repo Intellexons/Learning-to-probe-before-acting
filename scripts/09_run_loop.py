@@ -41,6 +41,10 @@ def main():
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
+
+    from src.config import validate_config
+    validate_config(cfg)
+
     K = cfg["loop"]["iterations"]
 
     # Generate run name if not provided
