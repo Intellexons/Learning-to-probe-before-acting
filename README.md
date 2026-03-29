@@ -15,7 +15,7 @@ For each iteration k:
   5. Evaluate                    — loads base + adapters 0..k, scores on held-out tasks
 ```
 
-Generation and evaluation load the base model and merge all previous LoRA adapters in GPU memory (bfloat16), so there is no need for disk-based merging, GGUF conversion, or Ollama.
+Generation and evaluation load the base model and merge all previous LoRA adapters in GPU memory (bfloat16), so there is no need for disk-based merging or GGUF conversion.
 
 ## Prerequisites
 
