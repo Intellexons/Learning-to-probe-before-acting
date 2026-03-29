@@ -1,4 +1,4 @@
-"""Orchestrate the full DPO + LoRA training loop.
+"""Orchestrate the full training loop (DPO or GRPO).
 
 Usage: uv run python scripts/09_run_loop.py --config configs/loop.yaml
        uv run python scripts/09_run_loop.py --config configs/loop.yaml --run_name my_experiment
@@ -62,36 +62,43 @@ def main():
                 p.unlink()
                 logger.info(f"Cleared stale progress file: {p}")
 
+    trainer_type = cfg["loop"].get("trainer", "dpo")
+    logger.info(f"Trainer: {trainer_type}")
+
     for k in range(args.start_iter, K):
         logger.info(f"\n{'#' * 60}")
         logger.info(f"# ITERATION {k}")
         logger.info(f"{'#' * 60}")
 
-        # Step 1: Generate samples (loads base + merges adapters 0..k-1)
-        run_step(
-            f"uv run python scripts/01_generate.py --iter {k} --config {args.config} {run_flag}",
-            f"Iteration {k}: Generating code samples",
-        )
+        if trainer_type == "grpo":
+            # GRPO handles generation + scoring + optimization internally
+            run_step(
+                f"uv run python scripts/04_train_grpo_lora.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: GRPO training (generate + score + optimize)",
+            )
+        else:
+            # DPO pipeline: generate -> score -> build pairs -> train
+            run_step(
+                f"uv run python scripts/01_generate.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: Generating code samples",
+            )
 
-        # Step 2: Score samples
-        run_step(
-            f"uv run python scripts/02_score.py --iter {k} --config {args.config} {run_flag}",
-            f"Iteration {k}: Scoring samples in environment",
-        )
+            run_step(
+                f"uv run python scripts/02_score.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: Scoring samples in environment",
+            )
 
-        # Step 3: Build DPO pairs
-        run_step(
-            f"uv run python scripts/03_build_dpo.py --iter {k} --config {args.config} {run_flag}",
-            f"Iteration {k}: Building DPO preference pairs",
-        )
+            run_step(
+                f"uv run python scripts/03_build_dpo.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: Building DPO preference pairs",
+            )
 
-        # Step 4: Train DPO LoRA (loads base + merges adapters 0..k-1, trains adapter k)
-        run_step(
-            f"uv run python scripts/04_train_dpo_lora.py --iter {k} --config {args.config} {run_flag}",
-            f"Iteration {k}: Training DPO LoRA adapter",
-        )
+            run_step(
+                f"uv run python scripts/04_train_dpo_lora.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: Training DPO LoRA adapter",
+            )
 
-        # Step 5: Evaluate (loads base + merges adapters 0..k)
+        # Evaluate (loads base + merges adapters 0..k)
         next_iter = k + 1
         run_step(
             f"uv run python scripts/08_eval.py --iter {next_iter} --config {args.config} {run_flag}",

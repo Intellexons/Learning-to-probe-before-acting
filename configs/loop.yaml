@@ -11,6 +11,7 @@ paths:
 
 loop:
   iterations: 20
+  trainer: "dpo"  # "dpo" or "grpo"
 
 generation:
   n_samples_per_task: 16
