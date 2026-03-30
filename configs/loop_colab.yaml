@@ -30,11 +30,11 @@ dpo_pairs:
 training:
   beta: 0.1
   learning_rate: 5.0e-6
-  per_device_train_batch_size: 2
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
   num_train_epochs: 4
-  max_length: 4096
-  max_prompt_length: 3072
+  max_length: 2048
+  max_prompt_length: 1536
   warmup_ratio: 0.1
   bf16: false
   fp16: true
