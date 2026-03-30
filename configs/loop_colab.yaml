@@ -1,0 +1,55 @@
+base_model:
+  hf: "Qwen/Qwen2.5-Coder-3B-Instruct"
+
+paths:
+  hf_base_dir: "models/hf_base"
+  lora_dir: "models/lora"
+  rollouts_dir: "data/rollouts"
+  dpo_dir: "data/dpo"
+  tasks_train: "data/tasks/train.jsonl"
+  tasks_eval: "data/tasks/eval.jsonl"
+
+loop:
+  iterations: 20
+  trainer: "dpo"
+
+generation:
+  n_samples_per_task: 16
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 900
+
+scoring:
+  timeout_seconds: 30
+  max_steps: 500
+
+dpo_pairs:
+  min_chosen_reward: 1.0
+  pairs_per_task: 2
+
+training:
+  beta: 0.1
+  learning_rate: 5.0e-6
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  num_train_epochs: 4
+  max_length: 4096
+  max_prompt_length: 3072
+  warmup_ratio: 0.1
+  bf16: false
+  fp16: true
+  gradient_checkpointing: true
+  precompute_ref_log_probs: true
+  logging_steps: 5
+  loss_type: "sigmoid"
+
+lora:
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  task_type: "CAUSAL_LM"

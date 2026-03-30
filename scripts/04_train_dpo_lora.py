@@ -114,6 +114,7 @@ def main():
         gradient_checkpointing=train_cfg["gradient_checkpointing"],
         logging_steps=train_cfg["logging_steps"],
         loss_type=train_cfg["loss_type"],
+        precompute_ref_log_probs=train_cfg.get("precompute_ref_log_probs", False),
         save_strategy="no",
         remove_unused_columns=False,
         report_to="none",
