@@ -352,7 +352,7 @@ gcloud compute instances create lora4vr-train-1 \
   --zone=europe-west3-a \
   --machine-type=g2-standard-8 \
   --accelerator=type=nvidia-l4,count=1 \
-  --image-family=common-cu121 \
+  --image-family=common-cu129-ubuntu-2204-nvidia-580 \
   --image-project=deeplearning-platform-release \
   --boot-disk-size=100GB \
   --boot-disk-type=pd-balanced \
