@@ -222,23 +222,175 @@ Each line in `data/tasks/train.jsonl` is a JSON object:
 
 The environment code is included directly in the prompt so the model can read it and write a policy against it.
 
-## GCS checkpoint sync (optional)
+## Training on GCP
 
-For long runs on cloud VMs — especially Spot/preemptible — set an optional
-bucket in the config so each iteration's artifacts are mirrored to GCS:
+End-to-end playbook for running a training loop on a Google Cloud GPU VM.
+Sized for a single NVIDIA L4 (24 GB) running the full `configs/loop.yaml`
+profile; swap the machine type for other GPUs.
+
+### Prerequisites
+
+1. **gcloud SDK** installed locally (`gcloud --version`) and authenticated
+   against the project you want to bill:
+   ```bash
+   gcloud auth login
+   gcloud config set project <your-project-id>
+   gcloud config set compute/region europe-west3
+   gcloud config set compute/zone europe-west3-a
+   ```
+2. **Billing account** linked to the project, and **Compute Engine API**
+   enabled (`gcloud services enable compute.googleapis.com`).
+3. **GPU quota.** New personal projects have `GPUS_ALL_REGIONS = 0` by
+   default, which blocks all GPU VMs regardless of regional quotas.
+   Request at least `1` at
+   [Console → IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas)
+   (filter `GPUs (all regions)`). Approval can take minutes to a few days.
+4. **(Optional) Spot VMs.** To use preemptible pricing, also raise
+   `Preemptible CPUs` in your region to at least `8` — separate request.
+
+### 1. Create the VM
+
+One-shot create for 1×L4 on-demand in `europe-west3-a`, running the
+prep-only startup script from this repo:
+
+```bash
+gcloud compute instances create lora4vr-train-1 \
+  --zone=europe-west3-a \
+  --machine-type=g2-standard-8 \
+  --accelerator=type=nvidia-l4,count=1 \
+  --image-family=common-cu121 \
+  --image-project=deeplearning-platform-release \
+  --boot-disk-size=100GB \
+  --boot-disk-type=pd-balanced \
+  --maintenance-policy=TERMINATE \
+  --scopes=cloud-platform \
+  --metadata-from-file=startup-script=scripts/gcp_startup.sh
+```
+
+Notes:
+- `--maintenance-policy=TERMINATE` is **required** for any GPU VM.
+- `--scopes=cloud-platform` lets the VM talk to GCS for the optional
+  checkpoint sync (see below). Harmless if you don't use GCS.
+- For a private repo, override the clone URL via metadata:
+  `--metadata=LORA4VR_REPO_URL=https://...`, or skip cloning and
+  `gcloud compute scp` the working copy up manually after step 2.
+- For Spot (once `Preemptible CPUs` quota is raised), add:
+  `--provisioning-model=SPOT --instance-termination-action=STOP`
+
+### 2. Watch the bootstrap
+
+The startup script logs to the GCE serial console and to
+`/var/log/lora4vr-startup.log` on the VM. Tail the serial console from
+your workstation:
+
+```bash
+gcloud compute instances get-serial-port-output lora4vr-train-1 \
+  --zone=europe-west3-a | tail -50
+```
+
+Bootstrap is complete when you see `lora4vr startup script complete` or
+when `/var/run/lora4vr-ready` exists on the VM. Expect 3–8 minutes on a
+fresh VM (most of it is the 6 GB HF model download).
+
+### 3. SSH in and train
+
+```bash
+gcloud compute ssh lora4vr-train-1 --zone=europe-west3-a
+```
+
+On the VM:
+```bash
+cd /opt/lora4vr
+uv run python scripts/09_run_loop.py \
+  --config configs/loop.yaml \
+  --run_name my_run
+```
+
+Leave the SSH session open to watch the run, or detach with `tmux` /
+`nohup` if you want to disconnect.
+
+### 4. Get artifacts back to your workstation
+
+When training finishes, copy the outputs down before deleting the VM:
+
+```bash
+gcloud compute scp --recurse --zone=europe-west3-a \
+  lora4vr-train-1:/opt/lora4vr/models/lora \
+  lora4vr-train-1:/opt/lora4vr/data/progress \
+  lora4vr-train-1:/opt/lora4vr/data/rollouts \
+  ~/Downloads/lora4vr_results/
+```
+
+Egress to your workstation is ~$0.12/GB, so a full ~1–2 GB run is
+roughly $0.15–0.25.
+
+### 5. Tear down
+
+**Delete the VM** — this stops all billing for compute, GPU, and the
+boot disk:
+
+```bash
+gcloud compute instances delete lora4vr-train-1 --zone=europe-west3-a
+```
+
+⚠️ `gcloud compute instances stop` halts the GPU/CPU charges but keeps
+the boot disk billing active (~€4/month for a 100 GB pd-balanced disk).
+For a one-shot run, always prefer `delete`.
+
+### Optional: GCS checkpoint sync
+
+For multi-hour runs, Spot/preemptible VMs, or anything you want to
+resume after a reboot, enable sync by adding one key to the config:
 
 ```yaml
 paths:
   gcs_bucket: my-bucket-name
 ```
 
-When set, `09_run_loop.py` calls `gsutil rsync` after each iteration to push
-the per-run subtrees — `lora_dir`, `rollouts_dir`, `data/progress/`, plus
-`dpo_dir` when `loop.trainer` is `dpo` — to `gs://<bucket>/runs/<run>/`. On
-resume (`--start_iter > 0`), it pulls the same tree back down first. When
-the key is unset or empty, sync is a no-op and local runs are unaffected.
+When set, `09_run_loop.py` calls `gsutil rsync` after each iteration to
+push the per-run subtrees — `lora_dir`, `rollouts_dir`, `data/progress/`,
+plus `dpo_dir` when `loop.trainer` is `dpo` — to
+`gs://<bucket>/runs/<run>/`. On resume (`--start_iter > 0`), it pulls
+the same tree back down first. When the key is unset or empty, sync is
+a no-op and local runs are unaffected.
 
-Requires `gsutil` on PATH (preinstalled on GCP Deep Learning VM images).
+Create the bucket **in the same region as the VM** so the rsync traffic
+is free (cross-region egress is $0.08/GB):
+
+```bash
+gsutil mb -l europe-west3 gs://<your-unique-bucket-name>/
+```
+
+Requires `gsutil` on PATH (preinstalled on Deep Learning VM images).
+
+### Resume an interrupted run
+
+If the VM was preempted / restarted mid-training, create a fresh VM the
+same way and resume from the last completed iteration:
+
+```bash
+# On the new VM
+cd /opt/lora4vr
+uv run python scripts/09_run_loop.py \
+  --config configs/loop.yaml \
+  --run_name my_run \
+  --start_iter 7          # whatever iteration was last pushed to GCS
+```
+
+Resume only works when `paths.gcs_bucket` is set in the config — the
+orchestrator pulls iters `0..start_iter-1` from GCS before starting.
+
+### Cost sanity-check
+
+| Item | Rate (europe-west3, on-demand) | Per full 20-iter run |
+|---|---|---|
+| VM (`g2-standard-8` + 1×L4) | ~€0.70/hr | ~€3–6 for 4–8 hr |
+| Boot disk (100 GB pd-balanced) | ~€0.14/day | ~€0.05 while running |
+| GCS storage (Standard, ~2 GB) | ~€0.05/month | ~€0.01/month |
+| Egress GCS→workstation | $0.12/GB | ~€0.15–0.25 once |
+
+Spot brings the VM rate down ~70% (~€0.21/hr) — worth the extra quota
+request if you plan to run more than a few experiments.
 
 ## Tracking progress
 
