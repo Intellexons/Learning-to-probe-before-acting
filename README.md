@@ -241,6 +241,9 @@ scripts/
   01..04_*.py, 08_eval.py    # Loop step scripts (see "Loop steps" above)
   09_run_loop.py             # Orchestrator
   gcp_startup.sh             # GCE VM startup script (see "Training on GCP")
+  gcp_launch_vm.sh           # One-shot: create VM, upload repo, run setup
+  gcp_fetch_artifacts.sh     # Pull a run's artifacts back to your Mac
+  gcp_destroy_vm.sh          # Delete VM (stop billing)
   seed_tasks/                # CartPole seed train+eval tasks
 src/
   config.py                  # Config schema validation (DPO + GRPO)
@@ -299,6 +302,25 @@ The environment code is included directly in the prompt so the model can read it
 End-to-end playbook for running a training loop on a Google Cloud GPU VM.
 Sized for a single NVIDIA L4 (24 GB) running the full `configs/loop.yaml`
 profile; swap the machine type for other GPUs.
+
+### Quick automation (recommended)
+
+Three scripts wrap the full lifecycle. Override defaults with env vars
+(`LORA4VR_INSTANCE`, `LORA4VR_ZONE`, `LORA4VR_PROVISIONING=SPOT`, etc.).
+
+```bash
+bash scripts/gcp_launch_vm.sh                       # create VM, upload repo, run setup
+bash scripts/gcp_fetch_artifacts.sh <run_name>      # pull results back to ~/Downloads/
+bash scripts/gcp_destroy_vm.sh                      # delete VM, stop billing
+```
+
+The launcher is idempotent: re-running it after a partial failure picks
+up where it left off (skips create if the VM exists, skips upload if the
+tarball is already there, etc.). Each step prints a `[N/6]` progress
+header so you can see where it is.
+
+The rest of this section explains the underlying `gcloud` commands
+those scripts run, in case you want to understand or customize them.
 
 ### Prerequisites
 
