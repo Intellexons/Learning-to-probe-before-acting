@@ -11,4 +11,5 @@ dependencies = [
     "trl>=0.8.0",
     "pyyaml>=6.0",
     "sentencepiece>=0.1.99",
+    "wandb>=0.25.1",
 ]
