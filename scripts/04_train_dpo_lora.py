@@ -117,7 +117,7 @@ def main():
         precompute_ref_log_probs=train_cfg.get("precompute_ref_log_probs", False),
         save_strategy="no",
         remove_unused_columns=False,
-        report_to="none",
+        report_to=train_cfg.get("report_to", "none"),
         dataloader_pin_memory=not use_mps,
         use_cpu=False,
     )

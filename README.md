@@ -272,6 +272,7 @@ All settings live in `configs/loop.yaml`. Key options:
 | `lora` | `target_modules` | q/k/v/o_proj | Attention layers to adapt |
 | `training` | `num_train_epochs` | 4 | Training epochs per iteration |
 | `training` | `beta` | 0.1 | DPO beta (preference strength; DPO only) |
+| `training` | `report_to` | `none` | `wandb` to enable W&B logging ([details](#optional-monitoring-with-weights--biases)) |
 | `paths` | `gcs_bucket` | _(unset)_ | Optional GCS bucket for checkpoint sync ([details](#optional-gcs-checkpoint-sync)) |
 
 ## Task format
@@ -402,6 +403,37 @@ uv run python scripts/09_run_loop.py \
 
 Leave the SSH session open to watch the run, or detach with `tmux` /
 `nohup` if you want to disconnect.
+
+### Optional: monitoring with Weights & Biases
+
+For a web UI showing GPU memory, GPU utilization, loss curves, and the
+per-iteration reward trajectory, enable the built-in W&B integration.
+One-time setup on the VM:
+
+```bash
+uv run wandb login   # paste API key from https://wandb.ai/authorize
+```
+
+Then add one key to your training config:
+
+```yaml
+training:
+  report_to: wandb
+  # wandb_project: lora4vr   # optional, defaults to "lora4vr"
+```
+
+When set, two things happen:
+- TRL's `DPOTrainer` / `GRPOTrainer` log per-step metrics (loss, LR, KL,
+  reward margins) plus **system metrics** (GPU mem, GPU util, CPU mem,
+  disk, network) to W&B automatically — no extra code.
+- The orchestrator opens a separate run named `<run_name>-orchestrator`
+  in the same W&B group and logs the per-iteration `train.csv` /
+  `eval.csv` rows (success rate, mean/max reward) so you can see the RL
+  improvement curve next to the training-step metrics.
+
+W&B's free Personal plan covers this use case at **$0/month** (unlimited
+metrics, 100 GB artifact storage that we don't touch). When `report_to`
+is unset or `"none"`, nothing is uploaded.
 
 ### 4. Get artifacts back to your workstation
 

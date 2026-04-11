@@ -132,7 +132,7 @@ def main():
         logging_steps=train_cfg["logging_steps"],
         save_strategy="no",
         remove_unused_columns=False,
-        report_to="none",
+        report_to=train_cfg.get("report_to", "none"),
         dataloader_pin_memory=not use_mps,
         use_cpu=False,
     )
