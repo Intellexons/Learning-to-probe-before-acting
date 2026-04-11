@@ -27,8 +27,19 @@ print(f'Saved to {save_path}')
 "
 
 echo "=== 3/3 Creating directory structure ==="
-mkdir -p data/rollouts data/dpo
+mkdir -p data/rollouts data/dpo data/tasks
 mkdir -p models/hf_base models/lora
+
+# Seed tasks if data/tasks/ is empty — fresh checkouts (incl. GCP VMs) need these
+# to run the loop. Users can overwrite with their own tasks later.
+if [ ! -f data/tasks/train.jsonl ]; then
+  cp scripts/seed_tasks/train.jsonl data/tasks/train.jsonl
+  echo "Seeded data/tasks/train.jsonl"
+fi
+if [ ! -f data/tasks/eval.jsonl ]; then
+  cp scripts/seed_tasks/eval.jsonl data/tasks/eval.jsonl
+  echo "Seeded data/tasks/eval.jsonl"
+fi
 
 echo ""
 echo "Setup complete. Run the loop with: uv run python scripts/09_run_loop.py --config configs/loop.yaml"
