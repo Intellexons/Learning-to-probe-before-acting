@@ -46,6 +46,7 @@ def main():
     validate_config(cfg)
 
     K = cfg["loop"]["iterations"]
+    gcs_bucket = cfg.get("paths", {}).get("gcs_bucket")
 
     # Generate run name if not provided
     run_name = args.run_name
@@ -56,6 +57,19 @@ def main():
 
     logger.info(f"Starting training loop: {K} iterations from iter {args.start_iter}")
     logger.info(f"Run name: {run_name}")
+    if gcs_bucket:
+        logger.info(f"GCS sync enabled: gs://{gcs_bucket}/runs/{run_name}")
+
+    if gcs_bucket:
+        from src.gcs_sync import subtrees_for_config
+        gcs_subtrees = subtrees_for_config(cfg)
+
+    # If resuming, pull any prior artifacts from GCS first so iter k can read
+    # the adapters/rollouts from iters 0..k-1.
+    if args.start_iter > 0 and gcs_bucket:
+        from src.gcs_sync import pull_run
+        logger.info(f"Pulling prior run artifacts from GCS for resume at iter {args.start_iter}")
+        pull_run(gcs_bucket, run_name, gcs_subtrees)
 
     # Clear stale progress CSVs when starting fresh (not resuming)
     if args.start_iter == 0:
@@ -114,6 +128,12 @@ def main():
         # Print progress so far
         from src.progress import print_progress_table
         print_progress_table(run_name=run_name)
+
+        # Push this iteration's artifacts to GCS. rsync is diff-based so
+        # re-uploading every iteration is cheap.
+        if gcs_bucket:
+            from src.gcs_sync import push_run
+            push_run(gcs_bucket, run_name, gcs_subtrees)
 
     logger.info(f"\n{'#' * 60}")
     logger.info(f"# TRAINING LOOP COMPLETE ({K} iterations)")

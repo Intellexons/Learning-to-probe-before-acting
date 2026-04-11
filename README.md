@@ -222,6 +222,24 @@ Each line in `data/tasks/train.jsonl` is a JSON object:
 
 The environment code is included directly in the prompt so the model can read it and write a policy against it.
 
+## GCS checkpoint sync (optional)
+
+For long runs on cloud VMs — especially Spot/preemptible — set an optional
+bucket in the config so each iteration's artifacts are mirrored to GCS:
+
+```yaml
+paths:
+  gcs_bucket: my-bucket-name
+```
+
+When set, `09_run_loop.py` calls `gsutil rsync` after each iteration to push
+the per-run subtrees — `lora_dir`, `rollouts_dir`, `data/progress/`, plus
+`dpo_dir` when `loop.trainer` is `dpo` — to `gs://<bucket>/runs/<run>/`. On
+resume (`--start_iter > 0`), it pulls the same tree back down first. When
+the key is unset or empty, sync is a no-op and local runs are unaffected.
+
+Requires `gsutil` on PATH (preinstalled on GCP Deep Learning VM images).
+
 ## Tracking progress
 
 Each iteration appends to CSV files under `data/progress/<run_name>/`:
