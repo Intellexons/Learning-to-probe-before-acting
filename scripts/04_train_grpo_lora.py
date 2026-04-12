@@ -104,6 +104,21 @@ def main():
     if use_mps:
         logger.info("MPS backend detected — using fp16, disabling pin_memory")
 
+    # TRL's GRPOTrainer wraps the dataset in a generation sampler that strips
+    # __len__, so HF Trainer can't derive total steps from num_train_epochs.
+    # Compute max_steps explicitly from the prompt count.
+    import math
+    pdtbs = train_cfg["per_device_train_batch_size"]
+    grad_accum = train_cfg["gradient_accumulation_steps"]
+    g = grpo_cfg["num_generations"]
+    epochs = train_cfg["num_train_epochs"]
+    prompts_per_step = max(1, (pdtbs * grad_accum) // g)
+    max_steps = max(1, math.ceil(len(train_dataset) * epochs / prompts_per_step))
+    logger.info(
+        f"Computed max_steps={max_steps} "
+        f"({len(train_dataset)} prompts × {epochs} epochs / {prompts_per_step} prompts/step)"
+    )
+
     # GRPO training config
     training_args = GRPOConfig(
         output_dir=output_path,
@@ -124,7 +139,7 @@ def main():
         learning_rate=train_cfg["learning_rate"],
         per_device_train_batch_size=train_cfg["per_device_train_batch_size"],
         gradient_accumulation_steps=train_cfg["gradient_accumulation_steps"],
-        num_train_epochs=train_cfg["num_train_epochs"],
+        max_steps=max_steps,
         warmup_ratio=train_cfg["warmup_ratio"],
         bf16=not use_mps and train_cfg.get("bf16", False),
         fp16=use_mps or train_cfg.get("fp16", False),
@@ -161,6 +176,31 @@ def main():
 
     logger.info("Starting GRPO training...")
     trainer.train()
+
+    # Aggregate the reward function's per-completion stats into a single
+    # train.csv row so the orchestrator can log train/* metrics to W&B and
+    # the progress table matches the DPO path.
+    from src.progress import append_train_progress
+    stats = getattr(reward_fn, "stats", [])
+    if stats:
+        rewards = [r for r, _ in stats]
+        n_samples = len(rewards)
+        n_success = sum(1 for _, ok in stats if ok)
+        mean_reward = sum(rewards) / n_samples
+        max_reward = max(rewards)
+        append_train_progress(
+            iter_num=iter_num,
+            n_samples=n_samples,
+            n_success=n_success,
+            mean_reward=mean_reward,
+            max_reward=max_reward,
+            run_name=args.run_name,
+        )
+        logger.info(
+            f"Iteration {iter_num} train rollouts: "
+            f"n={n_samples}, success={n_success}, "
+            f"mean_reward={mean_reward:.1f}, max_reward={max_reward:.1f}"
+        )
 
     logger.info(f"Saving adapter to {output_path}")
     trainer.save_model(output_path)

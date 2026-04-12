@@ -19,6 +19,9 @@ def make_reward_fn(task_map: dict, scoring_cfg: dict):
 
     Returns:
         Callable with signature (completions, task_id, **kwargs) -> list[float].
+        The returned function exposes a `.stats` list that records
+        (reward, ran_successfully) tuples for every completion it scores,
+        so callers can aggregate per-iteration progress after training.
     """
     timeout = scoring_cfg["timeout_seconds"]
     max_steps = scoring_cfg["max_steps"]
@@ -38,12 +41,17 @@ def make_reward_fn(task_map: dict, scoring_cfg: dict):
             if tid is None or tid not in task_map:
                 logger.warning(f"Unknown task_id {tid}, assigning reward 0.0")
                 rewards.append(0.0)
+                reward_fn.stats.append((0.0, False))
                 continue
 
             task = task_map[tid]
             result = score_sample(code, task, timeout=timeout, max_steps=max_steps)
             rewards.append(result["reward_total"])
+            reward_fn.stats.append(
+                (result["reward_total"], bool(result.get("ran_successfully", False)))
+            )
 
         return rewards
 
+    reward_fn.stats = []
     return reward_fn

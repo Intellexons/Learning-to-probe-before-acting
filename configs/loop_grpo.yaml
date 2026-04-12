@@ -9,11 +9,11 @@ paths:
   tasks_eval: "data/tasks/eval.jsonl"
 
 loop:
-  iterations: 20
+  iterations: 30
   trainer: "grpo"
 
 grpo:
-  num_generations: 8         # completions per prompt (G in the paper)
+  num_generations: 16        # completions per prompt (G in the paper)
   num_iterations: 1          # mu: policy mini-batches per generation batch
   epsilon: 0.2               # clipping param (lower bound)
   epsilon_high: 0.28         # DAPO asymmetric upper clip
@@ -26,19 +26,27 @@ grpo:
   mask_truncated_completions: true  # DAPO Overlong Filtering
   log_completions: true
 
+generation:
+  n_samples_per_task: 16
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 900
+
 scoring:
   timeout_seconds: 30
   max_steps: 500
 
 training:
-  learning_rate: 5.0e-6
-  per_device_train_batch_size: 8
-  gradient_accumulation_steps: 4
-  num_train_epochs: 1
+  learning_rate: 1.0e-5
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+  num_train_epochs: 4
   warmup_ratio: 0.1
   bf16: true
   gradient_checkpointing: true
-  logging_steps: 5
+  logging_steps: 1
+  report_to: "wandb"
+  wandb_project: "lora4vr"
 
 lora:
   target_modules:
