@@ -147,7 +147,9 @@ def main():
         logging_steps=train_cfg["logging_steps"],
         save_strategy="no",
         remove_unused_columns=False,
-        report_to=train_cfg.get("report_to", "none"),
+        # The orchestrator owns the W&B run and forwards trainer.state.log_history
+        # itself, so the trainer subprocess must NOT init its own W&B run.
+        report_to="none",
         dataloader_pin_memory=not use_mps,
         use_cpu=False,
     )
@@ -201,6 +203,17 @@ def main():
             f"n={n_samples}, success={n_success}, "
             f"mean_reward={mean_reward:.1f}, max_reward={max_reward:.1f}"
         )
+
+    # Dump TRL's per-step metrics so the orchestrator can forward them to its
+    # own W&B run with a monotonic step offset (one continuous curve across
+    # all outer iterations, instead of one disconnected run per iteration).
+    import json
+    log_dir = Path("data/progress") / (args.run_name or "default")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"trainer_log_iter_{iter_num:03d}.json"
+    with open(log_path, "w") as f:
+        json.dump(trainer.state.log_history, f)
+    logger.info(f"Wrote trainer log history to {log_path}")
 
     logger.info(f"Saving adapter to {output_path}")
     trainer.save_model(output_path)
