@@ -147,17 +147,11 @@ def main():
             cfg.get("training", {}).get("wandb_project", "lora4vr"),
         )
         os.environ["WANDB_RUN_GROUP"] = run_name
-        # Pin a stable run id + name for the trainer subprocess so every
-        # iteration's GRPOTrainer.train() resumes the same W&B run instead
-        # of creating a fresh one. Without this you get one disconnected
-        # curve per outer iteration.
-        os.environ["WANDB_RUN_ID"] = f"{run_name}-trainer"
-        os.environ["WANDB_NAME"] = f"{run_name}-trainer"
-        os.environ["WANDB_RESUME"] = "allow"
         try:
             import wandb
             wandb_run = wandb.init(
                 project=os.environ["WANDB_PROJECT"],
+                id=f"{run_name}-orchestrator",
                 group=run_name,
                 name=f"{run_name}-orchestrator",
                 job_type="loop",
@@ -175,6 +169,13 @@ def main():
         except Exception as e:
             logger.warning(f"Failed to init W&B: {e} — continuing without orchestrator metrics")
             wandb_run = None
+        # Pin a stable run id + name for the trainer SUBPROCESS so every
+        # iteration's GRPOTrainer.train() resumes the same W&B run instead
+        # of creating a fresh one. Set these AFTER the orchestrator's own
+        # wandb.init() so they don't hijack the orchestrator's id.
+        os.environ["WANDB_RUN_ID"] = f"{run_name}-trainer"
+        os.environ["WANDB_NAME"] = f"{run_name}-trainer"
+        os.environ["WANDB_RESUME"] = "allow"
 
     for k in range(args.start_iter, K):
         logger.info(f"\n{'#' * 60}")
