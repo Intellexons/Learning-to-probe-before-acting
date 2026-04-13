@@ -70,7 +70,6 @@ def run_episode(seed, max_steps):
     for _ in range(max_steps):
         try:
             action = policy(state)
-            action = int(action)
         except Exception as e:
             return {{"reward": total_reward, "steps": steps, "error": f"policy() error: {{e}}"}}
         state, reward, done = env.step(action)
