@@ -98,6 +98,7 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" \
 # what --wait polls for.
 REMOTE_CMD="cd $REMOTE_DIR && \
   WANDB_API_KEY='$WANDB_API_KEY' \
+  PYTORCH_ALLOC_CONF=expandable_segments:True \
   uv run python scripts/09_run_loop.py \
     --config $CONFIG \
     --run_name $RUN_NAME 2>&1 | tee $LOG_FILE; \

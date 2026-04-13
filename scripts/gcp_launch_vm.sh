@@ -119,8 +119,9 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="\
   echo 'Upload complete'"
 
 echo "[6/6] Running 00_setup_env.sh on the VM (this may take ~5 min)..."
+SEED_TASK_ARG="${LORA4VR_SEED_TASK:-}"
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" \
-  --command="cd $REMOTE_DIR && bash scripts/00_setup_env.sh"
+  --command="cd $REMOTE_DIR && LORA4VR_SEED_TASK='$SEED_TASK_ARG' bash scripts/00_setup_env.sh"
 
 cat <<EOF
 

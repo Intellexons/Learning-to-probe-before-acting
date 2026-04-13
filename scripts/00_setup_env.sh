@@ -30,15 +30,40 @@ echo "=== 3/3 Creating directory structure ==="
 mkdir -p data/rollouts data/dpo data/tasks
 mkdir -p models/hf_base models/lora
 
-# Seed tasks if data/tasks/ is empty — fresh checkouts (incl. GCP VMs) need these
-# to run the loop. Users can overwrite with their own tasks later.
-if [ ! -f data/tasks/train.jsonl ]; then
-  cp scripts/seed_tasks/train.jsonl data/tasks/train.jsonl
-  echo "Seeded data/tasks/train.jsonl"
-fi
-if [ ! -f data/tasks/eval.jsonl ]; then
-  cp scripts/seed_tasks/eval.jsonl data/tasks/eval.jsonl
-  echo "Seeded data/tasks/eval.jsonl"
+# Seed tasks. When LORA4VR_SEED_TASK is unset, fall back to the legacy
+# behavior: seed CartPole only if data/tasks/ is empty, never overwrite.
+# When set explicitly (e.g. LORA4VR_SEED_TASK=puck), pick the corresponding
+# seed files and *always* overwrite — this is the opt-in path used by the
+# GCP wrapper to switch between envs on the same VM.
+SEED_TASK="${LORA4VR_SEED_TASK:-}"
+case "$SEED_TASK" in
+  ""|cartpole)
+    TRAIN_SRC="scripts/seed_tasks/train.jsonl"
+    EVAL_SRC="scripts/seed_tasks/eval.jsonl"
+    ;;
+  puck)
+    TRAIN_SRC="scripts/seed_tasks/puck_train.jsonl"
+    EVAL_SRC="scripts/seed_tasks/puck_eval.jsonl"
+    ;;
+  *)
+    echo "ERROR: unknown LORA4VR_SEED_TASK='$SEED_TASK' (expected: cartpole, puck)" >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "$SEED_TASK" ]; then
+  cp "$TRAIN_SRC" data/tasks/train.jsonl
+  cp "$EVAL_SRC" data/tasks/eval.jsonl
+  echo "Seeded data/tasks/{train,eval}.jsonl from $SEED_TASK (overwrite)"
+else
+  if [ ! -f data/tasks/train.jsonl ]; then
+    cp "$TRAIN_SRC" data/tasks/train.jsonl
+    echo "Seeded data/tasks/train.jsonl"
+  fi
+  if [ ! -f data/tasks/eval.jsonl ]; then
+    cp "$EVAL_SRC" data/tasks/eval.jsonl
+    echo "Seeded data/tasks/eval.jsonl"
+  fi
 fi
 
 echo ""
