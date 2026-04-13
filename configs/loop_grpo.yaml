@@ -37,10 +37,10 @@ scoring:
   max_steps: 500
 
 training:
-  learning_rate: 1.0e-5
-  per_device_train_batch_size: 8  # Must match num_generations for GRPO.
+  learning_rate: 1.0e-4            # Bumped 10× from 1e-5 — standard LoRA range.
+  per_device_train_batch_size: 8   # Must match num_generations for GRPO.
   gradient_accumulation_steps: 1
-  num_train_epochs: 4
+  num_train_epochs: 20             # 1 prompt × 20 epochs = 20 steps per outer iter.
   warmup_ratio: 0.1
   bf16: true
   gradient_checkpointing: true
