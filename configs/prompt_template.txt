@@ -1,24 +1,59 @@
 You are an expert Python programmer. Your task is to write a policy function that controls an agent in the environment described below.
 
-## Environment Code
+## Runtime Interface
 
-```python
-{env_code}
-```
+Your `policy(state)` function is called once per simulation step. `state` is a Python dict with **exactly** the keys listed below — the env's internal attributes (drag, thrust limits, tilt, friction, etc.) are **not** passed to your policy. Attempting to read them from `state` (e.g. `state['tilt_x']`) will raise `KeyError` and your policy will be rejected.
 
-## State Specification
+### State keys (the ONLY inputs your policy receives)
 {state_spec}
 
-## Action Specification
+### Action (what your policy must return)
 {action_spec}
 
 ## Goal
 {goal}
 
+## Environment Source (for reference only)
+
+The env's Python source is below so you can reason about the dynamics and the reward. **Do not read attributes off `self` — you cannot access them at runtime.** Treat any hidden constants as unknown disturbances and compensate with feedback on position and velocity, which you *do* see every step.
+
+```python
+{env_code}
+```
+
 ## Requirements
 - Define exactly one function: `def policy(state)` that returns a valid action.
 - The function must be self-contained. You may only import `math` and `random`.
 - Do not use global variables or maintain state between calls.
+- Only read the state keys listed above. Any other key will raise `KeyError`.
 - Return a valid action as specified above.
+
+## Common mistakes to avoid
+
+1. **Do not read env attributes from `state`.** Anything you see on `self` in the env source (e.g. `self.tilt_x`, `self.a_max`, `self.mu`, `self.dt`, `self.goal_radius`, `self.bound`) is **not** in the state dict. `state['tilt_x']` raises `KeyError` at the first call and your policy is discarded.
+2. **Do not clamp the action to `state['a_max']`.** `a_max` is hidden — use a conservative constant (e.g. `2.0`) or skip clamping entirely. The env clips for you anyway.
+3. **Do not maintain state between calls** (no `last_error`, `error_integral`, `_prev`, global counters, etc.). Each `policy(state)` call is independent; referencing such a variable is an `UnboundLocalError`. Stick to memoryless feedback — PD is fine, PID is not.
+
+## Example of the correct shape
+
+Here is an illustrative memoryless policy that uses **only the state keys** and **no hidden constants**. Your policy should follow the same discipline:
+
+```python
+import math
+
+def policy(state):
+    # Error and velocity are the only runtime signals.
+    ex = state['gx'] - state['px']
+    ey = state['gy'] - state['py']
+    vx = state['vx']
+    vy = state['vy']
+    # Proportional-derivative control. Constants are guesses — you can do better.
+    kp, kd = 2.0, 1.5
+    ax = kp * ex - kd * vx
+    ay = kp * ey - kd * vy
+    return [ax, ay]
+```
+
+This example is deliberately simple — your job is to write something better (different gains, non-linear terms, whatever helps) while keeping the same runtime-access discipline.
 
 Respond ONLY with valid Python code. Do NOT include markdown fences, explanations, or any text besides the code itself.
