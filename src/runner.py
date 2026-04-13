@@ -15,6 +15,14 @@ DANGEROUS_MODULES = {
     "pickle", "shelve", "marshal",
 }
 
+# Per-scenario penalty for a sample that fails validation or errors at runtime.
+# Must be lower than the worst-possible-but-running trajectory in any supported
+# env, so GRPO's advantage ranks "broken code" strictly below "code that runs
+# and does badly." Otherwise errored samples score 0.0 (no reward accumulated)
+# and end up *higher* than running-but-failing samples (which integrate negative
+# distance penalties), and GRPO rewards the model for producing errors.
+ERROR_PENALTY_PER_SCENARIO = -200.0
+
 
 def validate_code(code: str) -> tuple[bool, str]:
     """Static validation of generated policy code."""
@@ -137,12 +145,22 @@ def score_sample(
     timeout: int = 30,
     max_steps: int = 500,
 ) -> dict:
-    """Score a single code sample across all scenarios in the task."""
+    """Score a single code sample across all scenarios in the task.
+
+    Failed validation and per-scenario runtime errors are scored at
+    `ERROR_PENALTY_PER_SCENARIO` so that erroring out is always strictly
+    worse than running and doing badly. See the constant's docstring above.
+    """
+    scenarios = task["scenarios"]
+    n_scenarios = len(scenarios)
+
     is_valid, error_msg = validate_code(code)
     if not is_valid:
         return {
-            "reward_total": 0.0,
-            "reward_per_scenario": {},
+            "reward_total": ERROR_PENALTY_PER_SCENARIO * n_scenarios,
+            "reward_per_scenario": {
+                s["scenario_id"]: ERROR_PENALTY_PER_SCENARIO for s in scenarios
+            },
             "errors": [error_msg],
             "ran_successfully": False,
         }
@@ -151,16 +169,17 @@ def score_sample(
     errors = []
     ran_any = False
 
-    for scenario in task["scenarios"]:
+    for scenario in scenarios:
         sid = scenario["scenario_id"]
         result = run_policy_in_subprocess(
             code, task["env_code"], scenario, timeout=timeout, max_steps=max_steps,
             env_class=task.get("env_class", "CartPoleEnv"),
         )
-        reward_per_scenario[sid] = result["reward"]
         if result["error"]:
+            reward_per_scenario[sid] = ERROR_PENALTY_PER_SCENARIO
             errors.append(f"{sid}: {result['error']}")
         else:
+            reward_per_scenario[sid] = result["reward"]
             ran_any = True
 
     reward_total = sum(reward_per_scenario.values())
