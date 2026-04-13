@@ -53,21 +53,25 @@ def _read_iter_row(csv_path: str, iter_num: int) -> dict | None:
     return None
 
 
-def _log_iteration_metrics(wandb_run, run_name: str, k: int):
-    """Push the per-iteration train/eval CSV rows to the orchestrator W&B run."""
+def _log_iteration_metrics(wandb_run, run_name: str, k: int, step: int):
+    """Push the per-iteration train/eval CSV rows to the orchestrator W&B run.
+
+    `step` is the wandb step axis position to log at; it must be monotonically
+    increasing across calls because wandb silently drops out-of-order steps.
+    """
     if wandb_run is None:
         return
     from src.progress import _get_csv_paths
     train_csv, eval_csv = _get_csv_paths(run_name)
-    payload: dict = {}
+    payload: dict = {"train/iter": k}
     train_row = _read_iter_row(train_csv, k)
     if train_row:
         payload.update({
             "train/n_samples": int(train_row["n_samples"]),
             "train/n_success": int(train_row["n_success"]),
             "train/success_rate": float(train_row["success_rate"].rstrip("%")) / 100,
-            "train/mean_reward": float(train_row["mean_reward"]),
-            "train/max_reward": float(train_row["max_reward"]),
+            "train/iter_mean_reward": float(train_row["mean_reward"]),
+            "train/iter_max_reward": float(train_row["max_reward"]),
         })
     # eval CSV is appended for iter k+1 (the post-training eval)
     eval_row = _read_iter_row(eval_csv, k + 1)
@@ -80,7 +84,40 @@ def _log_iteration_metrics(wandb_run, run_name: str, k: int):
             "eval/mean_best_reward": float(eval_row["mean_best_reward"]),
         })
     if payload:
-        wandb_run.log(payload, step=k)
+        wandb_run.log(payload, step=step)
+
+
+def _forward_trainer_log_history(wandb_run, run_name: str, k: int, step_offset: int) -> int:
+    """Read the trainer subprocess's dumped log_history and forward each entry
+    to the orchestrator's W&B run, offsetting global_step so the curve is
+    monotonic across outer iterations. Returns the new offset to use next time.
+    """
+    import json
+    log_path = Path("data/progress") / run_name / f"trainer_log_iter_{k:03d}.json"
+    if not log_path.exists():
+        return step_offset
+    try:
+        with open(log_path) as f:
+            entries = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to read trainer log {log_path}: {e}")
+        return step_offset
+
+    max_local_step = 0
+    for entry in entries:
+        local_step = int(entry.get("step", 0) or 0)
+        max_local_step = max(max_local_step, local_step)
+        # Strip the local step + epoch keys; everything else is a metric.
+        payload = {
+            f"train/{key}": val
+            for key, val in entry.items()
+            if key not in ("step", "epoch") and isinstance(val, (int, float))
+        }
+        if not payload:
+            continue
+        payload["train/iter"] = k
+        wandb_run.log(payload, step=step_offset + local_step)
+    return step_offset + max_local_step + 1
 
 
 def main():
@@ -151,6 +188,7 @@ def main():
             import wandb
             wandb_run = wandb.init(
                 project=os.environ["WANDB_PROJECT"],
+                id=f"{run_name}-orchestrator",
                 group=run_name,
                 name=f"{run_name}-orchestrator",
                 job_type="loop",
@@ -168,6 +206,11 @@ def main():
         except Exception as e:
             logger.warning(f"Failed to init W&B: {e} — continuing without orchestrator metrics")
             wandb_run = None
+
+    # Running offset for trainer log_history forwarding: each iteration's
+    # log_history starts at global_step=0, so we add this offset to get a
+    # monotonic step axis across all outer iterations in the orchestrator run.
+    trainer_step_offset = 0
 
     for k in range(args.start_iter, K):
         logger.info(f"\n{'#' * 60}")
@@ -215,9 +258,20 @@ def main():
         from src.progress import print_progress_table
         print_progress_table(run_name=run_name)
 
-        # Log per-iteration train/eval metrics to W&B alongside TRL's
-        # per-step metrics from the training subprocess.
-        _log_iteration_metrics(wandb_run, run_name, k)
+        # Forward the trainer subprocess's per-step log_history to the
+        # orchestrator's W&B run with a monotonic step offset, so the
+        # loss / reward / KL curves are continuous across outer iterations.
+        if wandb_run is not None and trainer_type == "grpo":
+            trainer_step_offset = _forward_trainer_log_history(
+                wandb_run, run_name, k, trainer_step_offset
+            )
+
+        # Log per-iteration train/eval CSV metrics AFTER forwarding the
+        # trainer log, so they land at a step strictly past every per-step
+        # metric we just logged. wandb silently drops out-of-order steps,
+        # which is why iter 1+ CSV metrics were missing before.
+        _log_iteration_metrics(wandb_run, run_name, k, step=trainer_step_offset)
+        trainer_step_offset += 1
 
         # Push this iteration's artifacts to GCS. rsync is diff-based so
         # re-uploading every iteration is cheap.
