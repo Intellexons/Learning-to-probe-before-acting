@@ -1,0 +1,228 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\definecolor{commitgray}{rgb}{0.35,0.35,0.35}
+\newcommand{\commit}[1]{\texttt{\textcolor{commitgray}{#1}}}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+\title{\textbf{LoRA4VR --- Training Log}\\
+\normalsize A living record of experiments, findings, and open questions}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent\textbf{What this is.}
+A dated log of experiments run on the LoRA4VR self-play loop. Each entry
+records what was tried, what happened, and how to reproduce it. Entries are
+added as experiments complete. Reproduction references a git commit; the code
+at that commit is the exact code that produced the result.
+
+\noindent\textbf{System.} \texttt{Qwen2.5-Coder-3B-Instruct} fine-tuned with
+GRPO/DAPO on a Google Cloud L4 GPU (24\,GB). The loop generates
+\texttt{policy(state) -> action} Python code, scores it by running the policy
+in a sandboxed environment, and trains LoRA adapters on the reward signal.
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-04-13 \quad Environment design and first training runs}
+% ============================================================
+
+\commit{d96f7cb} $\cdot$ \textit{puck-on-tilted-plane env, runs 1--3}
+
+\subsection*{Motivation}
+
+CartPole was the original seed task but it is trivially solved by a two-line
+bang-bang policy, giving a flat learning curve from iteration 0. Any standard
+RL benchmark (LunarLander, Pendulum, MountainCar) is heavily represented in
+the base model's pretraining data, so improvement from LoRA would be
+confounded with prior knowledge. We need an environment the model has to
+\emph{read} rather than recall.
+
+\subsection*{The puck environment}
+
+A puck moves in a bounded $[-6, 6]^2$ arena under a constant hidden tilt
+$(t_x, t_y)$ and linear drag $\mu$. The policy receives
+$\{p_x, p_y, v_x, v_y, g_x, g_y\}$ and must drive the puck to the goal
+within 120 steps. Hidden parameters --- tilt, drag, thrust limit $a_{\max}$,
+initial velocity --- are sampled per scenario from a seed and are not in the
+state dict. The tight thrust envelope ($a_{\max} = \|tilt\|_2 \times 1.05 +
+\epsilon$) ensures that a naive ``thrust straight at the goal'' policy
+fails because it cannot cancel tilt drift.
+
+\textbf{Reward:} $-\Delta t \cdot \text{dist}(p, g)$ per step; $+50$ bonus
+on reaching the goal. Errored episodes score $-200$ per scenario (floor).
+
+\textbf{Baseline gap} (200 seeds, hand-written policies):
+\begin{itemize}[nosep]
+  \item Naive aim: $\approx 26\%$ goal rate
+  \item PD + tilt feedforward: $\approx 73\%$ goal rate
+\end{itemize}
+
+This gap is real headroom for LoRA to exploit.
+
+\subsection*{Bugs encountered and fixed}
+
+Three bugs had to be resolved before any learning was possible.
+
+\textbf{Run 1 --- OOM on L4.}
+Default config ($G=16$, batch 16, max completion 900 tokens) ran out of
+memory at the backward pass. Fix (PR \#6): halved $G$ and batch to 8,
+trimmed completion length to 600.
+
+\textbf{Run 2 --- Reward sign flip.}
+Training ran but degraded (fewer running samples each iteration). Errored
+samples scored $0.0$ while samples that ran and drifted integrated large
+negative rewards ($\approx -280$). GRPO's normalized advantage placed the
+$0.0$ errors \emph{above} the mean, so the trainer rewarded broken code.
+Fix (PR \#7): errored scenarios score $-200$, making broken code strictly
+the worst outcome.
+
+\textbf{Run 3 --- Dead advantages.}
+With LR $= 10^{-5}$ and only 1 training prompt (4 gradient steps per outer
+iteration), $\approx 75\%$ of batches were uniformly errored
+(advantage $= 0$, no gradient). On the remaining steps, weight deltas were
+$\sim 10^{-6}$ --- indistinguishable from zero. The reward was identical to
+7 decimal places at iteration 0 and iteration 9. Fix (PR \#10): LR bumped
+$10\times$ to $10^{-4}$; epochs raised to 20 (20 gradient steps per outer
+iteration on 1 prompt).
+
+\subsection*{Reproduce}
+
+Commits: OOM fix \commit{ef228fe}, reward floor \commit{ef7e0c9},
+LR/epoch fix \commit{e9353d7}. Env source: \texttt{scripts/seed\_tasks/puck\_tilted\_plane\_env.py}.
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-04-18 \quad Run 5 probe: base model vs.\ 5 iterations of GRPO}
+% ============================================================
+
+\commit{d5bc81c} $\cdot$ \textit{puck\_grpo\_run\_5, iters 0 and 5, $n=20$ samples each}
+
+\subsection*{Setup}
+
+Run 5 used the config at \commit{e9353d7} (LR $= 10^{-4}$, $G=8$, 20 epochs
+per outer iteration, DAPO loss, $\beta = 0$). It completed 5 outer iterations
+before the VM was stopped. Adapter checkpoints were recovered to
+\texttt{models/lora/puck\_grpo\_run\_5/}.
+
+To inspect what the model actually writes, we sample 20 policies from the
+base model (iter 0, no adapters) and from the trained model (iter 5), score
+each against 8 scenarios, and compare. The tool is
+\texttt{scripts/probe\_generation.py}; it saves per-sample policy files,
+a summary CSV, and per-scenario reward breakdown to
+\texttt{data/probe/\{run\_name\}\_iter\{N\}\_t\{temp\}/}.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+ & \textbf{Ran OK} & \textbf{Crashed} & \textbf{Mean reward (runners)} & \textbf{Best reward} \\
+\midrule
+Iter 0 (base) & 13 / 20 & 7 / 20 & $-218.9$ & $-92.4$ \\
+Iter 5        & 20 / 20 & 0 / 20 & $-140.4$ & $-140.4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection*{Iter 0}
+
+The base model generates varied PD/PID controllers but crashes 35\% of the
+time by attempting to read hidden env internals (\texttt{a\_max}, \texttt{dt},
+\texttt{steps}) from the state dict. The 13 successful policies span a reward
+range of $[-92, -373]$ with genuine variation in gain choices. The best
+policy uses asymmetric gains ($k_{px}=2.0, k_{dx}=1.0$; $k_{py}=1.5,
+k_{dy}=1.0$) and scores $-92.4$ over 8 scenarios.
+
+\subsubsection*{Iter 5}
+
+Zero crashes. The error-reading habit is gone. However, all 20 samples at
+temperature $0.8$ produce \emph{exactly} $-140.3516$ (identical to 4 decimal
+places). Every policy is byte-for-byte the same: $k_p = 2.0$, $k_d = 1.5$.
+This is the \textbf{illustrative example embedded in the prompt template}
+(\texttt{configs/prompt\_template.txt}). The model has memorized and
+reproduced it verbatim.
+
+\subsection*{Interpretation}
+
+Training achieved two things and failed at a third.
+
+\textit{Achieved.} Error rate dropped from 35\% to 0\% --- the model learned
+not to read hidden env attributes. Mean reward over runners improved by 35\%.
+
+\textit{Failed.} The model collapsed to a single policy. With $\beta = 0$
+(no KL penalty), one training prompt, and 20 gradient steps per outer
+iteration, GRPO found the prompt example as a high-reward fixed point and
+reinforced it into a delta distribution. By iter 5, temperature $0.8$
+sampling produces zero diversity. The best reachable policy is now $-140.4$,
+worse than the base model's best ($-92.4$).
+
+This is reward hacking: the model optimized the training distribution
+(memorize the example) rather than the environment.
+
+\subsection*{Hypotheses to test}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Remove or paraphrase the prompt example.} It is the attractor
+        GRPO is collapsing to. A deliberately suboptimal or absent example
+        removes the fixed point.
+  \item \textbf{More training prompts.} With 1 prompt, every outer iteration
+        trains on the same input. Adding 4--8 tasks with varied dynamics forces
+        generalization.
+  \item \textbf{Raise $\beta > 0$.} A non-zero KL coefficient prevents the
+        policy from drifting too far from the base distribution and preserves
+        diversity.
+  \item \textbf{Reduce epochs.} 20 gradient steps on 1 prompt per outer
+        iteration is aggressive. 5--10 may preserve more exploration.
+  \item \textbf{Probe at every intermediate checkpoint.} Does collapse happen
+        at iter 1 or gradually? One probe per checkpoint would pinpoint when
+        diversity dies.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item What does the W\&B reward curve look like across the 5 iterations?
+        (The run at \texttt{puck\_grpo\_run\_5-orchestrator} has data but some
+        post-resume steps may be missing due to a step-monotonicity issue.)
+  \item What is the PD+feedforward ceiling expressed in probe-script reward
+        units? This would establish what score a successful LoRA policy needs
+        to beat.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At commit \commit{d5bc81c}, with adapter checkpoints in
+\texttt{models/lora/puck\_grpo\_run\_5/}:
+
+\smallskip
+\texttt{scripts/probe\_generation.py} \texttt{--iter 0 --run\_name puck\_grpo\_run\_5 --n 20}
+
+\texttt{scripts/probe\_generation.py} \texttt{--iter 5 --run\_name puck\_grpo\_run\_5 --n 20}
+
+\smallskip
+Results land in \texttt{data/probe/puck\_grpo\_run\_5\_iter\{000,005\}\_t0p80/}.
+
+\end{document}
