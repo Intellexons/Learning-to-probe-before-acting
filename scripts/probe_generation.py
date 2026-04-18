@@ -16,10 +16,15 @@ With merged adapters from a previous run:
       --config configs/loop_grpo.yaml \
       --iter 10 --run_name puck_grpo_run_3 --n 4
 
+Results are saved to data/probe/{run_name}_iter{N}_t{temp}/ by default.
+Override with --output-dir.
+
 This does NOT train anything and does NOT write to W&B. It only reads weights
 and prints. Safe to run against an idle VM.
 """
 import argparse
+import csv
+import json
 import logging
 import sys
 from pathlib import Path
@@ -52,6 +57,15 @@ def _show_block(label: str, body: str, max_chars: int = 4000) -> None:
     print()
 
 
+def _make_output_dir(base: str, run_name: str | None, iter_num: int, temperature: float) -> Path:
+    run_label = run_name or "base"
+    temp_str = f"{temperature:.2f}".replace(".", "p")
+    name = f"{run_label}_iter{iter_num:03d}_t{temp_str}"
+    out = Path(base) / name
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="YAML config (for paths + generation params)")
@@ -63,6 +77,11 @@ def main():
         type=int,
         default=0,
         help="Which training task to probe (default: first task)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Root dir for probe outputs (default: data/probe/)",
     )
     args = parser.parse_args()
 
@@ -97,12 +116,22 @@ def main():
     top_p = grpo_cfg.get("top_p", 0.95)
     max_tokens = grpo_cfg.get("max_completion_length", 600)
 
+    # Set up output directory
+    out_dir = _make_output_dir(
+        args.output_dir or "data/probe",
+        args.run_name,
+        args.iter,
+        temperature,
+    )
+    logger.info(f"Saving probe results to {out_dir}/")
+
     print()
     print(f"Generating {args.n} completions at temperature={temperature}, top_p={top_p}, max_tokens={max_tokens}")
     print()
 
     scoring_cfg = cfg["scoring"]
     summary_rows = []
+    all_samples = []
 
     for i in range(args.n):
         print()
@@ -117,17 +146,36 @@ def main():
         raw = result.get("raw_response", "")
         _show_block("RAW MODEL OUTPUT", raw)
 
+        sample = {
+            "sample_index": i,
+            "status": None,
+            "raw_output": raw,
+            "code": None,
+            "is_valid": False,
+            "validation_error": None,
+            "reward_total": None,
+            "ran_successfully": False,
+            "reward_per_scenario": [],
+            "errors": [],
+        }
+
         if not result["success"]:
             print(f"generate_code reported failure: {result.get('error')}")
+            sample["status"] = "gen_fail"
+            sample["validation_error"] = result.get("error")
             summary_rows.append((i, "gen_fail", 0.0, False, result.get("error")))
+            all_samples.append(sample)
             continue
 
         code = result["code"]
         _show_block("EXTRACTED CODE (after extract_code)", code)
+        sample["code"] = code
 
         is_valid, err_msg = validate_code(code)
         print(f"validate_code: is_valid={is_valid}  error={err_msg!r}")
         print()
+        sample["is_valid"] = is_valid
+        sample["validation_error"] = err_msg
 
         score = score_sample(
             code, task,
@@ -140,15 +188,27 @@ def main():
         if score["errors"]:
             print(f"  errors: {score['errors']}")
 
+        sample["status"] = "valid" if is_valid else "invalid"
+        sample["reward_total"] = score["reward_total"]
+        sample["ran_successfully"] = score["ran_successfully"]
+        sample["reward_per_scenario"] = score["reward_per_scenario"]
+        sample["errors"] = score["errors"]
+
         summary_rows.append((
             i,
-            "valid" if is_valid else "invalid",
+            sample["status"],
             score["reward_total"],
             score["ran_successfully"],
             (score["errors"][:1] or [None])[0],
         ))
+        all_samples.append(sample)
 
-    # Summary table
+        # Save each valid policy as its own .py file
+        if code and is_valid:
+            policy_path = out_dir / f"sample_{i:02d}_reward{score['reward_total']:.1f}.py"
+            policy_path.write_text(code)
+
+    # Summary table — console
     print()
     print(_hline("="))
     print("SUMMARY")
@@ -159,6 +219,42 @@ def main():
         i, status, rew, ok, err = row
         err_s = (err[:60] if err else "-")
         print(f"{i:>3} {status:>8} {rew:>12.2f} {str(ok):>7}  {err_s}")
+
+    # Save summary CSV
+    csv_path = out_dir / "summary.csv"
+    with csv_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["sample", "status", "reward_total", "ran_successfully", "first_error"])
+        for row in summary_rows:
+            writer.writerow(row)
+
+    # Save per-scenario reward table
+    scenario_path = out_dir / "per_scenario_rewards.csv"
+    all_scenario_ids = []
+    for s in all_samples:
+        for sid in (s["reward_per_scenario"] or {}).keys():
+            if sid not in all_scenario_ids:
+                all_scenario_ids.append(sid)
+    with scenario_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["sample", "status", "reward_total"] + all_scenario_ids)
+        for s in all_samples:
+            per = s["reward_per_scenario"] or {}
+            writer.writerow(
+                [s["sample_index"], s["status"], s["reward_total"] if s["reward_total"] is not None else ""]
+                + [per.get(sid, "") for sid in all_scenario_ids]
+            )
+
+    # Save full details as JSON
+    json_path = out_dir / "samples.json"
+    json_path.write_text(json.dumps(all_samples, indent=2, default=str))
+
+    print()
+    print(f"Results saved to {out_dir}/")
+    print(f"  summary.csv              — per-sample status + total reward")
+    print(f"  per_scenario_rewards.csv — reward breakdown per scenario")
+    print(f"  samples.json             — full details (code, errors, raw output)")
+    print(f"  sample_XX_reward*.py     — extracted policy code for valid samples")
 
 
 if __name__ == "__main__":
