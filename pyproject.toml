@@ -12,4 +12,5 @@ dependencies = [
     "pyyaml>=6.0",
     "sentencepiece>=0.1.99",
     "wandb>=0.25.1",
+    "matplotlib>=3.10.8",
 ]
