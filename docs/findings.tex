@@ -225,4 +225,87 @@ At commit \commit{d5bc81c}, with adapter checkpoints in
 \smallskip
 Results land in \texttt{data/probe/puck\_grpo\_run\_5\_iter\{000,005\}\_t0p80/}.
 
+% ============================================================
+\section*{2026-04-19 \quad Run 8: removing the prompt example unlocks genuine learning}
+% ============================================================
+
+\commit{7ce5526} $\cdot$ \textit{puck\_grpo\_run\_8, 28 outer iterations, iters 0/4/8/12/16/20/24/27 probed ($n=20$ each)}
+
+\subsection*{Setup}
+
+Run 7 (aborted at iter 1) confirmed the model was already generating diverse
+policies without the prompt example. Run 8 ran the full 30-iteration schedule
+on the same config as run 5 (\commit{e9353d7}), with the single change that
+the illustrative $k_p=2.0$, $k_d=1.5$ example was removed from
+\texttt{configs/prompt\_template.txt} (PR \#13, \commit{e5fe162}). Adapters
+were downloaded from the GCP VM and placed in
+\texttt{models/lora/puck\_grpo\_run\_8/}. Eight evenly-spaced iterations
+were probed to capture the full learning trajectory without evaluating all 28.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+\textbf{Iter} & \textbf{Crashes} & \textbf{Mean reward} & \textbf{Best reward} \\
+\midrule
+0  & 17 / 20 & $-1403$ & $-223$ \\
+4  &  0 / 20 & $-221$  & $-165$ \\
+8  &  0 / 20 & $-69$   & $-64$  \\
+12 &  0 / 20 & $-67$   & $-54$  \\
+16 &  0 / 20 & $-28$   & $+12$  \\
+20 &  0 / 20 & $+199$  & $+248$ \\
+24 &  0 / 20 & $+212$  & $+247$ \\
+27 &  0 / 20 & $+215$  & $+248$ \\
+\bottomrule
+\end{tabular}
+\caption{20 samples $\times$ 8 scenarios each. Reward $> 0$ indicates consistent
+goal reaching (goal bonus $= +50$ per scenario).}
+\end{table}
+
+\subsection*{Interpretation}
+
+This is the first run showing genuine learning. Three phases are visible.
+\textit{Iters 0--4}: crashes drop from 85\% to 0\% as the model learns the
+valid state-key constraint. \textit{Iters 4--16}: reward improves steadily
+from $-221$ to near zero — the model is reaching the goal on some scenarios
+but not consistently. \textit{Iters 16--20}: a sharp transition to positive
+reward ($+199$ mean), indicating consistent goal reaching across most scenarios.
+The curve flattens after iter 20 with marginal gains through iter 27.
+
+The single change responsible is the removal of the prompt example. In run 5
+the example provided a ready-made fixed point that GRPO collapsed to after
+one update. Without it, the model must explore the policy space, and GRPO
+has real variance to amplify.
+
+The iter-27 best reward of $+248$ approaches the hand-written PD+feedforward
+ceiling (estimated at $\approx +270$ for 8 scenarios at $+50$ goal bonus each,
+assuming $\sim 73\%$ goal rate from the 200-seed baseline).
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Probe all 28 iterations} to pinpoint exactly when the phase
+        transition at iter 16--20 occurs and whether it is sharp or gradual.
+  \item \textbf{Measure diversity at convergence.} Run 5 collapsed to 1 unique
+        policy; does run 8 maintain diversity at iter 27, or does it collapse
+        to a different fixed point once reward saturates?
+  \item \textbf{Compare against the hand-written ceiling.} Score the PD+feedforward
+        baseline with \texttt{scripts/probe\_generation.py} at iter 0 to get
+        a reward number in the same units.
+  \item \textbf{Train longer or with more prompts} to see whether the plateau
+        at iter 20--27 is a capacity limit or simply convergence of the single
+        training task.
+\end{enumerate}
+
+\subsection*{Reproduce}
+
+At \commit{7ce5526}, with adapters in \texttt{models/lora/puck\_grpo\_run\_8/}:
+
+\smallskip
+\texttt{scripts/probe\_all\_iters.py} \texttt{--run\_name puck\_grpo\_run\_8 --iters 0 4 8 12 16 20 24 27 --n 20}
+
+\texttt{scripts/analyze\_probe.py} \texttt{--run\_name puck\_grpo\_run\_8}
+
 \end{document}
