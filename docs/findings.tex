@@ -325,4 +325,104 @@ At \commit{7ce5526}, with adapters in \texttt{models/lora/puck\_grpo\_run\_8/}:
 
 \texttt{scripts/analyze\_probe.py} \texttt{--run\_name puck\_grpo\_run\_8}
 
+% ============================================================
+\section*{2026-04-22 \quad Policy analysis: what run 8 learned, and why iter 0 failed}
+% ============================================================
+
+\commit{e6bc200} $\cdot$ \textit{manual probe inspection, run 8 iter 0 and iter 27}
+
+\subsection*{Setup}
+
+With run 8 showing genuine learning (mean reward $+215$ at iter 27, up from $-1403$ at iter 0),
+the question was: what strategy did the model actually discover, and why was the base model unable
+to write a working policy at all? All 20 iter-0 and all 20 iter-27 policy files from
+\texttt{data/probe/puck\_grpo\_run\_8\_iter\{000,027\}\_t0p80/} were read and compared manually.
+
+\subsection*{Results}
+
+\textbf{Iter 27 --- convergent velocity P-controller.}
+Every iter-27 sample uses the same structural template: compute the angle to the goal, set a
+desired velocity of magnitude \textit{speed} in that direction, and command acceleration proportional
+to the velocity error:
+\begin{equation*}
+  a = \text{gain} \times (v_{\text{desired}} - v_{\text{current}})
+\end{equation*}
+The only variation across the 20 samples is in two scalar hyperparameters: desired speed (1.0--5.0)
+and gain ($/0.05 = \times20$, $\times10$, $\times20$). The three below-average samples each have
+a distinct defect: sample 08 contains a positional-step bug that degenerates to naive aim
+(reward $-62.8$); sample 10 sets speed $= 1.0$, too slow to reach the goal in 120 steps;
+sample 15 self-clips at $3.0$ below the env's own $a_{\max}$.
+
+\textbf{Iter 0 --- API mismatch causes 85\% crash rate.}
+17 of 20 base-model policies crashed with KeyError at reward floor $-1600$.
+The specific hidden keys accessed are summarised in Table~\ref{tab:iter0_crashes}.
+The three survivors avoided hidden keys only by accident: two hardcoded thrust magnitude constants
+and one hardcoded all physics parameters (\texttt{tilt\_x = 0.0}, \texttt{mu = 0.5},
+\texttt{a\_max = 1.5}). The survivors scored $-223$, $-312$, and $-325$ --- all worse than
+the naive aim baseline.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Hidden key} & \textbf{Samples accessing it} \\
+\midrule
+\texttt{a\_max} & 00, 01, 02, 03, 04, 05, 07, 08, 11, 12, 14, 15, 16, 19 \\
+\texttt{tilt\_x}, \texttt{tilt\_y} & 01, 03, 04, 06, 08, 11, 12, 13, 14, 15, 16, 19 \\
+\texttt{mu} & 01, 04, 07, 08, 12, 15, 16 \\
+\texttt{dt} & 16, 17 \\
+\bottomrule
+\end{tabular}
+\caption{Hidden state keys accessed by crashing iter-0 samples.}
+\label{tab:iter0_crashes}
+\end{table}
+
+\subsection*{Interpretation}
+
+\textbf{What iter 27 discovered.}
+The trained model found a velocity P-controller rather than the PD-on-position + tilt-feedforward
+strategy used by the hand-written baseline. This is structurally different: there is no
+position error term and no tilt awareness. The approach works because high-gain velocity
+tracking rejects tilt disturbances reactively within a few timesteps, yielding near-ceiling
+reward without explicit feedforward. The residual 8\% gap to the hand-written ceiling
+($+248$ vs.\ $\approx +270$) is consistent with reactive rather than proactive tilt rejection.
+
+\textbf{Why iter 0 failed.}
+The base model's prior --- drawn from pretraining on standard RL codebases --- is that a physics
+simulation exposes all its parameters through the state dict or environment attributes. 14 of 17
+crashing samples attempted tilt compensation or drag cancellation that would have been correct
+if the hidden parameters were accessible. The model's control-theory knowledge was largely sound;
+its environment-API assumption was wrong. GRPO fixed the API assumption without teaching better
+control theory, because velocity tracking was sufficient to saturate the available reward.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Probe the transition from position-thrust (iter 0 survivors) to velocity-tracking
+        (iter 27).} At which iteration does the velocity-control template first appear?
+        Checking iter-4 policies would show whether it emerges immediately after crash rate drops.
+  \item \textbf{Test whether harder tilt distributions force tilt compensation.}
+        With wider tilt ranges the reactive velocity-tracker may fail; GRPO would then need to
+        discover an explicit feedforward term to push reward higher.
+  \item \textbf{Provide the hidden parameters in the state dict and retrain.}
+        If the base model already knows how to use tilt/drag/a\_max (most iter-0 samples attempt it),
+        a single run with those keys exposed could achieve the hand-written ceiling immediately
+        and reveal what further headroom exists beyond it.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Would the velocity-tracking template generalise to a new environment with different
+        dynamics, or is it a memorised pattern for the puck task?
+  \item The best iter-27 policy ($+247.6$) and the best iter-0 survivor ($-223$) both use
+        only valid state keys. Is the iter-27 template a refinement of the iter-0 survivor
+        template, or did it emerge independently under GRPO pressure?
+\end{itemize}
+
+\subsection*{Reproduce}
+
+Manual inspection at \commit{e6bc200}; policy files already present in
+\texttt{data/probe/puck\_grpo\_run\_8\_iter\{000,027\}\_t0p80/}.
+
 \end{document}
