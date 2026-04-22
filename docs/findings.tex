@@ -430,6 +430,100 @@ control theory, because velocity tracking was sufficient to saturate the availab
 \subsection*{Reproduce}
 
 Manual inspection at \commit{e6bc200}; policy files already present in
-\texttt{data/probe/puck\_grpo\_run\_8\_iter\{000,027\}\_t0p80/}.
+\texttt{data/probe/} (run 8, iter 0 and iter 27 probe directories).
+
+% ============================================================
+\section*{2026-04-22 \quad Phase transition iter 16$\to$20: gain and speed jointly determine goal capture}
+% ============================================================
+
+\commit{cd60244} $\cdot$ \textit{manual inspection of iter016 and iter020 probe files, run 8}
+
+\subsection*{Setup}
+
+The run-8 learning curve shows a sharp mean-reward jump from $+28$ (iter~16) to $+199$
+(iter~20). To understand the cause, all 40 policy files from the run-8 iter-16 and iter-20
+probe directories were read and compared.
+
+\subsection*{Results}
+
+Both iterations use the velocity-tracking template without exception: no crashes, no hidden-key
+reads. The difference lies entirely in the choice of two scalar hyperparameters.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Iter} & \textbf{Dominant speed} & \textbf{Dominant gain} & \textbf{Mean reward} & \textbf{Best reward} \\
+\midrule
+16 & 10.0 & $\times 1$ & $+28$ & $+12$ \\
+20 & 2.0--5.0 & $\times 10$--$50$ & $+199$ & $+248$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At iter 16, 14 of 20 samples set \texttt{desired\_speed = 10} and compute acceleration as the raw
+velocity error (\texttt{ax = desired\_vx - vx}, gain $= 1$). Five samples compute the desired
+velocity as an unnormalized position vector (\texttt{desired\_vx = speed * dx}), giving a
+distance-proportional target that oscillates near the goal; these score $-53$ to $-154$.
+By iter 20, all samples use speeds of 1.5--5.0 and gains of $\times 10$--$\times 50$ (via
+\texttt{/ 0.05}, \texttt{* 10.0}, \texttt{* 20.0}, or chained multipliers). The one failure
+at iter 20 (sample 14, reward $+0.5$) is the sole sample that reverts to \texttt{desired\_speed = 10}
+with gain $\times 10$.
+
+\subsection*{Interpretation}
+
+The controller has no explicit distance term and does not decelerate near the goal. Goal capture
+depends on two mechanisms.
+
+\textit{Finite goal-zone radius.} The puck need only be inside the goal radius at one timestep.
+At speed $v$ and $dt = 0.05$\,s, the per-step displacement is $v \cdot dt$. At 3\,m/s this is
+0.15\,m, comfortably below the goal diameter ($\approx 0.5$\,m), guaranteeing detection on
+a direct pass.
+
+\textit{Tilt rejection and overshoot amplitude.} After the puck passes the goal, \texttt{angle\_to\_goal}
+flips immediately; the controller commands a reversal. The overshoot amplitude before
+the reversal takes effect scales as $v_{\text{desired}} / \text{gain}$: low speed and high gain
+together keep the oscillation amplitude small so the puck re-enters the goal zone on the
+next pass. More importantly, during the approach, a lateral tilt acceleration $\mathbf{g}_\perp$
+induces a sideways velocity error $\delta v$. With gain $= 1$, the correction is $\delta v$
+(which clips immediately at $a_{\max}$, providing no extra correction). With gain $= 20$,
+the correction is $20\,\delta v$ in the linear regime, rejecting tilt drift $20\times$ faster
+and keeping the trajectory aligned with the goal despite hidden tilt.
+
+The iter-16 failure is therefore not discrete-timestep miss (step size 0.2\,m at terminal
+velocity $\approx 4$\,m/s is still inside the goal diameter) but poor tilt rejection: with
+gain $= 1$ the puck drifts off the goal axis and misses the zone on most scenarios. GRPO
+resolved this by selectively reinforcing samples where the gain happened to be high enough
+to overcome tilt drift, receiving the sharp $+50$ goal bonus as the reward signal.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Probe iter 17--19} to determine whether the gain shift happens in one step
+        or gradually. The $+50$ bonus is a discontinuous signal that could cause a single-iteration
+        jump if the right (speed, gain) combination appears at random and is then strongly reinforced.
+  \item \textbf{Measure whether gain or speed is the primary driver.} Evaluate policies with
+        high gain + high speed, and low gain + low speed, on the 8-scenario test set to
+        separate the tilt-rejection and step-size effects.
+  \item \textbf{Test with wider tilt distributions.} If tilt rejection is the bottleneck,
+        harder tilt scenarios should widen the gap between gain $= 1$ and gain $= 20$
+        controllers, making the transition more pronounced.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item The transition occurs at a specific GRPO iteration. Is there a single lucky sample
+        with high gain that crossed the reward threshold and was amplified, or did gain drift
+        upward continuously across iter 16--20?
+  \item What is the minimum gain needed for reliable goal capture at a given tilt magnitude?
+        This would give a quantitative criterion for when the velocity-tracking controller is
+        ``good enough.''
+\end{itemize}
+
+\subsection*{Reproduce}
+
+Manual inspection at \commit{cd60244}; policy files already present in
+\texttt{data/probe/} (run 8, iter 16 and iter 20 probe directories).
 
 \end{document}
