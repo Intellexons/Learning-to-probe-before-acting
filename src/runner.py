@@ -1,6 +1,7 @@
 import ast
 import json
 import logging
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,41 @@ DANGEROUS_MODULES = {
 # and end up *higher* than running-but-failing samples (which integrate negative
 # distance penalties), and GRPO rewards the model for producing errors.
 ERROR_PENALTY_PER_SCENARIO = -200.0
+
+# Cap on bytes of stdout returned from a `main` turn. Prevents a runaway
+# print-loop from blowing the chat context.
+MAIN_STDOUT_TRUNCATE = 2000
+
+
+# Recognized fence language tags for multi-turn dispatch. Anything else (or
+# no fence at all) is treated as `mode = "invalid"` and rejected at the floor.
+_FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```", re.DOTALL)
+
+
+def extract_code_with_mode(text: str) -> tuple[str, str]:
+    """Parse a model completion into (mode, code).
+
+    Modes:
+      - "policy": fenced block tagged ```policy``` — code defines `def policy(state)`
+      - "main":   fenced block tagged ```main```   — arbitrary scratchpad code
+      - "invalid": no recognized fence (untagged, wrong tag, missing fence)
+
+    The first matching fenced block wins. If multiple fences are present, only
+    the first is considered — the runner does NOT execute multiple code blocks
+    per turn.
+    """
+    if not text:
+        return "invalid", ""
+    match = _FENCE_RE.search(text)
+    if match is None:
+        return "invalid", ""
+    tag = (match.group(1) or "").lower()
+    code = (match.group(2) or "").strip()
+    if tag == "policy":
+        return "policy", code
+    if tag == "main":
+        return "main", code
+    return "invalid", ""
 
 
 def validate_code(code: str) -> tuple[bool, str]:
@@ -57,7 +93,30 @@ def validate_code(code: str) -> tuple[bool, str]:
     return True, ""
 
 
-_RUNNER_TEMPLATE = '''\
+def validate_main_code(code: str) -> tuple[bool, str]:
+    """Validate a `main` turn's code: same dangerous-import allowlist as
+    policy, but `def policy` is NOT required (the whole point of main is
+    arbitrary scratchpad).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"Syntax error: {e}"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top_module = alias.name.split(".")[0]
+                if top_module in DANGEROUS_MODULES:
+                    return False, f"Dangerous import: {alias.name}"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                top_module = node.module.split(".")[0]
+                if top_module in DANGEROUS_MODULES:
+                    return False, f"Dangerous import from: {node.module}"
+    return True, ""
+
+
+_RUNNER_TEMPLATE_POLICY = '''\
 import json
 import sys
 import math
@@ -94,6 +153,21 @@ print(json.dumps(result))
 '''
 
 
+# `main` turn template: NO env class, NO scenario loop. The model uses this
+# for derivations / scratchpad math / printing intermediate variables it
+# wants to read in turn 2. Per the 2026-04-25 design decision, exposing the
+# env class to main() would let the LLM substitute empirical probing of
+# hidden parameters for analytical reasoning, which defeats the
+# partial-observability point. Reversing this is a one-line change.
+_RUNNER_TEMPLATE_MAIN = '''\
+import math
+import random
+
+# --- Main code (model's scratchpad) ---
+{main_code}
+'''
+
+
 def run_policy_in_subprocess(
     code: str,
     env_code: str,
@@ -103,7 +177,7 @@ def run_policy_in_subprocess(
     env_class: str = "CartPoleEnv",
 ) -> dict:
     """Execute policy in a subprocess with timeout."""
-    script = _RUNNER_TEMPLATE.format(
+    script = _RUNNER_TEMPLATE_POLICY.format(
         env_code=env_code,
         policy_code=code,
         seed=scenario.get("seed", 0),
@@ -135,6 +209,36 @@ def run_policy_in_subprocess(
         return {"reward": 0.0, "steps": 0, "error": "Timeout"}
     except (json.JSONDecodeError, ValueError) as e:
         return {"reward": 0.0, "steps": 0, "error": f"Output parse error: {e}"}
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def run_main_in_subprocess(code: str, timeout: int = 10) -> dict:
+    """Execute a `main` turn in the sandbox and capture stdout.
+
+    Returns: {"stdout": str, "error": str | None}. A truncated stdout (capped
+    at MAIN_STDOUT_TRUNCATE bytes) is returned even on success because the
+    captured text is the model's "tool result" — keeping it bounded prevents
+    a runaway print-loop from blowing the chat context.
+    """
+    script = _RUNNER_TEMPLATE_MAIN.format(main_code=code)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(script)
+        tmp_path = f.name
+    try:
+        result = subprocess.run(
+            [sys.executable, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        stdout = (result.stdout or "")[:MAIN_STDOUT_TRUNCATE]
+        if result.returncode != 0:
+            stderr_tail = (result.stderr or "").strip()[-500:]
+            return {"stdout": stdout, "error": f"Process error: {stderr_tail}"}
+        return {"stdout": stdout, "error": None}
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "error": "Timeout"}
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -189,3 +293,36 @@ def score_sample(
         "errors": errors,
         "ran_successfully": ran_any,
     }
+
+
+# Alias for clarity in multi-turn code paths. `score_policy_turn` is the same
+# operation as `score_sample` — both score a `policy(state)` body across all
+# of a task's scenarios. Kept as a separate name so callers reading a
+# branched-rollout function can see at a glance which mode is being scored.
+score_policy_turn = score_sample
+
+
+def score_main_turn(code: str, timeout: int = 10) -> dict:
+    """Score a `main` turn — execute the code in the sandbox, return stdout.
+
+    Unlike `score_policy_turn`, this does NOT produce a numeric reward. The
+    "value" of a main turn is the captured stdout text returned to the model
+    in the next user message. Per-trajectory reward credit for a main turn
+    comes from the branched-rollout MC estimator: turn-1's value V̂₁ is the
+    mean reward over the G₂ continuations, regardless of whether turn 1 was
+    `policy` or `main`. So the only thing this function must report is the
+    text the model gets to read next turn.
+
+    A validation failure or runtime error returns an "[error: ...]" stdout
+    rather than raising, so the chat history stays well-formed.
+    """
+    is_valid, error_msg = validate_main_code(code)
+    if not is_valid:
+        return {"stdout": f"[main rejected: {error_msg}]", "error": error_msg}
+    result = run_main_in_subprocess(code, timeout=timeout)
+    if result["error"]:
+        return {
+            "stdout": f"{result['stdout']}\n[main error: {result['error']}]".strip(),
+            "error": result["error"],
+        }
+    return {"stdout": result["stdout"], "error": None}
