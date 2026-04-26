@@ -32,14 +32,11 @@ branched:
   # be noisy at G=2 but non-zero is enough to verify the math.
   g1: 2
   g2: 2
-  # 2*100 + 256 = 456 max_completion_length. Backward at g1*g2=4 with
-  # max_turn_tokens=200 (656-token completion) still OOMed at the
-  # logits-gradient step (4 × 656 × 151936 × 2 bytes ≈ 1.6 GiB just
-  # for the logits gradient, plus all layer activations + LM head).
-  # 100 tokens/turn keeps the completion at 456, ~30% smaller backward.
-  # The model can't write meaningful policies in 100 tokens — but the
-  # smoke is for plumbing verification, not training quality.
-  max_turn_tokens: 100
+  # 200 tokens/turn is enough for run_8-style velocity P-controllers
+  # (~70 tokens) AND a meaningful main() derivation (~150 tokens).
+  # The protocol-section trim in src/prompts.py recovered ~120 tokens of
+  # prompt budget, so 200/turn now fits at g1*g2=4 on L4.
+  max_turn_tokens: 200
 
 grpo:
   num_iterations: 1
