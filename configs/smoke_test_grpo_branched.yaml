@@ -1,0 +1,76 @@
+# Branched-rollout multi-turn GRPO smoke test.
+#
+# Tiny sizing so the loop completes end-to-end on an L4 in ~30-60 minutes.
+# Goal: verify the training subprocess actually finishes without exceptions
+# AND the new diagnostics (branched/v1_signal_ratio, branched/a_turn1_std,
+# branched/generate_calls) appear in W&B. NOT a learning-quality run.
+#
+# Per-step compute: 1 prompt × g1*g2 = 16 trajectories per training step.
+# 2 outer iters × 2 epochs = 4 training steps total + 2 evals.
+base_model:
+  hf: "Qwen/Qwen2.5-Coder-3B-Instruct"
+
+paths:
+  hf_base_dir: "models/hf_base"
+  lora_dir: "models/lora"
+  rollouts_dir: "data/rollouts"
+  tasks_train: "data/tasks/train.jsonl"
+  tasks_eval: "data/tasks/eval.jsonl"
+
+loop:
+  iterations: 2
+  trainer: "grpo_branched"
+
+branched:
+  g1: 4
+  g2: 4
+  max_turn_tokens: 300   # smaller than 400 for faster smoke
+
+grpo:
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  beta: 0.0
+  loss_type: "dapo"
+  scale_rewards: "batch"
+  temperature: 0.8
+  top_p: 0.95
+  mask_truncated_completions: true
+  log_completions: true
+
+# Eval still uses single-turn render_prompt (default total_turns=1) and
+# extract_code, which won't recognize the ```policy``` fence the model
+# learns to emit. Smoke run just verifies the loop runs end-to-end; eval
+# scores will be low / noisy. Multi-turn eval is a follow-up.
+generation:
+  n_samples_per_task: 4
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 600
+
+scoring:
+  timeout_seconds: 15
+  max_steps: 200
+
+training:
+  learning_rate: 1.0e-4
+  per_device_train_batch_size: 16  # = g1 * g2
+  gradient_accumulation_steps: 1
+  num_train_epochs: 2              # 2 prompts/epoch * 2 epochs = 4 steps total
+  warmup_ratio: 0.1
+  bf16: true
+  gradient_checkpointing: true
+  logging_steps: 1
+  report_to: "wandb"
+  wandb_project: "lora4vr"
+
+lora:
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  task_type: "CAUSAL_LM"

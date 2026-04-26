@@ -223,6 +223,15 @@ def main():
                 f"uv run python scripts/04_train_grpo_lora.py --iter {k} --config {args.config} {run_flag}",
                 f"Iteration {k}: GRPO training (generate + score + optimize)",
             )
+        elif trainer_type == "grpo_branched":
+            # Branched-rollout multi-turn GRPO (N=2, VinePPO-style). The
+            # subprocess generates the G_1 × G_2 tree, computes per-turn
+            # advantages, and dumps trainer_log_iter_*.json the same way
+            # 04_train_grpo_lora.py does, so the rest of this loop is unchanged.
+            run_step(
+                f"uv run python scripts/05_train_grpo_branched.py --iter {k} --config {args.config} {run_flag}",
+                f"Iteration {k}: Branched GRPO training (G1×G2 tree + per-turn advantages)",
+            )
         else:
             # DPO pipeline: generate -> score -> build pairs -> train
             run_step(
@@ -261,7 +270,7 @@ def main():
         # Forward the trainer subprocess's per-step log_history to the
         # orchestrator's W&B run with a monotonic step offset, so the
         # loss / reward / KL curves are continuous across outer iterations.
-        if wandb_run is not None and trainer_type == "grpo":
+        if wandb_run is not None and trainer_type in ("grpo", "grpo_branched"):
             trainer_step_offset = _forward_trainer_log_history(
                 wandb_run, run_name, k, trainer_step_offset
             )
