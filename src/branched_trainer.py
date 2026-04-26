@@ -45,6 +45,7 @@ from src.multi_turn import (
     compute_branched_advantages,
     execute_turn,
     format_tool_message,
+    rollout_diagnostics,
 )
 from src.runner import ERROR_PENALTY_PER_SCENARIO
 
@@ -82,6 +83,8 @@ class _Trajectory:
     turn1_mode: str
     turn2_mode: str
     reward: float
+    a_turn1: float = 0.0  # scalar advantage applied to all turn-1 tokens
+    a_turn2: float = 0.0  # scalar advantage applied to all turn-2 tokens
     advantages: list[float] | None = None
     tool_mask: list[int] | None = None
 
@@ -161,6 +164,10 @@ class BranchedGRPOTrainer(GRPOTrainer):
 
         # Diagnostics dict consumed by DiversityCallback. Reset each step.
         self._latest_rollout_diag: dict[str, Any] = {}
+        # Counts the underlying `model.generate` calls. Per branched prompt:
+        # 1 (turn-1 fan-out via num_return_sequences) + G_1 (one per
+        # first-turn-prefix continuation). Reset per `_generate_and_score_*`.
+        self._generate_call_count = 0
 
     # ------------------------------------------------------------------
     # Generation primitives
@@ -197,6 +204,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
                 pad_token_id=pad_id,
                 num_return_sequences=n_samples,
             )
+        self._generate_call_count += 1
 
         results = []
         for i in range(n_samples):
@@ -246,12 +254,13 @@ class BranchedGRPOTrainer(GRPOTrainer):
         self,
         prompt_messages: list[dict],
         task: dict,
-    ) -> tuple[list[_Trajectory], float, list[float]]:
+    ) -> tuple[list[_Trajectory], float, dict[str, float]]:
         """Run the full G_1×G_2 tree for one prompt.
 
-        Returns (trajectories, V_0, V_1) — V_0 is the grand-mean reward and
-        V_1 is the per-first-turn-variant mean. Each trajectory has its
-        per-token `advantages` and `tool_mask` populated.
+        Returns (trajectories, V_0, diag) — V_0 is the grand-mean reward and
+        `diag` is the per-prompt diagnostics dict from `rollout_diagnostics`
+        (V_1 between/within variance, A_turn{1,2} std, signal ratio). Each
+        trajectory has its per-token `advantages` and `tool_mask` populated.
         """
         # Phase A — generate G_1 first-turn variants
         turn1_outputs = self._generate_one_turn(prompt_messages, self.g1)
@@ -292,17 +301,18 @@ class BranchedGRPOTrainer(GRPOTrainer):
                 ))
             rewards_grid.append(row_rewards)
 
-        # Phase D — compute V_0, V_1, and per-token advantages.
-        v0, v1, a_turn1, a_turn2 = compute_branched_advantages(rewards_grid)
+        # Phase D — compute V_0, V_1, per-token advantages, and diagnostics.
+        v0, _v1, a_turn1, a_turn2 = compute_branched_advantages(rewards_grid)
         for traj in trajectories:
             t1_len, tool_len, t2_len = traj.segment_lengths()
+            traj.a_turn1 = a_turn1[traj.i][traj.j]
+            traj.a_turn2 = a_turn2[traj.i][traj.j]
             traj.advantages = assemble_per_token_advantages(
-                t1_len, tool_len, t2_len,
-                a_turn1[traj.i][traj.j],
-                a_turn2[traj.i][traj.j],
+                t1_len, tool_len, t2_len, traj.a_turn1, traj.a_turn2,
             )
             traj.tool_mask = assemble_tool_mask(t1_len, tool_len, t2_len)
-        return trajectories, v0, v1
+        diag = rollout_diagnostics(rewards_grid, a_turn1, a_turn2)
+        return trajectories, v0, diag
 
     # ------------------------------------------------------------------
     # Override _generate_and_score_completions
@@ -317,14 +327,19 @@ class BranchedGRPOTrainer(GRPOTrainer):
         mode = "train" if self.model.training else "eval"
         prompts = [x["prompt"] for x in inputs]
 
+        # Reset the generate-call counter so its post-step value reflects
+        # only this rollout. Logged below as `branched/generate_calls`.
+        self._generate_call_count = 0
+
         # Branched rollout per prompt — produces g1*g2 trajectories per prompt.
         all_trajectories: list[_Trajectory] = []
         for inp, prompt_messages in zip(inputs, prompts):
             task = self.task_map[inp["task_id"]]
-            traj_list, v0, v1 = self._branched_rollout_one_prompt(prompt_messages, task)
+            traj_list, v0, diag = self._branched_rollout_one_prompt(prompt_messages, task)
             all_trajectories.extend(traj_list)
             self._metrics[mode]["branched/V0"].append(v0)
-            self._metrics[mode]["branched/V1_std"].append(_pstdev_safe(v1))
+            for key, value in diag.items():
+                self._metrics[mode][f"branched/{key}"].append(value)
 
         # Stash diagnostics for DiversityCallback to read on next on_log.
         self._latest_rollout_diag = {
@@ -362,6 +377,14 @@ class BranchedGRPOTrainer(GRPOTrainer):
         self._update_logging_buffers(
             prompt_ids, completion_ids, advantages, rewards,
             mode=mode, inputs=inputs,
+        )
+
+        # Compute count for the amortization-vs-flat sanity check. Flat
+        # GRPO with G=g1*g2 and N=2 turns would do 2*g1*g2 generate calls
+        # per prompt; branched does 1 + g1. Logged so we can verify the
+        # claimed compute savings actually materialize at runtime.
+        self._metrics[mode]["branched/generate_calls"].append(
+            float(self._generate_call_count)
         )
 
         # `num_items_in_batch` is required by DAPO loss for the per-token-loss

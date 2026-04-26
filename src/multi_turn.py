@@ -188,6 +188,61 @@ def compute_branched_advantages(
     return v0, v1, a_turn1, a_turn2
 
 
+def rollout_diagnostics(
+    rewards: list[list[float]],
+    a_turn1: list[list[float]],
+    a_turn2: list[list[float]],
+) -> dict[str, float]:
+    """Per-prompt diagnostics that inform G_1 vs G_2 tuning.
+
+    Given the (G_1, G_2) reward grid and the per-turn advantage grids
+    produced by `compute_branched_advantages`, return:
+
+      v1_between_std    : std of V_1[i] across the G_1 first-turn variants.
+                          High → turn-1 strategies discriminate; G_1 is
+                          carrying signal. Low → first-turn choice barely
+                          matters and the tree is wasted.
+      v1_within_std_mean: mean over i of std(R[i, :]) — the noise inside
+                          each first-turn variant. High → V_1[i] estimate
+                          is shaky; G_2 is too small. Low → G_2 is overkill.
+      v1_signal_ratio   : v1_between_std / v1_within_std_mean. > 1 means
+                          first-turn variation dominates (favor larger G_1
+                          at fixed budget); < 1 means within-variant noise
+                          dominates (favor larger G_2).
+      a_turn1_std       : std of A_turn1 across all G_1*G_2 trajectories
+                          for this prompt. Std=0 means the tree gave no
+                          first-turn ranking and we're effectively running
+                          flat GRPO — branched at this G_1 buys nothing.
+      a_turn2_std       : std of A_turn2 across all trajectories.
+
+    All values are floats; std-of-one-sample is reported as 0.0 (vs
+    raising) so a single-prompt step still logs cleanly.
+    """
+    v1 = [statistics.fmean(row) for row in rewards]
+    v1_between_std = statistics.pstdev(v1) if len(v1) > 1 else 0.0
+    within_stds = [
+        statistics.pstdev(row) if len(row) > 1 else 0.0 for row in rewards
+    ]
+    v1_within_std_mean = statistics.fmean(within_stds) if within_stds else 0.0
+    signal_ratio = (
+        v1_between_std / v1_within_std_mean
+        if v1_within_std_mean > 0 else float("inf")
+    )
+
+    flat_a1 = [a for row in a_turn1 for a in row]
+    flat_a2 = [a for row in a_turn2 for a in row]
+    a1_std = statistics.pstdev(flat_a1) if len(flat_a1) > 1 else 0.0
+    a2_std = statistics.pstdev(flat_a2) if len(flat_a2) > 1 else 0.0
+
+    return {
+        "v1_between_std": v1_between_std,
+        "v1_within_std_mean": v1_within_std_mean,
+        "v1_signal_ratio": signal_ratio,
+        "a_turn1_std": a1_std,
+        "a_turn2_std": a2_std,
+    }
+
+
 def assemble_per_token_advantages(
     turn1_len: int,
     tool_len: int,

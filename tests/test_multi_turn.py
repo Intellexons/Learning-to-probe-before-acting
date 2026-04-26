@@ -12,6 +12,7 @@ from src.multi_turn import (  # noqa: E402
     error_floor_reward,
     execute_turn,
     format_tool_message,
+    rollout_diagnostics,
 )
 from src.runner import ERROR_PENALTY_PER_SCENARIO  # noqa: E402
 
@@ -61,6 +62,44 @@ def test_assemble_per_token_advantages_layout():
 def test_assemble_tool_mask_layout():
     mask = assemble_tool_mask(3, 2, 4)
     assert mask == [1, 1, 1, 0, 0, 1, 1, 1, 1]
+
+
+def test_rollout_diagnostics_first_turn_dominates():
+    """Strong between-variant difference, low within-variant noise →
+    high signal_ratio, A_turn1_std > 0."""
+    rewards = [[10.0, 10.5, 9.5, 10.0], [-5.0, -5.5, -4.5, -5.0]]
+    _, _, a_turn1, a_turn2 = compute_branched_advantages(rewards)
+    diag = rollout_diagnostics(rewards, a_turn1, a_turn2)
+    assert diag["v1_between_std"] > 5.0  # V_1 differs by ~15
+    assert diag["v1_within_std_mean"] < 1.0  # rows are tight
+    assert diag["v1_signal_ratio"] > 1.0  # first-turn dominates
+    assert diag["a_turn1_std"] > 0  # turn-1 advantages discriminate
+
+
+def test_rollout_diagnostics_within_variant_noise_dominates():
+    """Same V_1 across variants but high within-variant spread →
+    A_turn1_std == 0, A_turn2_std > 0."""
+    rewards = [[5.0, 0.0, 10.0, -5.0], [5.0, 0.0, 10.0, -5.0]]
+    _, _, a_turn1, a_turn2 = compute_branched_advantages(rewards)
+    diag = rollout_diagnostics(rewards, a_turn1, a_turn2)
+    assert diag["v1_between_std"] == pytest.approx(0.0)
+    assert diag["v1_within_std_mean"] > 0
+    assert diag["v1_signal_ratio"] == pytest.approx(0.0)
+    assert diag["a_turn1_std"] == pytest.approx(0.0)  # NO first-turn signal
+    assert diag["a_turn2_std"] > 0
+
+
+def test_rollout_diagnostics_uniform_grid_is_silent():
+    """All rewards equal → every diagnostic is 0; signal_ratio is inf
+    (zero-over-zero, defined as inf to flag the degenerate case)."""
+    rewards = [[5.0, 5.0], [5.0, 5.0]]
+    _, _, a_turn1, a_turn2 = compute_branched_advantages(rewards)
+    diag = rollout_diagnostics(rewards, a_turn1, a_turn2)
+    assert diag["v1_between_std"] == 0.0
+    assert diag["v1_within_std_mean"] == 0.0
+    assert diag["a_turn1_std"] == 0.0
+    assert diag["a_turn2_std"] == 0.0
+    assert diag["v1_signal_ratio"] == float("inf")
 
 
 def test_format_tool_message_role_user():
