@@ -22,12 +22,16 @@ loop:
   trainer: "grpo_branched"
 
 branched:
-  # 4 × 2 = 8 trajectories matches the run_8 G=8 budget that's known to fit
-  # on L4. Keep g1=4 (not 2) so the v1_signal_ratio + a_turn1_std
-  # diagnostics actually have something to discriminate over.
-  g1: 4
+  # 2 × 2 = 4 trajectories. Run_8's G=8 single-turn profile fit, but the
+  # multi-turn prompt is ~200 tokens larger than single-turn AND the
+  # completion is two assistant turns + tool message instead of one. Net
+  # per-row sequence at g1*g2=8 OOMed in _compute_logps's forward pass on
+  # logits (batch * seq * 151936 * 2 bytes ≈ 3.3 GiB just for logits).
+  # Halve to 4 trajectories for the smoke; tune up on the production
+  # config once we know the loop is wired correctly. Diagnostic stds will
+  # be noisy at G=2 but non-zero is enough to verify the math.
+  g1: 2
   g2: 2
-  # 2*200 + 256 = 656 max_completion_length — close to run_8's 600.
   max_turn_tokens: 200
 
 grpo:
@@ -58,7 +62,7 @@ scoring:
 
 training:
   learning_rate: 1.0e-4
-  per_device_train_batch_size: 8   # = g1 * g2
+  per_device_train_batch_size: 4   # = g1 * g2
   gradient_accumulation_steps: 1
   num_train_epochs: 2              # 2 prompts/epoch * 2 epochs = 4 steps total
   warmup_ratio: 0.1
