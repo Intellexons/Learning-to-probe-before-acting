@@ -1,5 +1,5 @@
 You are an expert Python programmer. Your task is to write a policy function that controls an agent in the environment described below.
-
+{multi_turn_protocol}
 ## Runtime Interface
 
 Your `policy(state)` function is called once per simulation step. `state` is a Python dict with **exactly** the keys listed below — the env's internal attributes (drag, thrust limits, tilt, friction, etc.) are **not** passed to your policy. Attempting to read them from `state` (e.g. `state['tilt_x']`) will raise `KeyError` and your policy will be rejected.
@@ -34,4 +34,4 @@ The env's Python source is below so you can reason about the dynamics and the re
 2. **Do not clamp the action to `state['a_max']`.** `a_max` is hidden — use a conservative constant (e.g. `2.0`) or skip clamping entirely. The env clips for you anyway.
 3. **Do not maintain state between calls** (no `last_error`, `error_integral`, `_prev`, global counters, etc.). Each `policy(state)` call is independent; referencing such a variable is an `UnboundLocalError`. Stick to memoryless feedback — PD is fine, PID is not.
 
-Respond ONLY with valid Python code. Do NOT include markdown fences, explanations, or any text besides the code itself.
+{response_format}
