@@ -7,12 +7,13 @@ length statistics so collapse is visible in real time on the W&B dashboard.
 
 When a multi-turn rollout_func stashes per-trajectory `_turn_boundaries` on
 the trainer, the callback also emits per-turn variants of the same metrics
-so we can tell whether turn 1 or turn 2 collapsed independently.
+so we can tell whether any individual turn collapsed independently.
 """
 from __future__ import annotations
 
 import logging
 import statistics
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 
 from transformers import TrainerCallback
@@ -30,8 +31,28 @@ logger = logging.getLogger(__name__)
 COLLAPSE_UNIQUE_RATIO = 0.5
 COLLAPSE_EDIT_FRACTION = 0.05
 
+# Cap on pairwise edit-distance comparisons per batch. Pairwise scales as
+# O(B^2); 200 is comfortable for B<=20 (full coverage) and bounds cost at
+# larger B by sampling. The cap doesn't bias the *mean* much because we
+# enumerate pairs in sorted order, but if we ever care, swap to random
+# sampling.
+MAX_PAIRWISE_COMPARISONS = 200
 
-def _pairwise_edit_distances(strings: list[str], max_pairs: int = 200) -> list[int]:
+
+# ---------------------------------------------------------------------------
+# Pure-function metrics
+# ---------------------------------------------------------------------------
+
+
+def _pstdev_safe(values: Sequence[float]) -> float:
+    """Population stdev with len<2 guard."""
+    return statistics.pstdev(values) if len(values) > 1 else 0.0
+
+
+def _pairwise_edit_distances(
+    strings: list[str],
+    max_pairs: int = MAX_PAIRWISE_COMPARISONS,
+) -> list[int]:
     """Pairwise Levenshtein-style distance via difflib (no extra dep).
 
     Caps total comparisons at `max_pairs` to keep this cheap on larger batches.
@@ -40,18 +61,17 @@ def _pairwise_edit_distances(strings: list[str], max_pairs: int = 200) -> list[i
     not strict Levenshtein but is monotone with it and good enough for "are
     completions essentially identical."
     """
-    n = len(strings)
-    if n < 2:
+    if len(strings) < 2:
         return []
-    pairs = []
-    for i in range(n):
-        for j in range(i + 1, n):
+    pairs: list[tuple[int, int]] = []
+    for i in range(len(strings)):
+        for j in range(i + 1, len(strings)):
             pairs.append((i, j))
             if len(pairs) >= max_pairs:
                 break
         if len(pairs) >= max_pairs:
             break
-    distances = []
+    distances: list[int] = []
     for i, j in pairs:
         a, b = strings[i], strings[j]
         if not a and not b:
@@ -66,29 +86,21 @@ def _pairwise_edit_distances(strings: list[str], max_pairs: int = 200) -> list[i
 def _compute_metrics(completions: list[str], prefix: str = "diversity") -> dict[str, float]:
     """Compute the diversity metric set for a list of strings."""
     cleaned = [c.strip() for c in completions]
-    n = len(cleaned)
-    if n == 0:
+    if not cleaned:
         return {}
 
     n_unique = len(set(cleaned))
     distances = _pairwise_edit_distances(cleaned)
     lengths = [len(c) for c in cleaned]
 
-    metrics: dict[str, float] = {
+    return {
         f"{prefix}/n_unique_completions": float(n_unique),
-        f"{prefix}/unique_ratio": n_unique / n,
-        f"{prefix}/length/mean": statistics.fmean(lengths) if lengths else 0.0,
-        f"{prefix}/length/std": statistics.pstdev(lengths) if len(lengths) > 1 else 0.0,
+        f"{prefix}/unique_ratio": n_unique / len(cleaned),
+        f"{prefix}/length/mean": statistics.fmean(lengths),
+        f"{prefix}/length/std": _pstdev_safe(lengths),
+        f"{prefix}/edit_distance/mean": statistics.fmean(distances) if distances else 0.0,
+        f"{prefix}/edit_distance/std": _pstdev_safe(distances),
     }
-    if distances:
-        metrics[f"{prefix}/edit_distance/mean"] = statistics.fmean(distances)
-        metrics[f"{prefix}/edit_distance/std"] = (
-            statistics.pstdev(distances) if len(distances) > 1 else 0.0
-        )
-    else:
-        metrics[f"{prefix}/edit_distance/mean"] = 0.0
-        metrics[f"{prefix}/edit_distance/std"] = 0.0
-    return metrics
 
 
 def _collapse_warning(metrics: dict[str, float], prefix: str) -> bool:
@@ -111,6 +123,36 @@ def _collapse_warning(metrics: dict[str, float], prefix: str) -> bool:
     return False
 
 
+def _split_completions_by_turn(
+    completions: list[str],
+    boundaries: list[Sequence[int]],
+) -> list[list[str]]:
+    """Slice each completion text into per-turn segments using char offsets.
+
+    `boundaries[t]` is a sequence of cumulative char-end positions for
+    completion t — boundaries[t][k] is where turn k+1 ends. Turn k spans
+    `[boundaries[t][k-1], boundaries[t][k])`, with turn 1 starting at 0.
+
+    Returns a list-of-lists indexed by turn, each holding the per-completion
+    text slice for that turn. The N=2 case has `boundaries[t] = (turn1_end,
+    turn2_end)` and produces `[[turn1 texts...], [turn2 texts...]]`.
+    """
+    if not boundaries:
+        return []
+    n_turns = len(boundaries[0])
+    per_turn: list[list[str]] = [[] for _ in range(n_turns)]
+    for text, ends in zip(completions, boundaries):
+        starts = (0,) + tuple(ends[:-1])
+        for k, (start, end) in enumerate(zip(starts, ends)):
+            per_turn[k].append(text[start:end])
+    return per_turn
+
+
+# ---------------------------------------------------------------------------
+# Trainer callback
+# ---------------------------------------------------------------------------
+
+
 class DiversityCallback(TrainerCallback):
     """TrainerCallback that emits completion-level diversity metrics on each log.
 
@@ -129,8 +171,10 @@ class DiversityCallback(TrainerCallback):
     the dashboard alongside `train/reward`, `train/loss`, etc.
 
     Multi-turn support: if `trainer._latest_rollout_diag` exposes a
-    `turn_boundaries` field (list of (turn1_end, turn2_end) char offsets
-    aligned with the completion list), per-turn variants are also emitted.
+    `turn_boundaries` field — a list of cumulative-char-end tuples aligned
+    with the completion list — per-turn variants are also emitted. The
+    number of turns is inferred from the tuple length, so this scales
+    beyond N=2 with no code change.
     """
 
     def __init__(self) -> None:
@@ -147,14 +191,13 @@ class DiversityCallback(TrainerCallback):
             return []
         return list(completions)
 
-    def _read_turn_boundaries(self) -> list[tuple[int, int]] | None:
-        """Optional per-trajectory char offsets: (turn1_end_idx, turn2_end_idx).
+    def _read_turn_boundaries(self) -> list[Sequence[int]] | None:
+        """Per-trajectory cumulative char offsets (one tuple per completion).
 
-        Set by a custom rollout_func on the trainer for multi-turn runs. Each
-        tuple is (where turn 1 text ends, where turn 2 text ends) in the
-        decoded completion string. The slice [0:turn1_end] is turn 1, and
-        [turn1_end:turn2_end] is turn 2 (the tool-result block in between
-        belongs to neither and is excluded).
+        Set by a custom rollout on the trainer for multi-turn runs. Tuple
+        length implies the number of turns: `(turn1_end,)` for N=1,
+        `(turn1_end, turn2_end)` for N=2, etc. Tool-result tokens between
+        turns are excluded by the rollout when it computes these offsets.
         """
         if self.trainer is None:
             return None
@@ -173,23 +216,18 @@ class DiversityCallback(TrainerCallback):
         global_metrics = _compute_metrics(completions, prefix="diversity")
         logs.update(global_metrics)
 
-        warnings_raised = []
+        warnings_raised: list[str] = []
         if _collapse_warning(global_metrics, prefix="diversity"):
             warnings_raised.append("global")
 
         boundaries = self._read_turn_boundaries()
         if boundaries and len(boundaries) == len(completions):
-            turn1_texts: list[str] = []
-            turn2_texts: list[str] = []
-            for text, (t1_end, t2_end) in zip(completions, boundaries):
-                turn1_texts.append(text[:t1_end])
-                turn2_texts.append(text[t1_end:t2_end])
-            for turn_idx, turn_texts in [(1, turn1_texts), (2, turn2_texts)]:
-                turn_metrics = _compute_metrics(
-                    turn_texts, prefix=f"diversity/turn_{turn_idx}"
-                )
+            per_turn_texts = _split_completions_by_turn(completions, boundaries)
+            for turn_idx, turn_texts in enumerate(per_turn_texts, start=1):
+                prefix = f"diversity/turn_{turn_idx}"
+                turn_metrics = _compute_metrics(turn_texts, prefix=prefix)
                 logs.update(turn_metrics)
-                if _collapse_warning(turn_metrics, prefix=f"diversity/turn_{turn_idx}"):
+                if _collapse_warning(turn_metrics, prefix=prefix):
                     warnings_raised.append(f"turn_{turn_idx}")
 
         logs["diversity/collapse_warning"] = 1.0 if warnings_raised else 0.0

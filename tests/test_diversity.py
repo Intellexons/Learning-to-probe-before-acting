@@ -8,6 +8,7 @@ from src.diversity import (  # noqa: E402
     DiversityCallback,
     _collapse_warning,
     _compute_metrics,
+    _split_completions_by_turn,
 )
 
 
@@ -119,6 +120,46 @@ def test_callback_emits_per_turn_metrics():
     assert logs["diversity/turn_2/n_unique_completions"] == 4
     # Global warning trips because turn 1 collapsed
     assert logs["diversity/collapse_warning"] == 1.0
+
+
+def test_split_completions_by_turn_two_turns():
+    completions = ["AAATOOLBBB", "CCCTOOLDDD"]
+    boundaries = [(3, 10), (3, 10)]
+    per_turn = _split_completions_by_turn(completions, boundaries)
+    assert per_turn == [["AAA", "CCC"], ["TOOLBBB", "TOOLDDD"]]
+
+
+def test_split_completions_by_turn_three_turns():
+    """Dynamic-N support: tuple length implies number of turns."""
+    completions = ["a1a2a3", "b1b2b3"]
+    boundaries = [(2, 4, 6), (2, 4, 6)]
+    per_turn = _split_completions_by_turn(completions, boundaries)
+    assert per_turn == [["a1", "b1"], ["a2", "b2"], ["a3", "b3"]]
+
+
+def test_split_completions_by_turn_empty():
+    assert _split_completions_by_turn([], []) == []
+
+
+def test_callback_handles_three_turn_boundaries():
+    """Callback emits per-turn metrics for any N inferred from tuple length."""
+    cb = DiversityCallback()
+    completions = ["A1B1C1", "A2B2C2", "A3B3C3", "A4B4C4"]
+    boundaries = [(2, 4, 6)] * 4
+
+    class _StubTrainer:
+        _logs = {"completion": deque(completions)}
+        _latest_rollout_diag = {"turn_boundaries": boundaries}
+
+    class _StubState:
+        global_step = 0
+
+    cb.trainer = _StubTrainer()
+    logs: dict[str, float] = {}
+    cb.on_log(args=None, state=_StubState(), control=None, logs=logs)
+    assert logs["diversity/turn_1/n_unique_completions"] == 4
+    assert logs["diversity/turn_2/n_unique_completions"] == 4
+    assert logs["diversity/turn_3/n_unique_completions"] == 4
 
 
 def test_callback_no_completions_is_noop():
