@@ -25,6 +25,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
+# Slack tokens added on top of `2 * max_turn_tokens` to accommodate the
+# chat-template overhead (role tags) and the tool-result message between
+# turns. 256 is comfortable for ChatML + a typical tool result; bump if
+# we start seeing turn-2 truncation.
+COMPLETION_LENGTH_SLACK = 256
+TOTAL_TURNS_FOR_BRANCHED = 2  # this trainer is N=2 by construction
+
+
 def _placeholder_reward_fn(completions, **kwargs):
     """No-op reward function. Required by GRPOTrainer's __init__ but never
     called — BranchedGRPOTrainer computes rewards inside its own override of
@@ -81,7 +89,9 @@ def main():
     dataset_rows = []
     for task in tasks:
         tid = task["task_id"]
-        prompt_text = render_prompt(template, task, turn_idx=1, total_turns=2)
+        prompt_text = render_prompt(
+            template, task, turn_idx=1, total_turns=TOTAL_TURNS_FOR_BRANCHED,
+        )
         task_map[tid] = task
         dataset_rows.append({
             "prompt": [{"role": "user", "content": prompt_text}],
@@ -126,7 +136,7 @@ def main():
         beta=grpo_cfg.get("beta", 0.0),
         loss_type=grpo_cfg.get("loss_type", "dapo"),
         scale_rewards=grpo_cfg.get("scale_rewards", "batch"),
-        max_completion_length=2 * max_turn_tokens + 256,  # turn1 + tool + turn2 + slack
+        max_completion_length=2 * max_turn_tokens + COMPLETION_LENGTH_SLACK,
         temperature=grpo_cfg.get("temperature", 1.0),
         top_p=grpo_cfg.get("top_p", 1.0),
         mask_truncated_completions=grpo_cfg.get("mask_truncated_completions", False),

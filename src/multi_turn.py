@@ -30,19 +30,60 @@ import statistics
 from dataclasses import dataclass
 
 from src.runner import (
+    DEFAULT_MAX_STEPS,
     ERROR_PENALTY_PER_SCENARIO,
+    MAIN_DEFAULT_TIMEOUT,
+    POLICY_DEFAULT_TIMEOUT,
     extract_code_with_mode,
     score_main_turn,
     score_policy_turn,
 )
 
+# Mode constants — defined here once so callers don't sprinkle string literals.
+MODE_POLICY = "policy"
+MODE_MAIN = "main"
+MODE_INVALID = "invalid"
 
-# Reward floor for an invalid last turn (mode != "policy"). Matches the
-# per-scenario error-floor convention so a fully-rejected last turn scores
-# the same as a fully-errored policy. The trainer multiplies by n_scenarios
-# at construction time so the magnitude tracks task size.
+
+# ---------------------------------------------------------------------------
+# Reward floor + tool-message formatters
+# ---------------------------------------------------------------------------
+
+
 def error_floor_reward(n_scenarios: int) -> float:
+    """Reward floor for an invalid last turn (mode != "policy") or a fully
+    errored policy. Matches the per-scenario error-floor convention so a
+    fully-rejected last turn scores the same as a fully-errored policy."""
     return ERROR_PENALTY_PER_SCENARIO * n_scenarios
+
+
+def _policy_tool_text(reward_total: float, n_scenarios: int) -> str:
+    return (
+        f"[tool] policy executed across {n_scenarios} scenarios. "
+        f"total_reward = {reward_total:.2f}"
+    )
+
+
+def _main_tool_text(stdout: str) -> str:
+    return f"[tool] main() executed. stdout:\n{stdout}"
+
+
+def _final_turn_rejected_text(mode: str) -> str:
+    return (
+        f"[tool] turn rejected: final turn must be a `policy` block "
+        f"(got mode={mode!r}). Trajectory scored at error floor."
+    )
+
+
+_INTERMEDIATE_INVALID_TEXT = (
+    "[tool] turn rejected: code did not declare a recognized mode "
+    "(expected ```policy or ```main fence)."
+)
+
+
+# ---------------------------------------------------------------------------
+# Turn execution
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -59,86 +100,62 @@ class ToolResult:
     text: str
 
 
+def _score_policy(
+    code: str, task: dict, timeout: int, max_steps: int,
+) -> tuple[float, str]:
+    """Score a policy turn → (reward_total, tool_text)."""
+    n_scenarios = len(task.get("scenarios", []))
+    score = score_policy_turn(code, task, timeout=timeout, max_steps=max_steps)
+    return score["reward_total"], _policy_tool_text(score["reward_total"], n_scenarios)
+
+
 def execute_turn(
     raw_completion: str,
     task: dict,
     *,
     is_last_turn: bool,
-    timeout_policy: int = 30,
-    timeout_main: int = 10,
-    max_steps: int = 500,
+    timeout_policy: int = POLICY_DEFAULT_TIMEOUT,
+    timeout_main: int = MAIN_DEFAULT_TIMEOUT,
+    max_steps: int = DEFAULT_MAX_STEPS,
 ) -> ToolResult:
-    """Run the code from one turn's completion. Returns a ToolResult.
+    """Run the code from one turn's completion and return a ToolResult.
 
     On the **last turn**, only `policy` mode is allowed — `main` and
-    `invalid` are both scored at the error floor and surfaced as a
-    rejection message in the chat. On non-last turns, all three modes are
-    valid: policy yields a reward, main yields stdout, invalid yields a
-    rejection message AND a floor-reward penalty so the model still gets
-    a learning signal not to emit malformed turns mid-trajectory (the
-    advantage at turn 1 will reflect that).
+    `invalid` are scored at the error floor and surfaced as a rejection
+    message in the chat. On non-last turns, all three modes are valid:
+    policy yields a reward, main yields stdout, invalid yields a rejection
+    message AND a floor-reward penalty so the model still gets a learning
+    signal not to emit malformed turns mid-trajectory (the advantage at
+    turn 1 will reflect that).
 
-    For non-last `policy` and `main` turns the returned `reward` is None
+    For non-final `policy` and `main` turns the returned `reward` is None
     (it has no direct meaning — turn-1 credit comes from the branched
     V̂_1 estimate, not from the immediate tool result).
     """
-    n_scenarios = len(task.get("scenarios", []))
-    floor = error_floor_reward(max(n_scenarios, 1))
-
+    floor = error_floor_reward(max(len(task.get("scenarios", [])), 1))
     mode, code = extract_code_with_mode(raw_completion)
 
     if is_last_turn:
-        if mode != "policy":
-            return ToolResult(
-                mode=mode,
-                reward=floor,
-                text=(
-                    f"[tool] turn rejected: final turn must be a `policy` block "
-                    f"(got mode={mode!r}). Trajectory scored at error floor."
-                ),
-            )
-        score = score_policy_turn(
-            code, task, timeout=timeout_policy, max_steps=max_steps
-        )
-        return ToolResult(
-            mode="policy",
-            reward=score["reward_total"],
-            text=(
-                f"[tool] policy executed across {n_scenarios} scenarios. "
-                f"total_reward = {score['reward_total']:.2f}"
-            ),
-        )
+        if mode != MODE_POLICY:
+            return ToolResult(mode=mode, reward=floor, text=_final_turn_rejected_text(mode))
+        reward, text = _score_policy(code, task, timeout_policy, max_steps)
+        return ToolResult(mode=MODE_POLICY, reward=reward, text=text)
 
-    # Non-final turn: every mode produces a tool message; only invalid
+    # Non-final turn — every mode produces a tool message; only invalid
     # carries a forward reward signal (a floor penalty that propagates
     # through the V̂_1 estimate and turn-1 advantage).
-    if mode == "policy":
-        score = score_policy_turn(
-            code, task, timeout=timeout_policy, max_steps=max_steps
-        )
-        return ToolResult(
-            mode="policy",
-            reward=None,
-            text=(
-                f"[tool] policy executed across {n_scenarios} scenarios. "
-                f"total_reward = {score['reward_total']:.2f}"
-            ),
-        )
-    if mode == "main":
+    if mode == MODE_POLICY:
+        _, text = _score_policy(code, task, timeout_policy, max_steps)
+        return ToolResult(mode=MODE_POLICY, reward=None, text=text)
+    if mode == MODE_MAIN:
         out = score_main_turn(code, timeout=timeout_main)
-        return ToolResult(
-            mode="main",
-            reward=None,
-            text=f"[tool] main() executed. stdout:\n{out['stdout']}",
-        )
-    return ToolResult(
-        mode="invalid",
-        reward=floor,
-        text=(
-            "[tool] turn rejected: code did not declare a recognized mode "
-            "(expected ```policy or ```main fence)."
-        ),
-    )
+        return ToolResult(mode=MODE_MAIN, reward=None, text=_main_tool_text(out["stdout"]))
+    return ToolResult(mode=MODE_INVALID, reward=floor, text=_INTERMEDIATE_INVALID_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# Per-turn advantage math (pure functions on the (G_1, G_2) reward grid)
+# ---------------------------------------------------------------------------
 
 
 def compute_branched_advantages(
@@ -159,16 +176,15 @@ def compute_branched_advantages(
     """
     if not rewards or not rewards[0]:
         raise ValueError("Empty reward grid")
-    g1 = len(rewards)
     g2 = len(rewards[0])
     if any(len(row) != g2 for row in rewards):
-        raise ValueError(f"Reward grid is ragged: rows have unequal length")
+        raise ValueError("Reward grid is ragged: rows have unequal length")
 
     flat = [r for row in rewards for r in row]
     v0 = statistics.fmean(flat)
     v1 = [statistics.fmean(row) for row in rewards]
-    a_turn1 = [[v1[i] - v0 for _ in range(g2)] for i in range(g1)]
-    a_turn2 = [[rewards[i][j] - v1[i] for j in range(g2)] for i in range(g1)]
+    a_turn1 = [[v1[i] - v0] * g2 for i in range(len(rewards))]
+    a_turn2 = [[r - v1[i] for r in row] for i, row in enumerate(rewards)]
     return v0, v1, a_turn1, a_turn2
 
 
@@ -186,11 +202,7 @@ def assemble_per_token_advantages(
     GRPO loss, so the 0.0 advantage here is just defensive — the mask is the
     primary mechanism preventing tool tokens from contributing to the loss.
     """
-    return (
-        [a_turn1] * turn1_len
-        + [0.0] * tool_len
-        + [a_turn2] * turn2_len
-    )
+    return [a_turn1] * turn1_len + [0.0] * tool_len + [a_turn2] * turn2_len
 
 
 def assemble_tool_mask(
@@ -204,11 +216,12 @@ def assemble_tool_mask(
     Matches TRL's convention at `grpo_trainer.py:1473-1475` — the field is
     treated as "model tokens (1) vs external tokens (0)" inside _compute_loss.
     """
-    return (
-        [1] * turn1_len
-        + [0] * tool_len
-        + [1] * turn2_len
-    )
+    return [1] * turn1_len + [0] * tool_len + [1] * turn2_len
+
+
+# ---------------------------------------------------------------------------
+# Chat-message wrapper
+# ---------------------------------------------------------------------------
 
 
 def format_tool_message(text: str) -> dict:
