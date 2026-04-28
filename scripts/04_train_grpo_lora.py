@@ -16,6 +16,7 @@ from trl import GRPOConfig, GRPOTrainer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.dataset import load_jsonl
+from src.diversity import DiversityCallback
 from src.prompts import load_template, render_prompt
 from src.reward import make_reward_fn
 
@@ -175,6 +176,15 @@ def main():
         processing_class=tokenizer,
         peft_config=peft_config,
     )
+
+    # Per-step completion-level diversity metrics. Run 5 collapsed silently
+    # to a single byte-identical policy and we did not catch it for a week
+    # because token-level entropy stayed healthy. The callback reads the
+    # trainer's recent completions (via the backreference set below) and
+    # writes diversity/* metrics into log_history on every log step.
+    diversity_cb = DiversityCallback()
+    diversity_cb.trainer = trainer
+    trainer.add_callback(diversity_cb)
 
     logger.info("Starting GRPO training...")
     trainer.train()
