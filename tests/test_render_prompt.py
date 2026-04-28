@@ -53,22 +53,22 @@ def test_multi_turn_first_turn_prompt():
     template = load_template(str(TEMPLATE_PATH))
     rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
     assert "## Multi-Turn Protocol" in rendered
-    assert "turn 1 of 2" in rendered
-    assert "1 more turn" in rendered
+    assert "Turn 1 of 2" in rendered
+    assert "1 turn remains" in rendered
     # First turn (not last) — not the FINAL marker
     assert "FINAL turn" not in rendered
     # Both fence modes available on a non-final turn
     assert "```policy" in rendered
     assert "```main" in rendered
     # last-turn-must-be-policy clause is always visible in the protocol
-    assert "last turn (turn 2) MUST be a `policy` turn" in rendered
+    assert "final turn (turn 2) MUST be" in rendered
 
 
 def test_multi_turn_final_turn_prompt():
     template = load_template(str(TEMPLATE_PATH))
     rendered = render_prompt(template, _toy_task(), turn_idx=2, total_turns=2)
     assert "FINAL turn" in rendered
-    assert "turn 2 of 2" in rendered
+    assert "Turn 2 of 2" in rendered
     # Final turn requires policy block specifically — the response_format
     # narrows to policy-only.
     final_section = rendered.split("## Response Format", 1)[1]
@@ -79,16 +79,16 @@ def test_multi_turn_final_turn_prompt():
 def test_multi_turn_three_turns_middle():
     template = load_template(str(TEMPLATE_PATH))
     rendered = render_prompt(template, _toy_task(), turn_idx=2, total_turns=3)
-    assert "turn 2 of 3" in rendered
-    assert "1 more turn" in rendered
+    assert "Turn 2 of 3" in rendered
+    assert "1 turn remains" in rendered
     assert "FINAL turn" not in rendered
 
 
 def test_multi_turn_three_turns_first():
     template = load_template(str(TEMPLATE_PATH))
     rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=3)
-    assert "turn 1 of 3" in rendered
-    assert "2 more turns" in rendered
+    assert "Turn 1 of 3" in rendered
+    assert "2 turns remain" in rendered
 
 
 def test_turn_idx_out_of_range_raises():

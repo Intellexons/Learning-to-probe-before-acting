@@ -24,29 +24,22 @@ def _build_multi_turn_protocol(turn_idx: int, total_turns: int) -> str:
 
     remaining_after = total_turns - turn_idx
     if remaining_after == 0:
-        budget_note = (
-            "**This is the FINAL turn.** Your output MUST be a `policy` block — "
-            "a `main` block on the final turn is rejected and scored at the error floor."
-        )
+        budget_note = "**FINAL turn — must be `policy`.**"
     elif remaining_after == 1:
-        budget_note = "You will have **1 more turn** after this one."
+        budget_note = "1 turn remains after this."
     else:
-        budget_note = f"You will have **{remaining_after} more turns** after this one."
+        budget_note = f"{remaining_after} turns remain after this."
 
     return f"""
 ## Multi-Turn Protocol
 
-You have **{total_turns} turns total** in this coding session. This is **turn {turn_idx} of {total_turns}**.
-{budget_note}
+Turn {turn_idx} of {total_turns}. {budget_note}
 
-Each turn, output exactly one fenced code block. The fence's language tag declares the mode:
+Each turn must output ONE fenced code block tagged either:
+- ```` ```policy ```` — defines `def policy(state)`. Tool returns total_reward across all scenarios.
+- ```` ```main ```` — arbitrary Python with no env access. Tool returns stdout. Use for derivations, not probing.
 
-- ```` ```policy ```` — define `def policy(state)`. After your turn, the runner executes the policy across all scenarios and the next user message reports the total reward.
-- ```` ```main ```` — arbitrary Python (math, derivations, intermediate variables you want to print). Captured stdout is returned to you. `main` does **NOT** have access to the env class or any scenario data — use it for reasoning and derivations, not for empirical probing.
-
-**The last turn (turn {total_turns}) MUST be a `policy` turn.** A `main` last turn is rejected and scored at the error floor.
-
-A turn that does not declare a recognized mode (no fence, or a fence with an unknown tag) is also rejected at the error floor.
+The final turn (turn {total_turns}) MUST be ```` ```policy ```` — a `main` final turn is rejected at the error floor. Any turn missing a recognized fence tag is also rejected.
 """
 
 
