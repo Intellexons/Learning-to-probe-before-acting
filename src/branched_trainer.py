@@ -473,6 +473,14 @@ class BranchedGRPOTrainer(GRPOTrainer):
             "Supporting beta != 0 needs per-segment ref_per_token_logps, "
             "which would be a follow-up."
         )
+        assert self.num_iterations == 1, (
+            f"BranchedGRPOTrainer two-pass requires num_iterations=1; got "
+            f"{self.num_iterations}. With more iterations, TRL plumbs "
+            f"`old_per_token_logps` into inputs (computed once per generation "
+            f"and reused across iterations). The two-pass split would need to "
+            f"slice that tensor per segment with the same right-aligned layout "
+            f"as the segment forwards — not yet implemented."
+        )
 
     def _build_prompt_tensors(
         self, trajectories: list[_Trajectory], device: torch.device,
