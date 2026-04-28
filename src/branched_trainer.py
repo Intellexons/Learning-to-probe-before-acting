@@ -1,7 +1,12 @@
 """Branched-rollout (VinePPO-style) GRPO trainer for N=2 multi-turn coding.
 
-Subclasses TRL 0.28 `GRPOTrainer` and overrides `_generate_and_score_completions`
-to do branched MC rollouts with per-turn credit assignment.
+Subclasses TRL 0.28 `GRPOTrainer` and overrides three things:
+  - `_generate_and_score_completions` — branched MC rollouts with per-turn
+    credit assignment (G_1 first-turn variants × G_2 continuations each).
+  - `compute_loss` / `training_step` — two-pass per-turn loss decomposition
+    so peak memory becomes max(pass_turn1, pass_turn2) instead of their sum
+    (the single-pass over [prompt|turn1|tool|turn2] OOMs on a 22 GiB L4
+    because the LM-head logits gradient is `(B, T_full, V) ≈ 4 GiB`).
 
 Why a subclass and not `rollout_func`: TRL 0.28's `rollout_func` parameter is
 only invoked through the vLLM generation path (`vllm_generation.py:556, 620`).
@@ -9,26 +14,33 @@ The regular HF generate path bypasses it entirely (`grpo_trainer.py:1268`).
 We're on a single-L4 setup with HF generate, so the only way to inject custom
 rollout logic is by overriding the trainer.
 
-Scope of this override (compared to the base GRPO flow):
-  - branched generation (G_1 first-turn variants × G_2 continuations)
-  - per-turn (B, T) advantages: A_turn1 = V̂_1[i] - V̂_0, A_turn2 = R[i,j] - V̂_1[i]
-  - tool_mask plumbed through to `_compute_loss` (already supported upstream)
+Two-pass loss: pass-1 forwards `[prompt | turn1]` with `logits_to_keep=T_turn1`
+and computes the DAPO loss over turn-1 advantages; backward; pass-2 forwards
+`[prompt | turn1 | tool | turn2]` with `logits_to_keep=T_turn2` and computes
+DAPO over turn-2 advantages; backward. Both passes share the same
+`num_items_in_batch` normalizer, so loss1 + loss2 equals the single-pass
+loss exactly. The trick that lets us reuse the parent's `_compute_loss`
+unchanged: pack `[prompt | turn1 | tool]` into the "prompt" field for pass-2
+and turn2 alone into the "completion" field; the parent then computes
+`logits_to_keep = completion.size(1) = T_turn2_max` automatically.
 
-Things this override deliberately does NOT support — it asserts on entry and
-falls back to the parent class otherwise:
+Things this override deliberately does NOT support — it asserts on entry:
   - vLLM generation
   - multi-modal / image inputs
   - multi-objective rewards
   - Liger loss path
-  - importance-sampling correction (since it's a vLLM-only concept)
-
-Beta=0 (no KL) and DAPO loss are supported. The reference-model logp branch
-is wired but not exercised in our default config.
+  - importance-sampling correction (vLLM-only concept)
+  - per-row averaging losses (grpo / bnpo / dr_grpo / luspo) — only dapo
+    and cispo decompose additively
+  - non-token-level importance sampling
+  - off-policy mask threshold, top-entropy quantile, beta != 0 — each would
+    need per-segment plumbing that hasn't been written yet
 """
 from __future__ import annotations
 
 import logging
 import statistics
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -374,6 +386,12 @@ class BranchedGRPOTrainer(GRPOTrainer):
             prompt_completion_ids, attention_mask, logits_to_keep, batch_size,
         )
 
+        # Per-segment tensors for the two-pass loss decomposition (see
+        # `compute_loss`). Each pass calls `super()._compute_loss` with one
+        # segment's prompt+completion, so the LM-head logits gradient at
+        # backward materializes only for that segment's tokens.
+        segment_tensors = self._build_segment_tensors(all_trajectories, device)
+
         self._update_logging_buffers(
             prompt_ids, completion_ids, advantages, rewards,
             mode=mode, inputs=inputs,
@@ -400,6 +418,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
             "advantages": advantages,
             "num_items_in_batch": num_items_in_batch,
             "tool_mask": tool_mask,
+            **segment_tensors,
         }
         if old_per_token_logps is not None:
             output["old_per_token_logps"] = old_per_token_logps
@@ -417,6 +436,11 @@ class BranchedGRPOTrainer(GRPOTrainer):
         These are the cases the parent class supports but we deliberately
         haven't ported. Hitting one of these silently would produce wrong
         gradients or skipped rollouts, so assert up front.
+
+        The two-pass loss decomposition (see `compute_loss`) further restricts
+        us to additive loss types (dapo / cispo) so loss1 + loss2 equals the
+        single-pass loss. Per-row averaging losses (grpo / bnpo / dr_grpo /
+        luspo) don't decompose this way without a different normalizer scheme.
         """
         assert not self.use_vllm, "BranchedGRPOTrainer does not support vLLM"
         assert getattr(self, "use_liger_loss", False) is False, (
@@ -426,6 +450,29 @@ class BranchedGRPOTrainer(GRPOTrainer):
             "Image inputs not supported"
         )
         assert len(self.reward_func_names) <= 1, "Multi-objective rewards not supported"
+        assert self.loss_type in ("dapo", "cispo"), (
+            f"BranchedGRPOTrainer two-pass decomposition requires an additive "
+            f"loss_type (dapo or cispo); got {self.loss_type!r}. Other types "
+            f"average per-row, so summing per-segment losses would double-count "
+            f"the per-row averaging."
+        )
+        assert self.importance_sampling_level == "token", (
+            f"Two-pass decomposition only supports token-level importance "
+            f"sampling; got {self.importance_sampling_level!r}."
+        )
+        assert getattr(self, "off_policy_mask_threshold", None) is None, (
+            "off_policy_mask_threshold not supported (would need per-segment "
+            "sequence-level KL)"
+        )
+        assert self.top_entropy_quantile >= 1.0, (
+            "top_entropy_quantile < 1 not supported (entropy mask is computed "
+            "per-pass; would need a single-pass joint pass)"
+        )
+        assert self.beta == 0.0, (
+            "BranchedGRPOTrainer two-pass requires beta=0 (no KL term). "
+            "Supporting beta != 0 needs per-segment ref_per_token_logps, "
+            "which would be a follow-up."
+        )
 
     def _build_prompt_tensors(
         self, trajectories: list[_Trajectory], device: torch.device,
@@ -461,6 +508,133 @@ class BranchedGRPOTrainer(GRPOTrainer):
             for t in trajectories
         ]
         return pad(rows, padding_value=_PAD_VALUE_ADVANTAGE, padding_side="right")
+
+    def _build_segment_tensors(
+        self, trajectories: list[_Trajectory], device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        """Build per-segment tensors used by the two-pass `compute_loss`."""
+        return build_segment_tensors(trajectories, device, self.pad_token_id)
+
+    # ------------------------------------------------------------------
+    # Two-pass loss (Option C: per-turn loss decomposition)
+    # ------------------------------------------------------------------
+    #
+    # The parent class's _compute_loss does one forward over
+    # [prompt | turn1 | tool | turn2] with logits_to_keep = T_completion_max,
+    # which materializes a (B, T_completion_max, V) logits gradient at
+    # backward. With branched-N=2 on L4 this hits ~4 GiB and OOMs.
+    #
+    # Decomposition: since loss_type=dapo computes
+    #     loss = (per_token_loss * mask).sum() / num_items_in_batch
+    # and mask is zero outside (turn1 ∪ turn2), the loss splits exactly:
+    #     loss_total = loss_turn1 + loss_turn2
+    # where each segment uses the SAME num_items_in_batch normalizer (count
+    # of valid turn1+turn2 tokens across the batch). We compute and backward
+    # them sequentially; gradients accumulate into the same params, but peak
+    # memory is max(pass1, pass2) instead of their sum because pass-1's graph
+    # is freed before pass-2's forward starts.
+
+    def _segment_inputs(self, inputs: dict[str, Any], segment: str) -> dict[str, Any]:
+        """Build a per-segment inputs dict to feed `super()._compute_loss`.
+
+        The trick is that the segment's "prompt" and "completion" are aliased
+        to fields the parent expects (prompt_ids / completion_ids / etc.), so
+        we don't have to touch the parent's loss code.
+        """
+        if segment == "turn1":
+            return {
+                "prompt_ids": inputs["prompt_ids"],
+                "prompt_mask": inputs["prompt_mask"],
+                "completion_ids": inputs["turn1_completion_ids"],
+                "completion_mask": inputs["turn1_completion_mask"],
+                "advantages": inputs["turn1_advantages"],
+                "num_items_in_batch": inputs["num_items_in_batch"],
+            }
+        if segment == "turn2":
+            return {
+                "prompt_ids": inputs["pass2_prompt_ids"],
+                "prompt_mask": inputs["pass2_prompt_mask"],
+                "completion_ids": inputs["turn2_completion_ids"],
+                "completion_mask": inputs["turn2_completion_mask"],
+                "advantages": inputs["turn2_advantages"],
+                "num_items_in_batch": inputs["num_items_in_batch"],
+            }
+        raise ValueError(f"unknown segment: {segment!r}")
+
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch=None,
+    ):
+        """Two-pass loss: forward+backward for turn-1, then for turn-2.
+
+        Backward is run inside this method, not by the outer `training_step`.
+        See `training_step` below — we override it to skip the duplicate
+        outer `accelerator.backward(loss)`.
+        """
+        if return_outputs:
+            raise ValueError(
+                "BranchedGRPOTrainer.compute_loss does not support return_outputs"
+            )
+        # Each backward is scaled by 1/grad_accum_steps just like HF
+        # Trainer.training_step does for the single-pass case, so the two
+        # accumulated gradients sum to (loss1+loss2)/grad_accum_steps —
+        # equivalent to a single backward on the combined scaled loss.
+        scale = 1.0 / max(1, self.current_gradient_accumulation_steps)
+
+        loss1 = super()._compute_loss(model, self._segment_inputs(inputs, "turn1"))
+        self.accelerator.backward(loss1 * scale)
+        loss1_value = loss1.detach()
+        del loss1
+
+        loss2 = super()._compute_loss(model, self._segment_inputs(inputs, "turn2"))
+        self.accelerator.backward(loss2 * scale)
+        loss2_value = loss2.detach()
+        del loss2
+
+        # Return the combined SCALED loss so HF Trainer's bookkeeping (which
+        # logs the returned loss as the step's training loss) sees the same
+        # value it would have for a single-pass run.
+        return (loss1_value + loss2_value) * scale
+
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        """Two-pass training step — backward already done inside `compute_loss`.
+
+        Mirrors `transformers.Trainer.training_step` (and TRL's wrapper around
+        it) but skips the outer `accelerator.backward(loss)`, which would
+        otherwise try to backward a detached tensor and error.
+        """
+        time_before = time.perf_counter()
+
+        cp_context, inputs = self._prepare_context_parallel_inputs(model, inputs)
+        with cp_context():
+            model.train()
+            if hasattr(self.optimizer, "train") and callable(self.optimizer.train):
+                self.optimizer.train()
+
+            inputs = self._prepare_inputs(inputs)
+
+            with self.compute_loss_context_manager():
+                # compute_loss runs both segment forwards + backwards and
+                # returns the (already-scaled) combined loss.
+                loss = self.compute_loss(
+                    model, inputs, num_items_in_batch=num_items_in_batch,
+                )
+
+            del inputs
+            # No outer backward — done inside compute_loss.
+
+        # Mirror TRL's per-step bookkeeping (see trl GRPOTrainer.training_step).
+        self._step += 1
+        time_after = time.perf_counter()
+        self._current_train_step_time += time_after - time_before
+        if self._step % self.current_gradient_accumulation_steps == 0:
+            self._metrics["train"]["step_time"].append(self._current_train_step_time)
+            self._current_train_step_time = 0.0
+
+        return loss.detach()
 
     def _compute_logps(
         self,
@@ -548,6 +722,70 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """
         task = self.task_map[inputs[0]["task_id"]]
         return ERROR_PENALTY_PER_SCENARIO * len(task.get("scenarios", [1]))
+
+
+def build_segment_tensors(
+    trajectories: list[_Trajectory],
+    device: torch.device,
+    pad_id: int,
+) -> dict[str, torch.Tensor]:
+    """Build per-segment tensors used by the two-pass `compute_loss`.
+
+    The trick: we treat each pass as a separate (prompt, completion) pair so
+    we can reuse `super()._compute_loss` unchanged. For pass 2 the "prompt"
+    is the full prefix [prompt | turn1 | tool] and the "completion" is just
+    turn2 — that way the parent's `logits_to_keep = completion_ids.size(1)`
+    becomes T_turn2_max instead of T_completion_max, which is what saves the
+    memory.
+
+    Returns a dict of tensors:
+      turn1_completion_ids   (B, T_turn1_max)  right-padded turn1 tokens
+      turn1_completion_mask  (B, T_turn1_max)  1 on actual, 0 on pad
+      turn1_advantages       (B, T_turn1_max)  A^(1)[b] on actual, 0 on pad
+      pass2_prompt_ids       (B, P2_max)       left-padded [prompt|turn1|tool]
+      pass2_prompt_mask      (B, P2_max)
+      turn2_completion_ids   (B, T_turn2_max)  right-padded turn2 tokens
+      turn2_completion_mask  (B, T_turn2_max)
+      turn2_advantages       (B, T_turn2_max)  A^(2)[b] on actual, 0 on pad
+    """
+    # --- Pass 1: completion = turn1 ---
+    t1_ids = [torch.tensor(t.turn1_ids, device=device) for t in trajectories]
+    t1_masks = [torch.ones_like(x, dtype=torch.long) for x in t1_ids]
+    turn1_completion_ids = pad(t1_ids, padding_value=pad_id, padding_side="right")
+    turn1_completion_mask = pad(t1_masks, padding_value=0, padding_side="right")
+    a1_per_row = torch.tensor(
+        [t.a_turn1 for t in trajectories], device=device, dtype=torch.float32,
+    ).unsqueeze(1)
+    turn1_advantages = a1_per_row * turn1_completion_mask.to(torch.float32)
+
+    # --- Pass 2: prompt = [prompt | turn1 | tool], completion = turn2 ---
+    p2_prompt_lists = [
+        torch.tensor(t.prompt_ids + t.turn1_ids + t.tool_ids, device=device)
+        for t in trajectories
+    ]
+    p2_prompt_masks = [torch.ones_like(x, dtype=torch.long) for x in p2_prompt_lists]
+    pass2_prompt_ids = pad(p2_prompt_lists, padding_value=pad_id, padding_side="left")
+    pass2_prompt_mask = pad(p2_prompt_masks, padding_value=0, padding_side="left")
+
+    t2_ids = [torch.tensor(t.turn2_ids, device=device) for t in trajectories]
+    t2_masks = [torch.ones_like(x, dtype=torch.long) for x in t2_ids]
+    turn2_completion_ids = pad(t2_ids, padding_value=pad_id, padding_side="right")
+    turn2_completion_mask = pad(t2_masks, padding_value=0, padding_side="right")
+    a2_per_row = torch.tensor(
+        [t.a_turn2 for t in trajectories], device=device, dtype=torch.float32,
+    ).unsqueeze(1)
+    turn2_advantages = a2_per_row * turn2_completion_mask.to(torch.float32)
+
+    return {
+        "turn1_completion_ids": turn1_completion_ids,
+        "turn1_completion_mask": turn1_completion_mask,
+        "turn1_advantages": turn1_advantages,
+        "pass2_prompt_ids": pass2_prompt_ids,
+        "pass2_prompt_mask": pass2_prompt_mask,
+        "turn2_completion_ids": turn2_completion_ids,
+        "turn2_completion_mask": turn2_completion_mask,
+        "turn2_advantages": turn2_advantages,
+    }
 
 
 def _pstdev_safe(values: list[float]) -> float:
