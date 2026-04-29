@@ -641,4 +641,85 @@ Smoke config at \texttt{configs/smoke\_test\_grpo\_branched.yaml}; run via
 \texttt{python scripts/09\_run\_loop.py --config configs/smoke\_test\_grpo\_branched.yaml}.
 The OOM is reproducible at \commit{8b94cc7} on a single L4 (24\,GB).
 
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-04-29 \quad Two-pass per-turn loss decomposition fits on L4}
+% ============================================================
+
+\commit{9a1c296} $\cdot$ \textit{Option C lands; branched-N=2 smoke completes end-to-end}
+
+\subsection*{Setup}
+
+Implemented Option C from the prior entry: split the single forward over
+$[\text{prompt} \mid \text{turn1} \mid \text{tool} \mid \text{turn2}]$ into two
+sequential passes. Pass 1 forwards $[\text{prompt} \mid \text{turn1}]$ and
+backwards the turn-1 DAPO loss; pass 2 forwards the full prefix
+$[\text{prompt} \mid \text{turn1} \mid \text{tool}]$ as the ``prompt'' with
+turn-2 alone as the ``completion'', so the parent's
+\texttt{logits\_to\_keep} becomes $T_{\text{turn2}}$ rather than
+$T_{\text{completion}}$. Both passes share the same
+\texttt{num\_items\_in\_batch} normalizer, making
+$\mathcal{L} = \mathcal{L}^{(1)} + \mathcal{L}^{(2)}$ exact for additive loss
+types. Backward runs inside the overridden \texttt{compute\_loss}, with
+\texttt{training\_step} skipping the outer
+\texttt{accelerator.backward(loss)}. Restricted to \texttt{loss\_type} $\in$
+\{\texttt{dapo}, \texttt{cispo}\}, token-level IS, $\beta = 0$,
+\texttt{num\_iterations}\,$=$\,1; per-row averaging losses don't decompose
+this way without a different normalizer scheme.
+
+\subsection*{Results}
+
+Smoke config (\texttt{configs/smoke\_test\_grpo\_branched.yaml}, $G_1 = G_2 = 2$,
+\texttt{max\_turn\_tokens}\,$=$\,200) ran 4 training steps end-to-end on an L4
+in \texttt{europe-west3-b} with exit code 0. Same config OOMs at backward on
+\commit{8b94cc7} (parent of this branch) per the previous entry. The
+peak-memory delta was not instrumented this run --- the binary
+fits-vs-OOMs signal at identical sizing was the test.
+
+\subsection*{Interpretation}
+
+The dominant 4.06\,GiB allocation in the prior OOM was the LM-head logits
+gradient at backward, shape $(B, T_{\text{completion}}, V)$. Splitting the
+backward graph at the turn boundary makes peak memory
+$\max(\text{pass}_1, \text{pass}_2)$ instead of their sum: pass 1's
+activations are released before pass 2's forward begins. Since tool tokens
+carry $m_t = 0$ in the loss mask, no gradient signal is lost by the split.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item Bump $G_1, G_2$ on the production config and re-measure --- the
+        memory headroom should now allow $G_1 G_2 \geq 8$ at
+        $T \approx 200$ where single-pass previously OOMed.
+  \item Add \texttt{torch.cuda.max\_memory\_allocated()} logging to
+        \texttt{training\_step} to quantify the reduction (currently the
+        win is inferred, not measured).
+  \item Lift the \texttt{num\_iterations}\,$=$\,1 restriction by slicing
+        \texttt{old\_per\_token\_logps} per segment with the same
+        right-aligned layout as the segment forwards.
+  \item Per-segment \texttt{ref\_per\_token\_logps} plumbing to support
+        $\beta \neq 0$ (KL term).
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Wall-time delta vs. single-pass: two forwards instead of one, but
+        the turn-1 forward is much shorter. Net unmeasured.
+  \item Generalization to $N \geq 3$ turns: the additive decomposition
+        composes, but each added turn adds another forward+backward whose
+        prefix grows.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+\commit{9a1c296} on \texttt{feat/per-turn-loss-decomposition}; launch via
+\texttt{bash scripts/gcp\_find\_l4\_and\_train.sh configs/smoke\_test\_grpo\_branched.yaml two\_pass\_smoke --wait}.
+Decomposition logic in \texttt{src/branched\_trainer.py}
+(\texttt{compute\_loss}, \texttt{training\_step}, \texttt{build\_segment\_tensors});
+unit tests in \texttt{tests/test\_segment\_tensors.py}.
+
 \end{document}
