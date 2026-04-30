@@ -1,0 +1,353 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{abstract}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\title{\textbf{Branched Multi-Turn GRPO for Code-Policy Generation on a Single GPU}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+We train a small instruction-tuned LLM to emit Python control policies
+for sandboxed RL environments using a critic-free, on-policy multi-turn
+RL scheme. The model interacts with the environment over a two-turn
+chat-template protocol: a scratchpad or rehearsal turn, then a
+committed \texttt{policy} body whose scenario reward supplies the only
+scalar signal. We replace flat trajectory-level credit assignment with
+a $G_1\times G_2$ branched rollout: $G_1$ first-turn variants per
+prompt, $G_2$ second-turn continuations per variant, scored at the
+leaves. Per-turn Monte Carlo value estimates yield per-turn
+advantages broadcast across the tokens of each turn, in the spirit of
+VinePPO but at chat-turn rather than intra-completion granularity. To
+fit the resulting trajectories into a 24\,GB GPU we exploit the
+additivity of the token-summed clipped surrogate to decompose the
+loss across turns, bounding peak LM-head gradient memory to
+$\max(\text{turn 1, turn 2})$ instead of their sum. The contribution
+is a clean, small-budget specialization of standard ingredients
+(GRPO, VinePPO, ArCHer-style hierarchical credit assignment) to the
+chat-template multi-turn code-policy setting, plus the per-turn loss
+decomposition that makes it tractable on a single L4.
+\end{abstract}
+
+\section{Introduction}
+
+Reinforcement-learning fine-tuning of LLMs has converged on a small
+set of recipes: PPO with a learned critic, GRPO and its DAPO/CISPO
+variants which replace the critic with a group-relative Monte Carlo
+baseline, and process-supervision pipelines that train an auxiliary
+reward model. Most of this work targets single-turn reasoning, where
+the trajectory is a prompt followed by one completion and the reward
+is observed at the end. Extending the same recipes to multi-turn
+agentic settings exposes a credit-assignment problem: a single
+trajectory-level advantage broadcast to every model token cannot
+distinguish a strong first-turn strategy followed by a poor execution
+from the converse.
+
+We study this problem in the concrete setting of \emph{code-policy
+generation}: the LLM emits a Python \texttt{def policy(state)} body
+that is then executed against environment scenarios in a sandboxed
+subprocess. The artifact is the code; the LLM is removed from the
+inner control loop at deployment. We use two chat turns. The first
+either drafts a candidate \texttt{policy} (whose actual scenario
+reward is read back as a tool message) or runs a \texttt{main}
+scratchpad whose stdout is fed back; the second commits the scored
+\texttt{policy}.
+
+Our training scheme has two ingredients. First, we replace
+trajectory-level credit assignment with a $G_1\times G_2$ branched
+rollout and per-turn MC value estimates --- the macro-step analog of
+VinePPO's intra-completion branching, with hierarchical baselines
+that vary by turn-1 prefix. Second, to make the resulting
+two-turn trajectories trainable on a 24\,GB L4, we observe that the
+token-summed clipped surrogate is additive over disjoint token
+subsets sharing the same global normalizer, and exploit this to
+forward and backward turn-1 and turn-2 independently. Peak LM-head
+gradient memory drops from
+$O(B\cdot T_{\text{full}}\cdot |V|)$ to
+$O(B\cdot \max(T_1, T_2)\cdot |V|)$ at gradient cost zero; the
+parameter gradients summed across the two passes equal the
+single-pass gradient exactly.
+
+The combination is a natural specialization of standard mechanisms
+rather than a new algorithm. We do not claim algorithmic novelty;
+the contribution is a clean assembly that fits on a single small GPU
+and the loss-decomposition trick that makes it possible.
+
+\section{Related work}
+
+\paragraph{Critic-free LLM RL.} GRPO~\cite{shao2024deepseekmath} and
+its token-summed variants (DAPO~\cite{yu2025dapo}, CISPO) replace
+PPO's learned critic with a group-relative MC baseline. We use the
+token-summed form because its additivity over token subsets is what
+makes our per-turn loss decomposition exact.
+
+\paragraph{Branching for credit assignment.} The closest existing
+method is VinePPO~\cite{kazemnejad2024vineppo}, which estimates
+$\widehat V(s_t)$ at chosen intra-completion states via on-policy MC
+re-branching and uses it as a per-token baseline. We use the same
+mechanism but branch only at \emph{turn boundaries} of a chat
+trajectory and broadcast the resulting advantage as a constant within
+each turn --- group-relative within a turn, VinePPO-like across
+turns.
+
+\paragraph{Hierarchical multi-turn agents.}
+ArCHer~\cite{zhou2024archer} adopts the same macro-step decomposition
+(per-turn value, per-token policy update) but learns the per-turn
+value with a critic. We estimate it by MC over $G_2$ continuations,
+trading variance for the cost of fitting a value head.
+ReBN~\cite{liu2025gem} replaces GAE with batch-normalized MC returns;
+the hierarchical mean we use can be viewed as ReBN partitioned by
+turn-1 prefix. RAGEN's StarPO~\cite{wang2025ragen} is the canonical
+flat-baseline critic-free MC scheme for multi-turn LLM RL; setting
+$G_2=1$ collapses our scheme to it.
+
+\paragraph{$G_1\times G_2$ tree rollouts.} The same tree shape appears
+in process-reward-model training pipelines such as
+Math-Shepherd~\cite{wang2024mathshepherd} and
+OmegaPRM~\cite{luo2024omegaprm}, where the per-prefix MC mean labels
+intermediate steps for a learned reward model. We use the tree as a
+policy-gradient baseline rather than as a labelling oracle.
+
+\paragraph{Code policies.} Voyager~\cite{wang2024voyager} and
+FunSearch~\cite{romera-paredes2024funsearch} also produce executable
+code as the artifact, but rely on frozen-LLM prompting plus
+skill-library accumulation or evolutionary mutation respectively. We
+adapt the LLM by gradient-based RL of LoRA weights and add a
+scratchpad turn between prompt and committed code.
+
+\section{Method}
+
+\subsection{Setup}
+
+The agent is a language model $\pi_\theta$ over chat-template
+trajectories. The base is \texttt{Qwen2.5-Coder-3B-Instruct} with
+frozen weights $W$; $\theta$ parameterizes a LoRA adapter
+$W' = W + AB^\top$. A task $\mathcal{T}$ specifies environment source
+code, $S$ scenarios $\{\sigma_i\}$ that vary the seed and hidden
+parameters, and a per-scenario reward. The scoring oracle runs a
+candidate policy body in a sandboxed subprocess against each scenario
+and returns
+\(
+  R(\text{code};\mathcal{T}) = \sum_i r_i(\text{code};\sigma_i).
+\)
+Validation failures, errors, and timeouts on $\sigma_i$ score the
+\emph{error floor} $r_i = -200$, calibrated below any
+running-but-failing trajectory --- otherwise errored rollouts ($r=0$)
+outrank running-but-poor rollouts and the gradient rewards crashing.
+
+\subsection{Two-turn protocol ($N=2$)}
+
+Each turn the model emits one fenced code block tagged \texttt{policy}
+or \texttt{main}. \texttt{policy} defines \texttt{def policy(state)},
+which the tool executes across all scenarios and reports the summed
+reward as a user-role message. \texttt{main} is arbitrary scratchpad
+code with no environment access; the tool returns truncated stdout.
+The final turn must be \texttt{policy}; \texttt{main} or untagged
+final turns are floored. Malformed intermediate turns are likewise
+floored and surfaced as a textual rejection. The full trajectory is
+\(
+  \tau = (s,\, y^{(1)},\, m,\, y^{(2)}),
+\)
+with $y^{(1)}, y^{(2)}$ the two completions, $m$ the user-role tool
+message after $y^{(1)}$, and $R(\tau) = R(\text{code in }y^{(2)})$
+the only scalar reward.
+
+\subsection{Token-summed clipped surrogate}
+
+For trajectory $b$ at position $t$, with importance ratio
+$\rho^b_t = \pi_\theta / q$ and per-token advantage $A^b_t$,
+\begin{equation}
+\mathcal{L}(\theta) =
+ -\frac{1}{N_{\text{tok}}}\sum_{b,t}
+   \mathbf{1}\{\text{model token}\}\cdot
+   \min\!\big(\rho^b_t A^b_t,\,\mathrm{clip}(\rho^b_t,\,1-\epsilon_{\text{lo}},\,1+\epsilon_{\text{hi}}) A^b_t\big),
+\label{eq:loss}
+\end{equation}
+with $N_{\text{tok}}$ the count of model tokens in the global batch.\footnote{This
+matches the DAPO and CISPO recipes; per-row averaging variants
+(original GRPO, BNPO, Dr.GRPO) divide by per-row token counts.}
+\eqref{eq:loss} is \emph{additive over disjoint token subsets}: for
+any partition of model-token positions, the loss equals the sum of
+partial losses computed with the same $N_{\text{tok}}$. This is the
+property the per-turn decomposition (\S\ref{sec:two-pass}) exploits.
+
+\subsection{Branched rollout}
+
+For each prompt $s$, sample $G_1$ turn-1 variants in one
+\texttt{model.generate} call:
+$y^{(1)}_i \sim q(\cdot\mid s)$, $i=1,\dots,G_1$. For each $y^{(1)}_i$
+execute the tool to obtain $m_i$, then sample $G_2$ continuations
+$y^{(2)}_{i,j} \sim q(\cdot\mid s, y^{(1)}_i, m_i)$ in one call. Score
+each leaf to obtain $\{R_{i,j}\}$. Generate-call cost per prompt is
+$1+G_1$, versus $2G_1 G_2$ for an unbranched rollout with the same
+number of leaves.
+
+\subsection{Per-turn MC value estimates and advantages}
+
+Two empirical values, both pure averages over the tree:
+\begin{equation}
+  \widehat V_0 = \frac{1}{G_1 G_2}\sum_{i,j} R_{i,j},
+  \qquad
+  \widehat V_1^{(i)} = \frac{1}{G_2}\sum_{j} R_{i,j}.
+\end{equation}
+$\widehat V_0$ estimates the initial-state value;
+$\widehat V_1^{(i)}$ the value after committing to turn-1 variant
+$y^{(1)}_i$. Per-turn advantages, broadcast to every token of the
+corresponding turn:
+\begin{align}
+  A^{(1)}_{i}      &= \widehat V_1^{(i)} - \widehat V_0
+    & \text{(over $y^{(1)}_i$)}, \label{eq:adv1}\\
+  A^{(2)}_{i,j}    &= R_{i,j} - \widehat V_1^{(i)}
+    & \text{(over $y^{(2)}_{i,j}$).} \label{eq:adv2}
+\end{align}
+The turn-2 advantage uses the conditional mean given the turn-1
+prefix rather than the global per-prompt mean: a poor turn-2 sample
+drawn from a strong turn-1 is recognized as poor instead of
+inheriting its prefix's above-average outcome. Tool-message tokens
+are masked via \texttt{tool\_mask}; their advantage is zero.
+
+\subsection{Per-turn loss decomposition}
+\label{sec:two-pass}
+
+A single forward over $[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$
+materializes an LM-head gradient of shape
+$(B,\,T_{\text{full}},\,|V|)$. With $|V|\approx 152{,}000$ this
+exceeds 24\,GB at our trajectory lengths. Let $\mathcal{I}_1,
+\mathcal{I}_2$ index turn-1 and turn-2 model tokens. Since the tool
+mask zeroes the loss elsewhere and \eqref{eq:loss} sums over
+positions with a single normalizer,
+\begin{equation}
+  \mathcal{L} = \mathcal{L}_{\mathcal{I}_1} + \mathcal{L}_{\mathcal{I}_2},
+  \qquad N_{\text{tok}} = |\mathcal{I}_1| + |\mathcal{I}_2|\ \text{shared.}
+\label{eq:additive}
+\end{equation}
+We compute the two terms in separate forward/backward passes:
+\begin{itemize}
+  \item \textbf{Pass 1.} Forward $[s\,|\,y^{(1)}]$ with
+        \texttt{logits\_to\_keep}$=T_1^{\max}$, advantages
+        $A^{(1)}_i$. Compute $\mathcal{L}_1$, backward, free.
+  \item \textbf{Pass 2.} Forward
+        $[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$ but pack
+        $[s\,|\,y^{(1)}\,|\,m]$ into the prompt slot and $y^{(2)}$
+        alone into the completion slot, so
+        \texttt{logits\_to\_keep}$=T_2^{\max}$. Compute
+        $\mathcal{L}_2$, backward, free.
+\end{itemize}
+By \eqref{eq:additive} the accumulated parameter gradients sum to
+the single-pass gradient exactly. Peak memory is
+$\max(\text{pass 1, pass 2})$ since pass-1's graph is freed before
+pass-2's forward begins.
+
+\paragraph{Restrictions.}
+The decomposition requires the token-summed,
+single-normalizer form of \eqref{eq:loss}; per-row averaging variants
+do not factor across $\mathcal{I}_1\cup\mathcal{I}_2$. The
+implementation also needs $\beta=0$ (a KL term to $\pi_{\text{ref}}$
+would require per-segment slicing) and \texttt{num\_iterations}$=1$
+(so cached \texttt{old\_per\_token\_logps} need no re-segmenting).
+
+\section{Experimental setup}
+
+\paragraph{Environment.} A 2D puck-on-tilted-plane controller. The
+puck moves in $[-6, 6]^2$ under a constant hidden tilt $(t_x, t_y)$
+and linear drag $\mu$; the policy receives
+$\{p_x,p_y,v_x,v_y,g_x,g_y\}$ and must drive the puck to a goal
+within 120 steps. Hidden parameters --- tilt, drag, thrust limit
+$a_{\max}$, initial velocity --- vary per scenario and are not in the
+state. The thrust envelope is set to
+$a_{\max} = \|\text{tilt}\|_2 \times 1.05 + \epsilon$ so a naive
+straight-at-goal policy fails because it cannot cancel tilt drift.
+Per-step reward is $-\Delta t\cdot\text{dist}(p, g)$ with a $+50$
+bonus on reaching the goal; errored episodes score $-200$ per
+scenario.
+
+\paragraph{Baseline gap.} Two hand-written policies fix the headroom:
+naive aim ($\approx 26\%$ goal rate over 200 seeds) and
+PD-with-tilt-feedforward ($\approx 73\%$). The gap is the room
+LoRA fine-tuning has to exploit.
+
+\paragraph{Model and compute.} \texttt{Qwen2.5-Coder-3B-Instruct},
+LoRA rank $r=16$ on attention and MLP projections, on a single
+24\,GB L4 GPU. bf16 weights, gradient checkpointing on. We use
+$G_1 = G_2 = 4$ (16 leaves per prompt) and a per-turn token cap of
+$400$.
+
+\paragraph{Training.} The token-summed clipped surrogate
+\eqref{eq:loss} with $\epsilon_{\text{lo}}=0.2$, asymmetric upper
+clip, $\beta=0$, and the per-turn advantages of
+\eqref{eq:adv1}--\eqref{eq:adv2}. No reference KL, no critic, no
+GAE, no context truncation across turns.
+
+\paragraph{Diagnostics.} We log $\widehat V_0$ and the
+between-variant standard deviation of $\widehat V_1$, the
+within-variant standard deviation, and their ratio (the
+\emph{signal ratio}); the per-turn advantage standard deviations;
+the fraction of trajectories at the error floor; and the count of
+\texttt{generate} calls per prompt (expected $1 + G_1$). The signal
+ratio guides allocation between $G_1$ and $G_2$ at fixed budget:
+$>1$ means turn-1 variation dominates and a larger $G_1$ helps; $<1$
+means within-variant noise dominates and a larger $G_2$ helps.
+
+\section{Limitations}
+
+The scheme is restricted to $N=2$ turns. Generalizing to $N>2$
+requires a recursive value bootstrap (each $\widehat V_n^{(\cdot)}$
+becomes the conditional mean over the subtree below it), and the
+two-pass loss decomposition becomes an $N$-pass decomposition;
+neither is conceptually new but both add bookkeeping. We assume
+deterministic environments given the seed --- under stochastic
+dynamics the leaf rewards become noisier estimates of state values
+and $G_2$ would have to grow accordingly. The $\beta=0$,
+\texttt{num\_iterations}$=1$ restrictions are implementation
+choices that the same decomposition argument can lift with extra
+per-segment slicing of reference log-probabilities and cached
+sampling log-probabilities.
+
+\section{Conclusion}
+
+We described a critic-free, on-policy multi-turn RL scheme for
+code-policy generation that combines branched rollouts with per-turn
+MC value estimates and a per-turn loss decomposition. The
+algorithmic ingredients are individually standard; the assembly is
+small enough to train on a single 24\,GB GPU, and the loss-decomposition
+trick is what makes the assembly tractable.
+
+\begin{thebibliography}{99}
+\bibitem{shao2024deepseekmath} Z.~Shao et~al.
+\emph{DeepSeekMath}. arXiv:2402.03300, 2024.
+\bibitem{yu2025dapo} Q.~Yu et~al.
+\emph{DAPO: An Open-Source LLM Reinforcement Learning System at
+Scale}. arXiv:2503.14476, 2025.
+\bibitem{kazemnejad2024vineppo} A.~Kazemnejad et~al.
+\emph{VinePPO: Unlocking RL Potential For LLM Reasoning Through
+Refined Credit Assignment}. arXiv:2410.01679, 2024.
+\bibitem{wang2025ragen} Z.~Wang et~al. \emph{RAGEN: Training Agents
+by Reinforcing Reasoning}. 2025.
+\bibitem{liu2025gem} Z.~Liu et~al. \emph{GEM: Reinforcement Learning
+for Generalist Models}. 2025.
+\bibitem{zhou2024archer} Y.~Zhou et~al. \emph{ArCHer: Training
+Language Model Agents via Hierarchical Multi-Turn RL}. ICML, 2024.
+\bibitem{wang2024mathshepherd} P.~Wang et~al. \emph{Math-Shepherd}.
+ACL, 2024.
+\bibitem{luo2024omegaprm} L.~Luo et~al. \emph{Improve Mathematical
+Reasoning in Language Models by Automated Process Supervision}.
+arXiv:2406.06592, 2024.
+\bibitem{wang2024voyager} G.~Wang et~al. \emph{Voyager}. TMLR, 2024.
+\bibitem{romera-paredes2024funsearch} B.~Romera-Paredes et~al.
+\emph{Mathematical discoveries from program search with large
+language models}. Nature, 2024.
+\end{thebibliography}
+
+\end{document}
