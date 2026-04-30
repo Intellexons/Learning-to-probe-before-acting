@@ -311,26 +311,33 @@ claim that needs empirical support is the \emph{credit-assignment}
 contribution: that hierarchical per-turn advantages
 \eqref{eq:adv1}--\eqref{eq:adv2} on a $G_1\times G_2$ tree do better
 than a single trajectory-level advantage broadcast across both turns.
-We propose a four-arm ablation (Table~\ref{tab:ablation}) that
-isolates each ingredient under a matched compute budget.
+We propose a six-arm ablation (Table~\ref{tab:ablation}), ordered
+from the weakest baseline to our method so each row adds exactly one
+ingredient over the previous.
 
 \begin{table}[h]
 \centering
 \small
-\begin{tabular}{@{}lp{3.0cm}p{4.5cm}p{4.0cm}@{}}
+\begin{tabular}{@{}lp{3.2cm}p{4.3cm}p{4.0cm}@{}}
 \toprule
-Arm & Rollout structure & Advantage & What it isolates \\
+Arm & Rollout structure & Advantage & What it isolates over the previous arm \\
 \midrule
-A --- Flat StarPO & $G$ independent $N{=}2$ trajectories & $A(\tau) = R(\tau) - \bar R$, broadcast to all tokens & Vanilla multi-turn GRPO baseline (RAGEN-style) \\
-B --- Branched, flat & $G_1{\times}G_2$ tree & $A_{i,j} = R_{i,j} - \bar R$ on all tokens & Does the tree alone help (more leaves per generate call), independent of credit? \\
-C --- Branched, hierarchical (ours) & $G_1{\times}G_2$ tree & $A^{(1)}_i = \widehat V_1^{(i)} - \widehat V_0$ on $y^{(1)}_i$; $A^{(2)}_{i,j} = R_{i,j} - \widehat V_1^{(i)}$ on $y^{(2)}_{i,j}$ & The per-turn baseline contribution \\
-D --- Single-turn GRPO & $G$ flat $N{=}1$ rollouts & Standard GRPO advantage & Does multi-turn help at all? \\
+A --- Frozen, one-shot & $N{=}1$ inference, no training & --- & Base model's prior on the code-policy interface \\
+B --- Frozen, multi-turn prompted & $N{=}2$ inference, no training & --- & Does the two-turn protocol help at inference time? (Voyager-/FunSearch-style frozen-LLM use) \\
+C --- Single-turn GRPO & $G$ flat $N{=}1$ rollouts, trained & Standard GRPO advantage & Does RL fine-tuning help at all? \\
+D --- Flat StarPO & $G$ independent $N{=}2$ trajectories, trained & $A(\tau) = R(\tau) - \bar R$, broadcast to all tokens & Does multi-turn training help over single-turn? (RAGEN-style) \\
+E --- Branched, flat & $G_1{\times}G_2$ tree, trained & $A_{i,j} = R_{i,j} - \bar R$ on all tokens & Does the tree alone help (more leaves per generate call), independent of credit? \\
+F --- Branched, hierarchical (ours) & $G_1{\times}G_2$ tree, trained & $A^{(1)}_i = \widehat V_1^{(i)} - \widehat V_0$ on $y^{(1)}_i$; $A^{(2)}_{i,j} = R_{i,j} - \widehat V_1^{(i)}$ on $y^{(2)}_{i,j}$ & The per-turn baseline contribution \\
 \bottomrule
 \end{tabular}
-\caption{Ablation arms. Match leaf count $G = G_1 G_2 = 16$ across A,
-B, C so they see the same number of scored trajectories per step. A
-uses $2G$ \texttt{generate} calls per prompt; C uses $1+G_1$. Report
-both equal-rollouts and equal-wall-clock comparisons.}
+\caption{Ablation arms, ordered from weakest baseline (top) to ours
+(bottom). Trained arms (C--F) match leaf count $G = G_1 G_2 = 16$ so
+they see the same number of scored trajectories per step. D uses
+$2G$ \texttt{generate} calls per prompt; F uses $1+G_1$. Report both
+equal-rollouts and equal-wall-clock comparisons. Frozen arms (A, B)
+use the same Qwen2.5-Coder-3B-Instruct base with no gradient updates,
+and serve as training-free references analogous to Voyager- or
+FunSearch-style frozen-LLM uses of the code-policy interface.}
 \label{tab:ablation}
 \end{table}
 
@@ -340,36 +347,42 @@ checkpoint, reported as median and IQR over $\geq 3$ seeds per arm,
 plotted against gradient steps and against wall-clock. Statistical
 test: paired Wilcoxon over per-seed best-checkpoint goal rates;
 report effect size, not just $p$. The minimum convincing comparison
-is C $>$ A at matched leaves.
+is F $>$ D at matched leaves.
 
 \paragraph{Diagnostic checks.}
 Two further measurements sharpen the mechanism story.
 \begin{enumerate}
   \item \emph{Turn-1 quality curve.} Track the mean reward of turn-1
         \texttt{policy} drafts (when turn-1 is in policy mode) as a
-        function of training step. Under A the trajectory-level
+        function of training step. Under D the trajectory-level
         advantage projects onto turn-1 only through the global mean;
-        under C, $A^{(1)}_i$ provides a direct gradient signal on
-        turn-1 quality. C should show a steeper turn-1 reward rise
-        than A.
+        under F, $A^{(1)}_i$ provides a direct gradient signal on
+        turn-1 quality. F should show a steeper turn-1 reward rise
+        than D.
   \item \emph{Signal-ratio conditioning.} The training loop already
         logs the per-prompt signal ratio
         $\widehat\sigma(\widehat V_1^{(i)})/\overline{\widehat\sigma(R_{i,\cdot})}$.
         Bucket prompts by their iteration-0 signal ratio. Ratio
         $>1$ means turn-1 choice dominates the variance and per-turn
         credit should help; ratio $<1$ means within-variant noise
-        dominates and per-turn credit should not. C's advantage over
-        A should grow with the bucket's signal ratio. If it does not,
+        dominates and per-turn credit should not. F's advantage over
+        D should grow with the bucket's signal ratio. If it does not,
         the mechanism is not doing what theory predicts and the
         headline claim weakens.
 \end{enumerate}
 
-\paragraph{Failure modes to declare upfront.} If C $\not>$ A under
+\paragraph{Failure modes to declare upfront.} If F $\not>$ D under
 matched leaves, the hierarchical baseline does not pay off in this
 domain and the contribution reduces to ``branching amortizes generate
-calls'' (B vs A). If C $\approx$ B but both beat A, the gain is from
-the tree structure, not from the per-turn baseline. Either outcome is
-informative; we report whichever obtains.
+calls'' (E vs D). If F $\approx$ E but both beat D, the gain is from
+the tree structure, not from the per-turn baseline. If the trained
+arms (C--F) do not clearly beat the frozen arms (A, B), RL
+fine-tuning is not buying anything over the base model's prior under
+our protocol, and the right framing for this work is
+prompt-engineering, not training. If B $>$ A, the multi-turn protocol
+itself helps even without training, and that gap should be reported
+as part of the headline. Either outcome is informative; we report
+whichever obtains.
 
 \section{Limitations}
 
