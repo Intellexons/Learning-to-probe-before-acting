@@ -7,6 +7,8 @@
 \usepackage{microtype}
 \usepackage{titlesec}
 \usepackage{abstract}
+\usepackage{booktabs}
+\usepackage{array}
 
 \titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
@@ -299,6 +301,75 @@ the fraction of trajectories at the error floor; and the count of
 ratio guides allocation between $G_1$ and $G_2$ at fixed budget:
 $>1$ means turn-1 variation dominates and a larger $G_1$ helps; $<1$
 means within-variant noise dominates and a larger $G_2$ helps.
+
+\section{Evaluating the per-turn credit assignment}
+\label{sec:eval}
+
+The per-turn loss decomposition (\S\ref{sec:two-pass}) is purely a
+memory enabler --- it does not change the gradient. The substantive
+claim that needs empirical support is the \emph{credit-assignment}
+contribution: that hierarchical per-turn advantages
+\eqref{eq:adv1}--\eqref{eq:adv2} on a $G_1\times G_2$ tree do better
+than a single trajectory-level advantage broadcast across both turns.
+We propose a four-arm ablation (Table~\ref{tab:ablation}) that
+isolates each ingredient under a matched compute budget.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lp{3.0cm}p{4.5cm}p{4.0cm}@{}}
+\toprule
+Arm & Rollout structure & Advantage & What it isolates \\
+\midrule
+A --- Flat StarPO & $G$ independent $N{=}2$ trajectories & $A(\tau) = R(\tau) - \bar R$, broadcast to all tokens & Vanilla multi-turn GRPO baseline (RAGEN-style) \\
+B --- Branched, flat & $G_1{\times}G_2$ tree & $A_{i,j} = R_{i,j} - \bar R$ on all tokens & Does the tree alone help (more leaves per generate call), independent of credit? \\
+C --- Branched, hierarchical (ours) & $G_1{\times}G_2$ tree & $A^{(1)}_i = \widehat V_1^{(i)} - \widehat V_0$ on $y^{(1)}_i$; $A^{(2)}_{i,j} = R_{i,j} - \widehat V_1^{(i)}$ on $y^{(2)}_{i,j}$ & The per-turn baseline contribution \\
+D --- Single-turn GRPO & $G$ flat $N{=}1$ rollouts & Standard GRPO advantage & Does multi-turn help at all? \\
+\bottomrule
+\end{tabular}
+\caption{Ablation arms. Match leaf count $G = G_1 G_2 = 16$ across A,
+B, C so they see the same number of scored trajectories per step. A
+uses $2G$ \texttt{generate} calls per prompt; C uses $1+G_1$. Report
+both equal-rollouts and equal-wall-clock comparisons.}
+\label{tab:ablation}
+\end{table}
+
+\paragraph{Primary metric.} Held-out goal rate on a stress
+distribution (more extreme tilts/drag than train) at the best
+checkpoint, reported as median and IQR over $\geq 3$ seeds per arm,
+plotted against gradient steps and against wall-clock. Statistical
+test: paired Wilcoxon over per-seed best-checkpoint goal rates;
+report effect size, not just $p$. The minimum convincing comparison
+is C $>$ A at matched leaves.
+
+\paragraph{Diagnostic checks.}
+Two further measurements sharpen the mechanism story.
+\begin{enumerate}
+  \item \emph{Turn-1 quality curve.} Track the mean reward of turn-1
+        \texttt{policy} drafts (when turn-1 is in policy mode) as a
+        function of training step. Under A the trajectory-level
+        advantage projects onto turn-1 only through the global mean;
+        under C, $A^{(1)}_i$ provides a direct gradient signal on
+        turn-1 quality. C should show a steeper turn-1 reward rise
+        than A.
+  \item \emph{Signal-ratio conditioning.} The training loop already
+        logs the per-prompt signal ratio
+        $\widehat\sigma(\widehat V_1^{(i)})/\overline{\widehat\sigma(R_{i,\cdot})}$.
+        Bucket prompts by their iteration-0 signal ratio. Ratio
+        $>1$ means turn-1 choice dominates the variance and per-turn
+        credit should help; ratio $<1$ means within-variant noise
+        dominates and per-turn credit should not. C's advantage over
+        A should grow with the bucket's signal ratio. If it does not,
+        the mechanism is not doing what theory predicts and the
+        headline claim weakens.
+\end{enumerate}
+
+\paragraph{Failure modes to declare upfront.} If C $\not>$ A under
+matched leaves, the hierarchical baseline does not pay off in this
+domain and the contribution reduces to ``branching amortizes generate
+calls'' (B vs A). If C $\approx$ B but both beat A, the gain is from
+the tree structure, not from the per-turn baseline. Either outcome is
+informative; we report whichever obtains.
 
 \section{Limitations}
 
