@@ -235,38 +235,46 @@ are masked via \texttt{tool\_mask}; their advantage is zero.
 \subsection{Per-turn loss decomposition}
 \label{sec:per-turn-decomp}
 
-A single forward over the full trajectory materializes an LM-head
-gradient of shape $(B,\,T_{\text{full}},\,|V|)$. With
-$|V|\approx 152{,}000$ this exceeds 24\,GB at our trajectory lengths.
-Let $\mathcal{I}_n$ index the model tokens of turn $n$. Since the
-tool mask zeroes the loss elsewhere and \eqref{eq:loss} sums over
-positions with a single normalizer, the loss factors over turns:
+The token-summed clipped surrogate \eqref{eq:loss} factors over any
+partition of the model-token positions into disjoint subsets that
+share the same global normalizer $N_{\text{tok}}$. Letting
+$\mathcal{I}_n$ index the model tokens of turn $n$,
 \begin{equation}
   \mathcal{L} = \sum_{n=1}^{N} \mathcal{L}_{\mathcal{I}_n},
-  \qquad N_{\text{tok}} = \sum_{n=1}^{N} |\mathcal{I}_n|\ \text{shared.}
+  \qquad N_{\text{tok}} = \sum_{n=1}^{N} |\mathcal{I}_n|.
 \label{eq:additive}
 \end{equation}
-We compute the $N$ terms in separate forward/backward passes: pass
-$n$ forwards $[s\,|\,y^{(1)}\,|\,m^{(1)}\,|\,\dots\,|\,y^{(n)}]$ but
-packs everything before $y^{(n)}$ into the prompt slot so
-\texttt{logits\_to\_keep}$=T_n^{\max}$, computes
-$\mathcal{L}_{\mathcal{I}_n}$ with advantages
-$A^{(n)}_{\cdot}$, backwards, and frees. At $N{=}2$ this is two
-passes: pass 1 over $[s\,|\,y^{(1)}]$ and pass 2 over
-$[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$ with the prefix
-$[s\,|\,y^{(1)}\,|\,m]$ packed into the prompt slot.
-By \eqref{eq:additive} the accumulated parameter gradients sum to
-the single-pass gradient exactly. Peak memory is $\max_n$ over the
-per-pass graphs since each pass's graph is freed before the next
-pass's forward begins.
+Per-row averaged variants (original GRPO, BNPO, Dr.GRPO) do
+\emph{not} factor this way: each row carries its own denominator,
+so the partial sums do not combine into the single-row loss. The
+token-summed form is what makes the decomposition exact.
 
-\paragraph{Restrictions.}
-The decomposition requires the token-summed,
-single-normalizer form of \eqref{eq:loss}; per-row averaging variants
-do not factor across $\mathcal{I}_1\cup\mathcal{I}_2$. The
-implementation also needs $\beta=0$ (a KL term to $\pi_{\text{ref}}$
-would require per-segment slicing) and \texttt{num\_iterations}$=1$
-(so cached \texttt{old\_per\_token\_logps} need no re-segmenting).
+We exploit \eqref{eq:additive} to compute $\mathcal{L}$ in $N$
+forward/backward passes rather than one. Pass $n$ forwards
+$[s \,|\, y^{(1)} \,|\, m^{(1)} \,|\, \dots \,|\, y^{(n)}]$,
+computes $\mathcal{L}_{\mathcal{I}_n}$, backwards, and frees. By
+\eqref{eq:additive} the parameter gradients accumulated across the
+$N$ passes equal the single-pass gradient exactly.
+
+\paragraph{Why this saves memory.} The dominant activation cost is
+the LM-head logit tensor of shape $(B, T, |V|)$, with $|V| \approx
+152{,}000$ for our base model. A single forward over the full
+trajectory materializes logits at every position from the start of
+$y^{(1)}$ through the end of $y^{(N)}$ --- the model tokens of the
+non-final turns sit in the middle of the sequence, so they cannot
+be reached by the standard trailing-window optimization
+(\texttt{logits\_to\_keep}, see Appendix~\ref{app:memory}). The
+per-turn forwards each have $y^{(n)}$ as a trailing block, so the
+per-pass logit memory is bounded by $\max_n T_n^{\max}$ instead of
+$T_1 + \sum T_{m_n} + \dots + T_N$. Concrete numbers for $N{=}2$
+appear in Appendix~\ref{app:memory}; at our settings the saving over
+the smallest single-forward variant is roughly $2\times$.
+
+\paragraph{Restrictions.} Beyond the token-summed normalizer required
+by \eqref{eq:additive}, the implementation also needs $\beta=0$ (a KL
+term to $\pi_{\text{ref}}$ would require per-segment slicing of
+reference log-probabilities) and \texttt{num\_iterations}$=1$ (so
+cached \texttt{old\_per\_token\_logps} need no re-segmenting).
 
 \section{Experimental setup}
 
@@ -418,10 +426,112 @@ sampling log-probabilities.
 
 We described a critic-free, on-policy multi-turn RL scheme for
 code-policy generation that combines branched rollouts with per-turn
-MC value estimates and a per-turn loss decomposition. The
-algorithmic ingredients are individually standard; the assembly is
-small enough to train on a single 24\,GB GPU, and the loss-decomposition
-trick is what makes the assembly tractable.
+MC value estimates and a per-turn loss decomposition. The algorithmic
+ingredients are individually standard; the assembly is small enough
+to train on a single 24\,GB GPU, and the per-turn decomposition ---
+which the token-summed normalizer makes exact --- is what keeps it
+that way as the number of turns grows.
+
+\appendix
+
+\section{Memory accounting and the trailing-window LM-head}
+\label{app:memory}
+
+This appendix walks through why a single forward over a multi-turn
+trajectory is expensive and where the per-turn decomposition's
+saving comes from. The argument turns on a single API constraint in
+HF \texttt{transformers} which we make explicit here rather than in
+the body.
+
+\paragraph{The dominant cost.} Causal-LM training has two
+big tensors per forward: the transformer body's hidden states of
+shape $(B, T, d)$ with $d \approx 2048$, and the LM head's logits
+of shape $(B, T, |V|)$ with $|V| \approx 152{,}000$. The logit
+tensor is $\sim |V|/d \approx 75\times$ larger than the hidden
+states and dominates the activation budget at our trajectory
+lengths. The autograd graph for the loss saves intermediate
+tensors of comparable size on top.
+
+\paragraph{The \texttt{logits\_to\_keep} parameter.} HF
+\texttt{transformers} exposes a \texttt{logits\_to\_keep} (formerly
+\texttt{num\_logits\_to\_keep}) integer argument on causal-LM
+\texttt{forward} calls. Setting it to $K$ replaces
+$\texttt{lm\_head}(\text{hidden})$ with
+$\texttt{lm\_head}(\text{hidden}[:, -K{:}, :])$: the LM-head is
+applied only to the \emph{last $K$} hidden states and the output
+logits have shape $(B, K, |V|)$ instead of $(B, T, |V|)$. The
+transformer body still runs over all $T$ positions because of causal
+attention, but the body's per-position cost is two orders of
+magnitude smaller than the LM head's.
+
+The constraint that matters here is that $K$ counts \emph{trailing}
+positions; there is no general-purpose way to ask the API for logits
+at arbitrary middle positions. To get logits at a non-trailing block,
+either enlarge the trailing window to cover it (and pay for every
+position in between) or run a separate forward whose sequence ends
+at the block.
+
+\paragraph{Why multi-turn is expensive in a single forward.} In our
+$N{=}2$ trajectory $[s \,|\, y^{(1)} \,|\, m \,|\, y^{(2)}]$, the
+model tokens of $y^{(2)}$ are trailing but those of $y^{(1)}$ are not.
+The smallest trailing window covering both blocks runs from the start
+of $y^{(1)}$ through the end of $y^{(2)}$ --- $T_1 + T_m + T_2$
+positions. The tool-message tokens contribute nothing to the loss
+(they are masked) but their logits are still materialized because
+they sit inside the window. As $N$ grows, the gap widens: the
+single-forward window becomes $T_1 + T_{m_1} + T_2 + \dots + T_N$,
+the per-turn-forward bound stays at $\max_n T_n$.
+
+\paragraph{Three regimes.} Concretely, with $T_1 = T_2 = 400$, prompt
+$\approx 500$, tool message $\approx 50$, batch $B = 16$ leaves per
+prompt, $|V| = 152{,}000$, and 4-byte logits (the autograd
+intermediate is held in fp32 for the cross-entropy reduction even
+when weights are bf16):
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Regime & Positions through LM head & Logit tensor \\
+\midrule
+(a) Single pass, no \texttt{logits\_to\_keep} & $T_{\text{full}} = 1350$ & $\approx 13.1$\,GB \\
+(b) Single pass, $\texttt{logits\_to\_keep} = T_1{+}T_m{+}T_2$ & $850$ & $\approx 8.3$\,GB \\
+(c) Two passes (ours), $\texttt{logits\_to\_keep} = \max(T_1, T_2)$ & $400$ per pass, freed between & $\approx 3.9$\,GB \\
+\bottomrule
+\end{tabular}
+\caption{LM-head logit tensor size under each regime, plus an
+equal-sized autograd buffer for the backward pass (not shown).
+Regime~(a) is the truly naive forward. Regime~(b) is what an
+HF-fluent implementation does by default; the trailing window has to
+span both turns because \texttt{logits\_to\_keep} only trims leading
+positions. Regime~(c) is the per-turn decomposition of
+\S\ref{sec:per-turn-decomp}.}
+\label{tab:memory}
+\end{table}
+
+The honest comparison for our setting is (b) vs.\ (c) --- a roughly
+$2\times$ saving here, growing with $T_m$ and with $N$. Regime~(a) is
+shown for completeness but is not what a careful single-forward
+implementation actually does.
+
+\paragraph{What the per-turn decomposition is and isn't.} It is not a
+new memory optimization over \texttt{logits\_to\_keep}; it is the
+natural way to apply that optimization when model tokens span
+multiple non-trailing blocks. The non-trivial observation is that
+the gradients accumulated across per-turn passes equal the
+single-pass gradient \emph{exactly} (eq.\ \ref{eq:additive}), and
+that this exactness depends on the token-summed normalizer of
+\eqref{eq:loss}. Per-row-averaged GRPO variants would have to fall
+back to a single forward (regime b) or accept a normalizer
+approximation.
+
+\paragraph{Implementation note.} Pass~1 forwards $[s \,|\, y^{(1)}]$
+as a self-contained sequence with $\texttt{logits\_to\_keep} = T_1$.
+Pass~2 forwards the full trajectory but packs
+$[s \,|\, y^{(1)} \,|\, m]$ into the prompt slot of HF's training
+interface and $y^{(2)}$ alone into the completion slot, so
+$\texttt{logits\_to\_keep} = T_2$ behaves as expected.
 
 \begin{thebibliography}{99}
 \bibitem{shao2024deepseekmath} Z.~Shao et~al.
