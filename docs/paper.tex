@@ -459,19 +459,40 @@ positions, and (in our multi-turn setting) tool-message positions
 --- are not needed for the gradient and are wasted compute if we
 materialize them.
 
-\paragraph{Where the memory goes.} Internally the model has two
-pieces. The \emph{transformer body} is a stack of blocks (attention
-+ MLP) that turns input tokens into hidden states of shape $(B, T, d)$
-with $d \approx 2048$ for Qwen-3B; this is where the bulk of the
-$3{\cdot}10^9$ parameters live. The \emph{LM head} is a single final
-linear layer of shape $(d, |V|)$ that projects each hidden state to
-its logit vector. The LM head has only $d \cdot |V| \approx
-3{\cdot}10^8$ parameters --- modest. But its \emph{output activation}
-$(B, T, |V|)$ is roughly $|V|/d \approx 75\times$ larger than any
-per-position activation in the body, and the autograd graph saves an
-equal-sized buffer for backward. At our trajectory lengths these LM-head
-tensors are the only thing that does not fit on a 24\,GB L4; the
-transformer body is comfortably under budget.
+\paragraph{Where the memory goes.} The model splits into two pieces
+with very different memory profiles. We distinguish three buckets
+because the asymmetry between them is what motivates the
+decomposition: \emph{parameter weights}, \emph{per-position activations
+saved for backward}, and \emph{per-position output of the LM head}.
+
+\emph{Transformer body.} A stack of $L \approx 36$ blocks (attention
+$+$ MLP), holding the bulk of the $3{\cdot}10^9$ parameters. Each
+block produces per-position activations of width $O(d)$ with
+$d \approx 2048$. Without optimization the body's saved activations
+for backward are $O(L \cdot d)$ per position. We use gradient
+checkpointing, which recomputes intermediate block activations during
+backward instead of storing them, leaving only $O(d)$ per position
+saved at checkpoint boundaries. So in our setup the body holds many
+parameters but small per-position activations.
+
+\emph{LM head.} A single linear layer of shape $(d, |V|)$:
+${\sim}3{\cdot}10^8$ parameters --- modest --- but its per-position
+\emph{output} is the full logit vector of width $|V| \approx
+152{,}000$. The head sits at the end of the graph, so checkpointing
+it would buy nothing (there is nothing upstream to recompute through
+the loss): its full $(B, T, |V|)$ output is held until backward, with
+an equal-sized autograd buffer for the gradient.
+
+\emph{The asymmetry.} Once gradient checkpointing is on, the body
+keeps roughly $d \approx 2{,}000$ floats of activation per position,
+while the LM head keeps roughly $|V| \approx 152{,}000$. The head's
+per-position footprint is ${\sim}75\times$ the body's, and unlike the
+body it cannot be checkpointed away. The body's parameter weights are
+larger in absolute terms but they are loaded once at the start of
+training and shared across all positions in the batch, while the
+head's $(B, T, |V|)$ output scales with both batch size and trajectory
+length. At our trajectory lengths these LM-head activation tensors
+are the only thing that does not fit on a 24\,GB L4.
 
 \paragraph{The \texttt{logits\_to\_keep} parameter.} Because most
 positions' logits are not actually needed for the gradient, HF
