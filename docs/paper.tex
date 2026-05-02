@@ -37,7 +37,8 @@ yield per-turn advantages, broadcast across the tokens of each turn
 chat-turn granularity. To fit the resulting trajectories into a
 24\,GB GPU we exploit the additivity of the token-summed clipped
 surrogate to decompose the loss across turns, bounding peak LM-head
-gradient memory to $\max_n T_n$ instead of $\sum_n T_n$. We instantiate
+saved-activation memory to $\max_n T_n$ instead of $\sum_n T_n$
+without changing the accumulated gradient. We instantiate
 and evaluate the scheme at $N{=}2$ with $G_1{=}G_2{=}4$ on a 2D
 control task; the generalization to $N{>}2$ is mechanical and
 discussed in \S\ref{sec:limitations}. The contribution is a clean,
@@ -81,11 +82,13 @@ resulting trajectories trainable on a 24\,GB L4, we observe that the
 token-summed clipped surrogate is additive over disjoint token
 subsets sharing the same global normalizer, and exploit this to
 forward and backward each turn independently. Peak LM-head
-gradient memory drops from
+saved-activation memory drops from
 $O(B\cdot \sum_n T_n\cdot |V|)$ to
-$O(B\cdot \max_n T_n\cdot |V|)$ at gradient cost zero; the
-parameter gradients summed across the per-turn passes equal the
-single-pass gradient exactly.
+$O(B\cdot \max_n T_n\cdot |V|)$ without changing the accumulated
+gradient: the parameter gradients summed across the per-turn passes
+equal the single-pass gradient exactly. The trade-off is compute ---
+each later pass re-forwards through the prefix of earlier turns ---
+not gradient quality.
 
 The combination is a natural specialization of standard mechanisms
 rather than a new algorithm; the contribution is a clean assembly
