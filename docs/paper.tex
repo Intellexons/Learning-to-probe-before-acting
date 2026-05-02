@@ -270,11 +270,17 @@ $T_1 + \sum T_{m_n} + \dots + T_N$. Concrete numbers for $N{=}2$
 appear in Appendix~\ref{app:memory}; at our settings the saving over
 the smallest single-forward variant is roughly $2\times$.
 
-\paragraph{Restrictions.} Beyond the token-summed normalizer required
-by \eqref{eq:additive}, the implementation also needs $\beta=0$ (a KL
-term to $\pi_{\text{ref}}$ would require per-segment slicing of
-reference log-probabilities) and \texttt{num\_iterations}$=1$ (so
-cached \texttt{old\_per\_token\_logps} need no re-segmenting).
+\paragraph{Restrictions.} The decomposition's exactness has one
+\emph{conceptual} requirement and two \emph{implementation}
+requirements. Conceptual: the token-summed normalizer of
+\eqref{eq:loss} --- per-row averaged variants do not factor across
+token-position partitions, as discussed above. Implementation:
+$\beta=0$ (a KL term to $\pi_{\text{ref}}$ would require per-segment
+slicing of reference log-probabilities) and
+\texttt{num\_iterations}$=1$ (so cached
+\texttt{old\_per\_token\_logps} need no re-segmenting). The two
+implementation requirements can be lifted with extra bookkeeping at
+no theoretical cost (\S\ref{sec:limitations}).
 
 \section{Experimental setup}
 
@@ -486,13 +492,18 @@ an equal-sized autograd buffer for the gradient.
 \emph{The asymmetry.} Once gradient checkpointing is on, the body
 keeps roughly $d \approx 2{,}000$ floats of activation per position,
 while the LM head keeps roughly $|V| \approx 152{,}000$. The head's
-per-position footprint is ${\sim}75\times$ the body's, and unlike the
-body it cannot be checkpointed away. The body's parameter weights are
-larger in absolute terms but they are loaded once at the start of
-training and shared across all positions in the batch, while the
-head's $(B, T, |V|)$ output scales with both batch size and trajectory
-length. At our trajectory lengths these LM-head activation tensors
-are the only thing that does not fit on a 24\,GB L4.
+per-position activation is ${\sim}75\times$ the body's, and unlike
+the body it cannot be checkpointed away. Body parameter weights are
+larger in absolute terms but they are loaded once and shared across
+all positions in the batch; the head's $(B, T, |V|)$ output scales
+with both batch size and trajectory length. At our trajectory
+lengths the LM-head activation tensors are the term that pushes a
+single-pass forward over budget, while parameters, optimizer state,
+and gradient-checkpointed body activations are fixed costs that fit
+under any of the regimes below. \emph{The decomposition therefore
+saves peak LM-head activation memory specifically, not total GPU
+memory in equal proportion} --- an important distinction when
+reading Table~\ref{tab:memory}.
 
 \paragraph{The \texttt{logits\_to\_keep} parameter.} Because most
 positions' logits are not actually needed for the gradient, HF
@@ -559,6 +570,19 @@ The honest comparison for our setting is (b) vs.\ (c) --- a roughly
 $2\times$ saving here, growing with $T_m$ and with $N$. Regime~(a) is
 shown for completeness but is not what a careful single-forward
 implementation actually does.
+
+\paragraph{Arithmetic, not measured.} The numbers in
+Table~\ref{tab:memory} are arithmetic from the LM-head output tensor
+shape $(B, K, |V|)$ at 4 bytes per element; we have not yet measured
+peak end-to-end GPU memory under the three regimes. End-to-end memory
+also includes parameter weights and gradients, optimizer state,
+gradient-checkpointed body activations, KV-cache (during rollout, not
+training), masks, and allocator overhead. The decomposition's
+expected effect is on the LM-head activation term specifically, and a
+benchmark comparing measured peak GPU memory under (b) and (c) at the
+same batch size, trajectory length, and model would be the clean
+empirical complement to the arithmetic above. We have not run that
+benchmark.
 
 \paragraph{What the per-turn decomposition is and isn't.} It is not a
 new memory optimization over \texttt{logits\_to\_keep}; it is the
