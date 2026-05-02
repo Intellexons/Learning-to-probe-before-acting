@@ -24,23 +24,27 @@
 \noindent
 We train a small instruction-tuned LLM to emit Python control policies
 for sandboxed RL environments using a critic-free, on-policy multi-turn
-RL scheme. The model interacts with the environment over a two-turn
-chat-template protocol: a scratchpad or rehearsal turn, then a
-committed \texttt{policy} body whose scenario reward supplies the only
-scalar signal. We replace flat trajectory-level credit assignment with
-a $G_1\times G_2$ branched rollout: $G_1$ first-turn variants per
-prompt, $G_2$ second-turn continuations per variant, scored at the
-leaves. Per-turn Monte Carlo value estimates yield per-turn
-advantages broadcast across the tokens of each turn, in the spirit of
-VinePPO but at chat-turn rather than intra-completion granularity. To
-fit the resulting trajectories into a 24\,GB GPU we exploit the
-additivity of the token-summed clipped surrogate to decompose the
-loss across turns, bounding peak LM-head gradient memory to
-$\max(\text{turn 1, turn 2})$ instead of their sum. The contribution
-is a clean, small-budget specialization of standard ingredients
-(GRPO, VinePPO, ArCHer-style hierarchical credit assignment) to the
-chat-template multi-turn code-policy setting, plus the per-turn loss
-decomposition that makes it tractable on a single L4.
+RL scheme. The model interacts with the environment over an
+$N$-turn chat-template protocol whose final turn must be a committed
+\texttt{policy} body; intermediate turns may draft a candidate policy
+or run a sandboxed scratchpad. The scenario reward of the final policy
+supplies the only scalar signal. We replace flat trajectory-level
+credit assignment with a per-turn branched rollout that samples
+$G_n$ continuations per node at each turn boundary and scores
+trajectories at the leaves. Per-turn Monte Carlo value estimates
+yield per-turn advantages, broadcast across the tokens of each turn
+--- VinePPO-style credit assignment lifted from intra-completion to
+chat-turn granularity. To fit the resulting trajectories into a
+24\,GB GPU we exploit the additivity of the token-summed clipped
+surrogate to decompose the loss across turns, bounding peak LM-head
+gradient memory to $\max_n T_n$ instead of $\sum_n T_n$. We instantiate
+and evaluate the scheme at $N{=}2$ with $G_1{=}G_2{=}4$ on a 2D
+control task; the generalization to $N{>}2$ is mechanical and
+discussed in \S\ref{sec:limitations}. The contribution is a clean,
+small-budget specialization of standard ingredients (GRPO, VinePPO,
+ArCHer-style hierarchical credit assignment) to the multi-turn
+code-policy setting, plus the per-turn loss decomposition that makes
+it tractable on a single L4.
 \end{abstract}
 
 \section{Introduction}
@@ -61,31 +65,32 @@ We study this problem in the concrete setting of \emph{code-policy
 generation}: the LLM emits a Python \texttt{def policy(state)} body
 that is then executed against environment scenarios in a sandboxed
 subprocess. The artifact is the code; the LLM is removed from the
-inner control loop at deployment. We use two chat turns. The first
-either drafts a candidate \texttt{policy} (whose actual scenario
-reward is read back as a tool message) or runs a \texttt{main}
-scratchpad whose stdout is fed back; the second commits the scored
-\texttt{policy}.
+inner control loop at deployment. The protocol uses $N$ chat turns;
+intermediate turns may draft a candidate \texttt{policy} (whose
+scenario reward is read back as a tool message) or run a \texttt{main}
+scratchpad whose stdout is fed back, and the final turn commits the
+scored \texttt{policy}. We instantiate and evaluate the scheme at
+$N{=}2$.
 
 Our training scheme has two ingredients. First, we replace
-trajectory-level credit assignment with a $G_1\times G_2$ branched
-rollout and per-turn MC value estimates --- the macro-step analog of
+trajectory-level credit assignment with a per-turn branched rollout
+and per-turn MC value estimates --- the macro-step analog of
 VinePPO's intra-completion branching, with hierarchical baselines
-that vary by turn-1 prefix. Second, to make the resulting
-two-turn trajectories trainable on a 24\,GB L4, we observe that the
+conditioned on the prefix at each turn boundary. Second, to make the
+resulting trajectories trainable on a 24\,GB L4, we observe that the
 token-summed clipped surrogate is additive over disjoint token
 subsets sharing the same global normalizer, and exploit this to
-forward and backward turn-1 and turn-2 independently. Peak LM-head
+forward and backward each turn independently. Peak LM-head
 gradient memory drops from
 $O(B\cdot T_{\text{full}}\cdot |V|)$ to
-$O(B\cdot \max(T_1, T_2)\cdot |V|)$ at gradient cost zero; the
-parameter gradients summed across the two passes equal the
+$O(B\cdot \max_n T_n\cdot |V|)$ at gradient cost zero; the
+parameter gradients summed across the per-turn passes equal the
 single-pass gradient exactly.
 
 The combination is a natural specialization of standard mechanisms
-rather than a new algorithm. We do not claim algorithmic novelty;
-the contribution is a clean assembly that fits on a single small GPU
-and the loss-decomposition trick that makes it possible.
+rather than a new algorithm; the contribution is a clean assembly
+that fits on a single small GPU and the loss-decomposition trick
+that makes it possible.
 
 \section{Related work}
 
@@ -132,6 +137,7 @@ scratchpad turn between prompt and committed code.
 \section{Method}
 
 \subsection{Setup}
+\label{sec:setup}
 
 The agent is a language model $\pi_\theta$ over chat-template
 trajectories. The base is \texttt{Qwen2.5-Coder-3B-Instruct} with
@@ -149,7 +155,8 @@ Validation failures, errors, and timeouts on $\sigma_i$ score the
 running-but-failing trajectory --- otherwise errored rollouts ($r=0$)
 outrank running-but-poor rollouts and the gradient rewards crashing.
 
-\subsection{Two-turn protocol ($N=2$)}
+\subsection{Chat-template protocol}
+\label{sec:protocol}
 
 Each turn the model emits one fenced code block tagged \texttt{policy}
 or \texttt{main}. \texttt{policy} defines \texttt{def policy(state)},
@@ -158,13 +165,18 @@ reward as a user-role message. \texttt{main} is arbitrary scratchpad
 code with no environment access; the tool returns truncated stdout.
 The final turn must be \texttt{policy}; \texttt{main} or untagged
 final turns are floored. Malformed intermediate turns are likewise
-floored and surfaced as a textual rejection. The full trajectory is
+floored and surfaced as a textual rejection. A length-$N$ trajectory
+is
 \(
-  \tau = (s,\, y^{(1)},\, m,\, y^{(2)}),
+  \tau = (s,\, y^{(1)},\, m^{(1)},\, \dots,\, y^{(N-1)},\, m^{(N-1)},\, y^{(N)}),
 \)
-with $y^{(1)}, y^{(2)}$ the two completions, $m$ the user-role tool
-message after $y^{(1)}$, and $R(\tau) = R(\text{code in }y^{(2)})$
-the only scalar reward.
+with completions $y^{(n)}$ alternating with tool messages $m^{(n)}$,
+and $R(\tau) = R(\text{code in }y^{(N)})$ the only scalar reward.
+The remainder of the paper specializes to $N{=}2$: a single
+intermediate turn (draft policy or scratchpad) followed by a committed
+\texttt{policy}. Generalizing the rollout, advantages, and loss
+decomposition below to $N{>}2$ is mechanical (see
+\S\ref{sec:limitations}).
 
 \subsection{Token-summed clipped surrogate}
 
@@ -183,7 +195,7 @@ matches the DAPO and CISPO recipes; per-row averaging variants
 \eqref{eq:loss} is \emph{additive over disjoint token subsets}: for
 any partition of model-token positions, the loss equals the sum of
 partial losses computed with the same $N_{\text{tok}}$. This is the
-property the per-turn decomposition (\S\ref{sec:two-pass}) exploits.
+property the per-turn decomposition (\S\ref{sec:per-turn-decomp}) exploits.
 
 \subsection{Branched rollout}
 
@@ -221,36 +233,32 @@ inheriting its prefix's above-average outcome. Tool-message tokens
 are masked via \texttt{tool\_mask}; their advantage is zero.
 
 \subsection{Per-turn loss decomposition}
-\label{sec:two-pass}
+\label{sec:per-turn-decomp}
 
-A single forward over $[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$
-materializes an LM-head gradient of shape
-$(B,\,T_{\text{full}},\,|V|)$. With $|V|\approx 152{,}000$ this
-exceeds 24\,GB at our trajectory lengths. Let $\mathcal{I}_1,
-\mathcal{I}_2$ index turn-1 and turn-2 model tokens. Since the tool
-mask zeroes the loss elsewhere and \eqref{eq:loss} sums over
-positions with a single normalizer,
+A single forward over the full trajectory materializes an LM-head
+gradient of shape $(B,\,T_{\text{full}},\,|V|)$. With
+$|V|\approx 152{,}000$ this exceeds 24\,GB at our trajectory lengths.
+Let $\mathcal{I}_n$ index the model tokens of turn $n$. Since the
+tool mask zeroes the loss elsewhere and \eqref{eq:loss} sums over
+positions with a single normalizer, the loss factors over turns:
 \begin{equation}
-  \mathcal{L} = \mathcal{L}_{\mathcal{I}_1} + \mathcal{L}_{\mathcal{I}_2},
-  \qquad N_{\text{tok}} = |\mathcal{I}_1| + |\mathcal{I}_2|\ \text{shared.}
+  \mathcal{L} = \sum_{n=1}^{N} \mathcal{L}_{\mathcal{I}_n},
+  \qquad N_{\text{tok}} = \sum_{n=1}^{N} |\mathcal{I}_n|\ \text{shared.}
 \label{eq:additive}
 \end{equation}
-We compute the two terms in separate forward/backward passes:
-\begin{itemize}
-  \item \textbf{Pass 1.} Forward $[s\,|\,y^{(1)}]$ with
-        \texttt{logits\_to\_keep}$=T_1^{\max}$, advantages
-        $A^{(1)}_i$. Compute $\mathcal{L}_1$, backward, free.
-  \item \textbf{Pass 2.} Forward
-        $[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$ but pack
-        $[s\,|\,y^{(1)}\,|\,m]$ into the prompt slot and $y^{(2)}$
-        alone into the completion slot, so
-        \texttt{logits\_to\_keep}$=T_2^{\max}$. Compute
-        $\mathcal{L}_2$, backward, free.
-\end{itemize}
+We compute the $N$ terms in separate forward/backward passes: pass
+$n$ forwards $[s\,|\,y^{(1)}\,|\,m^{(1)}\,|\,\dots\,|\,y^{(n)}]$ but
+packs everything before $y^{(n)}$ into the prompt slot so
+\texttt{logits\_to\_keep}$=T_n^{\max}$, computes
+$\mathcal{L}_{\mathcal{I}_n}$ with advantages
+$A^{(n)}_{\cdot}$, backwards, and frees. At $N{=}2$ this is two
+passes: pass 1 over $[s\,|\,y^{(1)}]$ and pass 2 over
+$[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$ with the prefix
+$[s\,|\,y^{(1)}\,|\,m]$ packed into the prompt slot.
 By \eqref{eq:additive} the accumulated parameter gradients sum to
-the single-pass gradient exactly. Peak memory is
-$\max(\text{pass 1, pass 2})$ since pass-1's graph is freed before
-pass-2's forward begins.
+the single-pass gradient exactly. Peak memory is $\max_n$ over the
+per-pass graphs since each pass's graph is freed before the next
+pass's forward begins.
 
 \paragraph{Restrictions.}
 The decomposition requires the token-summed,
@@ -272,8 +280,8 @@ state. The thrust envelope is set to
 $a_{\max} = \|\text{tilt}\|_2 \times 1.05 + \epsilon$ so a naive
 straight-at-goal policy fails because it cannot cancel tilt drift.
 Per-step reward is $-\Delta t\cdot\text{dist}(p, g)$ with a $+50$
-bonus on reaching the goal; errored episodes score $-200$ per
-scenario.
+bonus on reaching the goal; errored episodes hit the floor of
+\S\ref{sec:setup}.
 
 \paragraph{Baseline gap.} Two hand-written policies fix the headroom:
 naive aim ($\approx 26\%$ goal rate over 200 seeds) and
@@ -305,15 +313,19 @@ means within-variant noise dominates and a larger $G_2$ helps.
 \section{Evaluating the per-turn credit assignment}
 \label{sec:eval}
 
-The per-turn loss decomposition (\S\ref{sec:two-pass}) is purely a
+The per-turn loss decomposition (\S\ref{sec:per-turn-decomp}) is purely a
 memory enabler --- it does not change the gradient. The substantive
 claim that needs empirical support is the \emph{credit-assignment}
 contribution: that hierarchical per-turn advantages
 \eqref{eq:adv1}--\eqref{eq:adv2} on a $G_1\times G_2$ tree do better
 than a single trajectory-level advantage broadcast across both turns.
 We propose a six-arm ablation (Table~\ref{tab:ablation}), ordered
-from the weakest baseline to our method so each row adds exactly one
-ingredient over the previous.
+roughly from the weakest baseline to our method. Adjacent rows
+isolate a single axis where possible (E~vs.~D isolates the tree;
+F~vs.~E isolates the per-turn baseline); the frozen-to-trained jump
+(B~vs.~C) and the single-to-multi-turn jump (C~vs.~D) are the two
+places where two axes change at once, and we read those rows
+accordingly.
 
 \begin{table}[h]
 \centering
@@ -385,12 +397,15 @@ as part of the headline. Either outcome is informative; we report
 whichever obtains.
 
 \section{Limitations}
+\label{sec:limitations}
 
-The scheme is restricted to $N=2$ turns. Generalizing to $N>2$
-requires a recursive value bootstrap (each $\widehat V_n^{(\cdot)}$
-becomes the conditional mean over the subtree below it), and the
-two-pass loss decomposition becomes an $N$-pass decomposition;
-neither is conceptually new but both add bookkeeping. We assume
+We instantiate and evaluate the scheme at $N{=}2$. The generalization
+to $N{>}2$ is mechanical: each $\widehat V_n^{(\cdot)}$ becomes the
+conditional MC mean over the subtree below it, and the two-pass loss
+decomposition becomes an $N$-pass decomposition by the same
+additivity argument (\eqref{eq:additive}). Neither is conceptually
+new, but both add bookkeeping and we have not implemented or
+benchmarked them here. We assume
 deterministic environments given the seed --- under stochastic
 dynamics the leaf rewards become noisier estimates of state values
 and $G_2$ would have to grow accordingly. The $\beta=0$,
