@@ -439,37 +439,61 @@ that way as the number of turns grows.
 
 This appendix walks through why a single forward over a multi-turn
 trajectory is expensive and where the per-turn decomposition's
-saving comes from. The argument turns on a single API constraint in
-HF \texttt{transformers} which we make explicit here rather than in
-the body.
+saving comes from. It is written for readers familiar with
+policy-gradient RL but not necessarily with the internals of LLM
+training. The argument turns on a single API constraint in HF
+\texttt{transformers} which we make explicit here rather than in the
+body.
 
-\paragraph{The dominant cost.} Causal-LM training has two
-big tensors per forward: the transformer body's hidden states of
-shape $(B, T, d)$ with $d \approx 2048$, and the LM head's logits
-of shape $(B, T, |V|)$ with $|V| \approx 152{,}000$. The logit
-tensor is $\sim |V|/d \approx 75\times$ larger than the hidden
-states and dominates the activation budget at our trajectory
-lengths. The autograd graph for the loss saves intermediate
-tensors of comparable size on top.
+\paragraph{The LLM as an autoregressive policy.} A causal LLM is a
+stochastic policy whose action space at each step is the vocabulary
+$\mathcal{V} = \{1, \dots, |V|\}$. Given a sequence of $T$ token IDs
+as input, the model produces, at each position $t$, a logit vector
+$\ell_t \in \mathbb{R}^{|V|}$; the next-token distribution is
+$\mathrm{softmax}(\ell_t)$, and the log-prob of having emitted token
+$a$ at position $t{+}1$ is $\log\mathrm{softmax}(\ell_t)_a$. To form
+the policy-gradient surrogate \eqref{eq:loss} we need exactly these
+log-probs at every position $t$ such that $t{+}1$ was a
+\emph{model-emitted} token. Logits at other positions --- prompt
+positions, and (in our multi-turn setting) tool-message positions
+--- are not needed for the gradient and are wasted compute if we
+materialize them.
 
-\paragraph{The \texttt{logits\_to\_keep} parameter.} HF
-\texttt{transformers} exposes a \texttt{logits\_to\_keep} (formerly
-\texttt{num\_logits\_to\_keep}) integer argument on causal-LM
-\texttt{forward} calls. Setting it to $K$ replaces
-$\texttt{lm\_head}(\text{hidden})$ with
-$\texttt{lm\_head}(\text{hidden}[:, -K{:}, :])$: the LM-head is
+\paragraph{Where the memory goes.} Internally the model has two
+pieces. The \emph{transformer body} is a stack of blocks (attention
++ MLP) that turns input tokens into hidden states of shape $(B, T, d)$
+with $d \approx 2048$ for Qwen-3B; this is where the bulk of the
+$3{\cdot}10^9$ parameters live. The \emph{LM head} is a single final
+linear layer of shape $(d, |V|)$ that projects each hidden state to
+its logit vector. The LM head has only $d \cdot |V| \approx
+3{\cdot}10^8$ parameters --- modest. But its \emph{output activation}
+$(B, T, |V|)$ is roughly $|V|/d \approx 75\times$ larger than any
+per-position activation in the body, and the autograd graph saves an
+equal-sized buffer for backward. At our trajectory lengths these LM-head
+tensors are the only thing that does not fit on a 24\,GB L4; the
+transformer body is comfortably under budget.
+
+\paragraph{The \texttt{logits\_to\_keep} parameter.} Because most
+positions' logits are not actually needed for the gradient, HF
+\texttt{transformers} lets you skip them. The forward call accepts
+an integer argument \texttt{logits\_to\_keep} (formerly
+\texttt{num\_logits\_to\_keep}); setting it to $K$ replaces the full
+projection $\texttt{lm\_head}(\text{hidden})$ with
+$\texttt{lm\_head}(\text{hidden}[:, -K{:}, :])$. The LM head is
 applied only to the \emph{last $K$} hidden states and the output
 logits have shape $(B, K, |V|)$ instead of $(B, T, |V|)$. The
-transformer body still runs over all $T$ positions because of causal
-attention, but the body's per-position cost is two orders of
-magnitude smaller than the LM head's.
+transformer body still runs over all $T$ positions because causal
+self-attention chains every position to its prefix --- but the body
+is two orders of magnitude cheaper per position than the LM head, so
+this is a clean win.
 
-The constraint that matters here is that $K$ counts \emph{trailing}
-positions; there is no general-purpose way to ask the API for logits
-at arbitrary middle positions. To get logits at a non-trailing block,
-either enlarge the trailing window to cover it (and pay for every
-position in between) or run a separate forward whose sequence ends
-at the block.
+\paragraph{The constraint that matters.} $K$ counts \emph{trailing}
+positions. There is no API to ask for logits at, say, the set of
+positions $\{50, 51, 200, 201\}$ --- only at "the last $K$." To get
+logits at a non-trailing block of positions, you must either enlarge
+the trailing window to cover it (paying for every position in
+between, including ones whose logits you don't need) or run a
+separate forward whose sequence ends at the block.
 
 \paragraph{Why multi-turn is expensive in a single forward.} In our
 $N{=}2$ trajectory $[s \,|\, y^{(1)} \,|\, m \,|\, y^{(2)}]$, the
