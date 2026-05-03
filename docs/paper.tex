@@ -292,6 +292,34 @@ no theoretical cost (\S\ref{sec:limitations}).
 
 \section{Experimental setup}
 
+\paragraph{Why this environment.} Standard RL benchmarks are a poor
+fit for evaluating LoRA fine-tuning of a code-policy LLM. CartPole
+and similar two-line tasks are solved at iteration 0 by the base
+model, giving a flat learning curve. LunarLander, Pendulum,
+MountainCar, and other named environments are heavily represented in
+pretraining corpora, so any improvement is confounded with recall
+rather than learning. We need a task whose source the model has to
+\emph{read} rather than recognize, with non-trivial dynamics and a
+clear ceiling above the base-model prior. The puck-on-tilted-plane
+environment below was designed to fit those constraints: a small
+custom dynamics file, hidden per-scenario parameters that defeat
+look-up strategies, and a tight thrust envelope that rules out the
+obvious one-line policy.
+
+A second motivation, specific to the multi-turn protocol, is partial
+observability. The hidden tilt, drag, and thrust limit are not part
+of the state vector but they fully determine which control gains
+work; a policy that writes itself blind to those parameters is
+limited to whatever conservative gains succeed across the whole
+prior. The protocol gives the model an explicit affordance for
+\emph{system-identification probes} in the rehearsal turn: a
+\texttt{main} scratchpad that applies short thrust patterns,
+inspects the resulting velocities via stdout, and uses the readings
+to size the committed policy's gains. Whether the trained model
+actually exploits this affordance --- versus collapsing onto a
+robust prior --- is itself an empirical question the protocol makes
+testable.
+
 \paragraph{Environment.} A 2D puck-on-tilted-plane controller. The
 puck moves in $[-6, 6]^2$ under a constant hidden tilt $(t_x, t_y)$
 and linear drag $\mu$; the policy receives
