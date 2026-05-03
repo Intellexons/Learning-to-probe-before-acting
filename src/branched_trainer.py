@@ -592,15 +592,33 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # equivalent to a single backward on the combined scaled loss.
         scale = 1.0 / max(1, self.current_gradient_accumulation_steps)
 
+        # Memory instrumentation: per-segment peak allocated bytes. The
+        # paper's appendix Table 2 predicts (b) single-pass ~7.8 GiB vs
+        # (c) per-turn ~3.9 GiB at production sizing — these counters
+        # let us verify that empirically. Reset before each segment so
+        # peaks are not contaminated by the previous segment's freed
+        # tensors still sitting in the high-water mark.
+        mem_log = torch.cuda.is_available()
+        if mem_log:
+            torch.cuda.reset_peak_memory_stats()
+
         loss1 = super()._compute_loss(model, self._segment_inputs(inputs, "turn1"))
         self.accelerator.backward(loss1 * scale)
         loss1_value = loss1.detach()
         del loss1
+        if mem_log:
+            peak1 = torch.cuda.max_memory_allocated() / 1024**3
+            self._metrics["train"]["mem/peak_turn1_gib"].append(peak1)
+            torch.cuda.reset_peak_memory_stats()
 
         loss2 = super()._compute_loss(model, self._segment_inputs(inputs, "turn2"))
         self.accelerator.backward(loss2 * scale)
         loss2_value = loss2.detach()
         del loss2
+        if mem_log:
+            peak2 = torch.cuda.max_memory_allocated() / 1024**3
+            self._metrics["train"]["mem/peak_turn2_gib"].append(peak2)
+            self._metrics["train"]["mem/peak_step_gib"].append(max(peak1, peak2))
 
         # Return the combined SCALED loss so HF Trainer's bookkeeping (which
         # logs the returned loss as the step's training loss) sees the same
