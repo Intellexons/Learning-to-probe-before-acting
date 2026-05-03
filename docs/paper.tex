@@ -22,30 +22,23 @@
 
 \begin{abstract}
 \noindent
-We train a small instruction-tuned LLM to emit Python control policies
-for sandboxed RL environments using a critic-free, on-policy multi-turn
-RL scheme. The model interacts with the environment over an
-$N$-turn chat-template protocol whose final turn must be a committed
-\texttt{policy} body; intermediate turns may draft a candidate policy
-or run a sandboxed scratchpad. The scenario reward of the final policy
-supplies the only scalar signal. We replace flat trajectory-level
-credit assignment with a per-turn branched rollout that samples
-$G_n$ continuations per node at each turn boundary and scores
-trajectories at the leaves. Per-turn Monte Carlo value estimates
-yield per-turn advantages, broadcast across the tokens of each turn
---- VinePPO-style credit assignment lifted from intra-completion to
-chat-turn granularity. To fit the resulting trajectories into a
-24\,GB GPU we exploit the additivity of the token-summed clipped
-surrogate to decompose the loss across turns, bounding peak LM-head
-saved-activation memory to $\max_n T_n$ instead of $\sum_n T_n$
-without changing the accumulated gradient. We instantiate
-and evaluate the scheme at $N{=}2$ with $G_1{=}G_2{=}4$ on a 2D
-control task; the generalization to $N{>}2$ is mechanical and
-discussed in \S\ref{sec:limitations}. The contribution is a clean,
-small-budget specialization of standard ingredients (GRPO, VinePPO,
-ArCHer-style hierarchical credit assignment) to the multi-turn
-code-policy setting, plus the per-turn loss decomposition that makes
-it tractable on a single L4.
+Multi-turn RL for code-generating agents fails mainly at credit
+assignment: a single trajectory-level advantage cannot tell whether
+success came from good planning or good final execution. This paper
+targets that gap in code-policy generation, where an LLM writes a
+Python \texttt{policy} and receives only the final scenario reward as
+supervision. The central idea is to treat chat turns as macro-steps:
+branch rollouts at turn boundaries, estimate per-turn Monte Carlo
+values, and assign turn-specific advantages (VinePPO-style, but at
+turn granularity). To make this practical on a single 24\,GB GPU, loss
+computation is decomposed across turns using the additivity of the
+token-summed clipped surrogate, reducing peak LM-head activation memory
+from $\sum_n T_n$ to $\max_n T_n$ without changing the accumulated
+gradient. The resulting method is a compact synthesis of existing RL
+ingredients (GRPO, VinePPO, hierarchical credit assignment), specialized
+for multi-turn code-policy training under tight compute constraints.
+Experiments instantiate the method at $N{=}2$ with $G_1{=}G_2{=}4$; the
+extension to $N{>}2$ is straightforward.
 \end{abstract}
 
 \section{Introduction}
@@ -56,58 +49,58 @@ variants which replace the critic with a group-relative Monte Carlo
 baseline, and process-supervision pipelines that train an auxiliary
 reward model. Most of this work targets single-turn reasoning, where
 the trajectory is a prompt followed by one completion and the reward
-is observed at the end. Extending the same recipes to multi-turn
+is observed at the end. Extending these recipes to multi-turn
 agentic settings exposes a credit-assignment problem: a single
 trajectory-level advantage broadcast to every model token cannot
-distinguish a strong first-turn strategy followed by a poor execution
+distinguish a strong first-turn strategy followed by poor execution
 from the converse.
 
-We study this problem in the concrete setting of \emph{code-policy
+This problem is studied in the setting of \emph{code-policy
 generation}: the LLM emits a Python \texttt{def policy(state)} body
-that is then executed against environment scenarios in a sandboxed
-subprocess. The artifact is the code; the LLM is removed from the
-inner control loop at deployment. The protocol uses $N$ chat turns;
+that is executed across environment scenarios in an isolated
+subprocess. The artifact is code; the LLM is removed from the
+inner control loop at deployment. The protocol uses $N$ chat turns:
 intermediate turns may draft a candidate \texttt{policy} (whose
-scenario reward is read back as a tool message) or run a \texttt{main}
-scratchpad whose stdout is fed back, and the final turn commits the
-scored \texttt{policy}. We instantiate and evaluate the scheme at
+scenario reward is returned as a tool message) or run a \texttt{main}
+scratchpad (stdout returned as feedback), and the final turn commits the
+scored \texttt{policy}. The scheme is instantiated and evaluated at
 $N{=}2$.
 
-Our training scheme has two ingredients. First, we replace
-trajectory-level credit assignment with a per-turn branched rollout
+The training scheme has two components. First, trajectory-level credit
+assignment is replaced with a per-turn branched rollout
 and per-turn MC value estimates --- the macro-step analog of
 VinePPO's intra-completion branching, with hierarchical baselines
 conditioned on the prefix at each turn boundary. Second, to make the
-resulting trajectories trainable on a 24\,GB L4, we observe that the
-token-summed clipped surrogate is additive over disjoint token
-subsets sharing the same global normalizer, and exploit this to
-forward and backward each turn independently. Peak LM-head
+resulting trajectories trainable on a 24\,GB L4, the
+additivity of the token-summed clipped surrogate over disjoint token
+subsets sharing the same global normalizer is exploited to
+run forward and backward passes for each turn independently. Peak LM-head
 saved-activation memory drops from
 $O(B\cdot \sum_n T_n\cdot |V|)$ to
 $O(B\cdot \max_n T_n\cdot |V|)$ without changing the accumulated
 gradient: the parameter gradients summed across the per-turn passes
 equal the single-pass gradient exactly. The trade-off is compute ---
-each later pass re-forwards through the prefix of earlier turns ---
+each later pass recomputes the prefix of earlier turns ---
 not gradient quality.
 
-The combination is a natural specialization of standard mechanisms
-rather than a new algorithm; the contribution is a clean assembly
-that fits on a single small GPU and the loss-decomposition trick
-that makes it possible.
+This combination is a straightforward specialization of standard
+mechanisms rather than a new algorithm. The contribution is a clean
+assembly that fits on a single small GPU, plus a loss decomposition
+that makes that budget feasible.
 
 \section{Related work}
 
 \paragraph{Critic-free LLM RL.} GRPO~\cite{shao2024deepseekmath} and
 its token-summed variants (DAPO~\cite{yu2025dapo}, CISPO) replace
-PPO's learned critic with a group-relative MC baseline. We use the
-token-summed form because its additivity over token subsets is what
-makes our per-turn loss decomposition exact.
+PPO's learned critic with a group-relative MC baseline. The
+token-summed form is used because its additivity over token subsets
+makes the per-turn loss decomposition exact.
 
 \paragraph{Branching for credit assignment.} The closest existing
 method is VinePPO~\cite{kazemnejad2024vineppo}, which estimates
 $\widehat V(s_t)$ at chosen intra-completion states via on-policy MC
-re-branching and uses it as a per-token baseline. We use the same
-mechanism but branch only at \emph{turn boundaries} of a chat
+re-branching and uses it as a per-token baseline. The same
+mechanism is used, but branching occurs only at \emph{turn boundaries} of a chat
 trajectory and broadcast the resulting advantage as a constant within
 each turn --- group-relative within a turn, VinePPO-like across
 turns.
@@ -115,10 +108,10 @@ turns.
 \paragraph{Hierarchical multi-turn agents.}
 ArCHer~\cite{zhou2024archer} adopts the same macro-step decomposition
 (per-turn value, per-token policy update) but learns the per-turn
-value with a critic. We estimate it by MC over $G_2$ continuations,
+value with a critic. Here it is estimated by MC over $G_2$ continuations,
 trading variance for the cost of fitting a value head.
 ReBN~\cite{liu2025gem} replaces GAE with batch-normalized MC returns;
-the hierarchical mean we use can be viewed as ReBN partitioned by
+the hierarchical mean used here can be viewed as ReBN partitioned by
 turn-1 prefix. RAGEN's StarPO~\cite{wang2025ragen} is the canonical
 flat-baseline critic-free MC scheme for multi-turn LLM RL; setting
 $G_2=1$ collapses our scheme to it.
@@ -127,14 +120,14 @@ $G_2=1$ collapses our scheme to it.
 in process-reward-model training pipelines such as
 Math-Shepherd~\cite{wang2024mathshepherd} and
 OmegaPRM~\cite{luo2024omegaprm}, where the per-prefix MC mean labels
-intermediate steps for a learned reward model. We use the tree as a
+intermediate steps for a learned reward model. The tree is used as a
 policy-gradient baseline rather than as a labelling oracle.
 
 \paragraph{Code policies.} Voyager~\cite{wang2024voyager} and
 FunSearch~\cite{romera-paredes2024funsearch} also produce executable
 code as the artifact, but rely on frozen-LLM prompting plus
-skill-library accumulation or evolutionary mutation respectively. We
-adapt the LLM by gradient-based RL of LoRA weights and add a
+skill-library accumulation or evolutionary mutation respectively. The LLM
+is adapted with gradient-based RL of LoRA weights and a
 scratchpad turn between prompt and committed code.
 
 \section{Method}
@@ -178,7 +171,7 @@ and $R(\tau) = R(\text{code in }y^{(N)})$ the only scalar reward.
 The remainder of the paper specializes to $N{=}2$: a single
 intermediate turn (draft policy or scratchpad) followed by a committed
 \texttt{policy}. Generalizing the rollout, advantages, and loss
-decomposition below to $N{>}2$ is mechanical (see
+decomposition below to $N{>}2$ is straightforward (see
 \S\ref{sec:limitations}).
 
 \subsection{Token-summed clipped surrogate}
@@ -252,7 +245,7 @@ Per-row averaged variants (original GRPO, BNPO, Dr.GRPO) do
 so the partial sums do not combine into the single-row loss. The
 token-summed form is what makes the decomposition exact.
 
-We exploit \eqref{eq:additive} to compute $\mathcal{L}$ in $N$
+\eqref{eq:additive} is exploited to compute $\mathcal{L}$ in $N$
 forward/backward passes rather than one. Pass $n$ forwards
 $[s \,|\, y^{(1)} \,|\, m^{(1)} \,|\, \dots \,|\, y^{(n)}]$,
 computes $\mathcal{L}_{\mathcal{I}_n}$, backwards, and frees. By
@@ -268,9 +261,9 @@ emitted token positions. In a single forward+backward over the full
 trajectory, the autograd graph holds the saved-for-backward LM-head
 tensors at all $\sum_n T_n$ model-token positions across all turns
 simultaneously, until backward completes. By computing each turn's
-loss in a separate forward+backward, we hold only one turn's
-saved-for-backward tensors at peak ($T_n^{\max}$ positions) and free
-the graph before the next turn begins. The decomposition is
+loss in a separate forward+backward, only one turn's
+saved-for-backward tensors are held at peak ($T_n^{\max}$ positions), and
+the graph is freed before the next turn begins. The decomposition is
 gradient accumulation at the turn level within a trajectory: same
 accumulated gradient by \eqref{eq:additive}, lower peak activation
 memory by a factor of roughly $N$ when turns are equal-length.
@@ -298,13 +291,13 @@ and similar two-line tasks are solved at iteration 0 by the base
 model, giving a flat learning curve. LunarLander, Pendulum,
 MountainCar, and other named environments are heavily represented in
 pretraining corpora, so any improvement is confounded with recall
-rather than learning. We need a task whose source the model has to
+rather than learning. The task therefore requires source code that the model has to
 \emph{read} rather than recognize, with non-trivial dynamics and a
 clear ceiling above the base-model prior. The puck-on-tilted-plane
 environment below was designed to fit those constraints: a small
 custom dynamics file, hidden per-scenario parameters that defeat
 look-up strategies, and a tight thrust envelope that rules out the
-obvious one-line policy.
+naive one-line policy.
 
 A second motivation, specific to the multi-turn protocol, is partial
 observability. The hidden tilt, drag, and thrust limit are not part
@@ -316,7 +309,7 @@ prior. The protocol gives the model an explicit affordance for
 \texttt{main} scratchpad that applies short thrust patterns,
 inspects the resulting velocities via stdout, and uses the readings
 to size the committed policy's gains. Whether the trained model
-actually exploits this affordance --- versus collapsing onto a
+actually exploits this affordance --- rather than collapsing to a
 robust prior --- is itself an empirical question the protocol makes
 testable.
 
@@ -340,7 +333,7 @@ LoRA fine-tuning has to exploit.
 
 \paragraph{Model and compute.} \texttt{Qwen2.5-Coder-3B-Instruct},
 LoRA rank $r=16$ on attention and MLP projections, on a single
-24\,GB L4 GPU. bf16 weights, gradient checkpointing on. We use
+24\,GB L4 GPU. bf16 weights, gradient checkpointing on. The setup uses
 $G_1 = G_2 = 4$ (16 leaves per prompt) and a per-turn token cap of
 $400$.
 
@@ -350,7 +343,7 @@ clip, $\beta=0$, and the per-turn advantages of
 \eqref{eq:adv1}--\eqref{eq:adv2}. No reference KL, no critic, no
 GAE, no context truncation across turns.
 
-\paragraph{Diagnostics.} We log $\widehat V_0$ and the
+\paragraph{Diagnostics.} Logged diagnostics include $\widehat V_0$ and the
 between-variant standard deviation of $\widehat V_1$, the
 within-variant standard deviation, and their ratio (the
 \emph{signal ratio}); the per-turn advantage standard deviations;
@@ -365,17 +358,16 @@ means within-variant noise dominates and a larger $G_2$ helps.
 
 The per-turn loss decomposition (\S\ref{sec:per-turn-decomp}) is purely a
 memory enabler --- it does not change the gradient. The substantive
-claim that needs empirical support is the \emph{credit-assignment}
-contribution: that hierarchical per-turn advantages
+claim that requires empirical support is the \emph{credit-assignment}
+contribution: hierarchical per-turn advantages
 \eqref{eq:adv1}--\eqref{eq:adv2} on a $G_1\times G_2$ tree do better
 than a single trajectory-level advantage broadcast across both turns.
-We propose a six-arm ablation (Table~\ref{tab:ablation}), ordered
-roughly from the weakest baseline to our method. Adjacent rows
-isolate a single axis where possible (E~vs.~D isolates the tree;
-F~vs.~E isolates the per-turn baseline); the frozen-to-trained jump
-(B~vs.~C) and the single-to-multi-turn jump (C~vs.~D) are the two
-places where two axes change at once, and we read those rows
-accordingly.
+Table~\ref{tab:ablation} defines a six-arm ablation, ordered from
+the weakest baseline to the proposed method. Adjacent rows isolate a
+single axis where possible (E~vs.~D isolates the tree; F~vs.~E
+isolates the per-turn baseline). The frozen-to-trained jump (B~vs.~C)
+and the single-to-multi-turn jump (C~vs.~D) each change two axes and
+are interpreted accordingly.
 
 \begin{table}[h]
 \centering
@@ -434,28 +426,27 @@ Two further measurements sharpen the mechanism story.
 \end{enumerate}
 
 \paragraph{Failure modes to declare upfront.} If F $\not>$ D under
-matched leaves, the hierarchical baseline does not pay off in this
+matched leaves, the hierarchical baseline does not improve results in this
 domain and the contribution reduces to ``branching amortizes generate
 calls'' (E vs D). If F $\approx$ E but both beat D, the gain is from
 the tree structure, not from the per-turn baseline. If the trained
 arms (C--F) do not clearly beat the frozen arms (A, B), RL
-fine-tuning is not buying anything over the base model's prior under
-our protocol, and the right framing for this work is
-prompt-engineering, not training. If B $>$ A, the multi-turn protocol
-itself helps even without training, and that gap should be reported
-as part of the headline. Either outcome is informative; we report
-whichever obtains.
+fine-tuning adds little over the base model's prior under
+this protocol, and the work is better framed as
+prompt-engineering rather than training. If B $>$ A, the multi-turn
+protocol itself provides training-free gains, and that gap should be
+part of the headline result.
 
 \section{Limitations and future work}
 \label{sec:limitations}
 
-We instantiate and evaluate the scheme at $N{=}2$. The generalization
-to $N{>}2$ is mechanical: each $\widehat V_n^{(\cdot)}$ becomes the
+The scheme is instantiated and evaluated at $N{=}2$. Extension
+to $N{>}2$ is straightforward: each $\widehat V_n^{(\cdot)}$ becomes the
 conditional MC mean over the subtree below it, and the two-pass loss
 decomposition becomes an $N$-pass decomposition by the same
 additivity argument (\eqref{eq:additive}). Neither is conceptually
-new, but both add bookkeeping and we have not implemented or
-benchmarked them here. We assume
+new, but both add bookkeeping and are not implemented or
+benchmarked here. This work assumes
 deterministic environments given the seed --- under stochastic
 dynamics the leaf rewards become noisier estimates of state values
 and $G_2$ would have to grow accordingly. The $\beta=0$,
@@ -464,7 +455,7 @@ choices that the same decomposition argument can lift with extra
 per-segment slicing of reference log-probabilities and cached
 sampling log-probabilities.
 
-\paragraph{Token subsampling.} A natural extension is to backprop
+\paragraph{Token subsampling.} A direct extension is to backprop
 through only a fraction $\alpha \in (0, 1]$ of the model-emitted
 tokens per turn rather than all of them. Because each turn's
 advantage $A^{(n)}$ is a single scalar broadcast across all of that
@@ -472,7 +463,7 @@ turn's tokens, every token contributes a sample of the same
 population gradient: subsampling is a sample-variance loss, not the
 information loss it would be in supervised fine-tuning where each
 token has a distinct target. The token-summed normalizer of
-\eqref{eq:loss} keeps the resulting estimator unbiased at any
+\eqref{eq:loss} keeps the resulting estimator unbiased for any
 $\alpha$ when $N_{\text{tok}}$ is updated to count only the kept
 positions; per-row averaged variants would be biased by uneven
 drops across trajectories, an additional reason the token-summed
@@ -488,11 +479,11 @@ given the broadcast-advantage redundancy.
 but only $\alpha$ of the rehearsal turns $y^{(<N)}$, to test
 whether explicitly biasing learning toward the artifact helps over
 treating all turns symmetrically. The asymmetric variant has no
-single-turn analog. We did not run either experiment here.
+single-turn analog. These experiments were not run here.
 
 \section{Conclusion}
 
-We described a critic-free, on-policy multi-turn RL scheme for
+A critic-free, on-policy multi-turn RL scheme for
 code-policy generation that combines branched rollouts with per-turn
 MC value estimates and a per-turn loss decomposition. The algorithmic
 ingredients are individually standard; the assembly is small enough
@@ -507,7 +498,7 @@ that way as the number of turns grows.
 
 This appendix walks through why a single forward over a multi-turn
 trajectory is expensive and where the per-turn decomposition's
-saving comes from. It is written for readers familiar with
+saving comes from. It is written for readers who are familiar with
 policy-gradient RL but not necessarily with the internals of LLM
 training. The argument turns on a single API constraint in HF
 \texttt{transformers} which we make explicit here rather than in the
@@ -632,30 +623,30 @@ LM-head saved-for-backward tensors at peak.}
 \label{tab:memory}
 \end{table}
 
-The honest comparison for our setting is (b) vs.\ (c) --- a roughly
+The relevant comparison for this setting is (b) vs.\ (c) --- a roughly
 $2\times$ saving for $N{=}2$, scaling to $\sim N\times$ as the number
 of equal-length turns grows. Regime~(a) is shown for completeness
 but is not what a careful implementation actually does.
 
 \paragraph{Arithmetic, not measured.} The numbers in
 Table~\ref{tab:memory} are arithmetic from the LM-head output tensor
-shape $(B, K, |V|)$ at 4 bytes per element; we have not yet measured
-peak end-to-end GPU memory under the three regimes. End-to-end memory
+shape $(B, K, |V|)$ at 4 bytes per element; peak end-to-end GPU memory
+under the three regimes has not yet been measured. End-to-end memory
 also includes parameter weights and gradients, optimizer state,
 gradient-checkpointed body activations, KV-cache (during rollout, not
 training), masks, and allocator overhead. The decomposition's
 expected effect is on the LM-head activation term specifically, and a
 benchmark comparing measured peak GPU memory under (b) and (c) at the
-same batch size, trajectory length, and model would be the clean
-empirical complement to the arithmetic above. We have not run that
-benchmark.
+same batch size, trajectory length, and model would provide a direct
+empirical complement to the arithmetic above. That benchmark has not
+yet been run.
 
 \paragraph{What the per-turn decomposition is and isn't.} It is not a
 new memory optimization over \texttt{logits\_to\_keep}; it is gradient
 accumulation at the turn level within a trajectory. The HF API
 already supports specifying any subset of positions for which to
 compute logits, so all three regimes above use the same primitive ---
-the difference is whether the saved-for-backward tensors are held
+the difference is whether saved-for-backward tensors are held
 simultaneously through one backward call or sequentially through $N$
 backward calls. The non-trivial observation is that the gradients
 accumulated across per-turn passes equal the single-pass gradient
