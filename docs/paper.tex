@@ -418,7 +418,7 @@ itself helps even without training, and that gap should be reported
 as part of the headline. Either outcome is informative; we report
 whichever obtains.
 
-\section{Limitations}
+\section{Limitations and future work}
 \label{sec:limitations}
 
 We instantiate and evaluate the scheme at $N{=}2$. The generalization
@@ -435,6 +435,32 @@ and $G_2$ would have to grow accordingly. The $\beta=0$,
 choices that the same decomposition argument can lift with extra
 per-segment slicing of reference log-probabilities and cached
 sampling log-probabilities.
+
+\paragraph{Token subsampling.} A natural extension is to backprop
+through only a fraction $\alpha \in (0, 1]$ of the model-emitted
+tokens per turn rather than all of them. Because each turn's
+advantage $A^{(n)}$ is a single scalar broadcast across all of that
+turn's tokens, every token contributes a sample of the same
+population gradient: subsampling is a sample-variance loss, not the
+information loss it would be in supervised fine-tuning where each
+token has a distinct target. The token-summed normalizer of
+\eqref{eq:loss} keeps the resulting estimator unbiased at any
+$\alpha$ when $N_{\text{tok}}$ is updated to count only the kept
+positions; per-row averaged variants would be biased by uneven
+drops across trajectories, an additional reason the token-summed
+form is the right baseline. The memory benefit compounds with the
+per-turn decomposition: peak LM-head saved-activation memory drops
+from $\max_n T_n$ to $\alpha \max_n T_n$, on top of the
+$\sum_n T_n \to \max_n T_n$ saving of \S\ref{sec:per-turn-decomp}.
+Two variants suggest themselves as ablation arms.
+\emph{Uniform per-turn:} drop a fixed fraction within every turn,
+to test whether the variance increase hurts convergence at all
+given the broadcast-advantage redundancy.
+\emph{Asymmetric per-turn:} keep all of the committed turn $y^{(N)}$
+but only $\alpha$ of the rehearsal turns $y^{(<N)}$, to test
+whether explicitly biasing learning toward the artifact helps over
+treating all turns symmetrically. The asymmetric variant has no
+single-turn analog. We did not run either experiment here.
 
 \section{Conclusion}
 
