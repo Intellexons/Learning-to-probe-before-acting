@@ -722,4 +722,189 @@ Decomposition logic in \texttt{src/branched\_trainer.py}
 (\texttt{compute\_loss}, \texttt{training\_step}, \texttt{build\_segment\_tensors});
 unit tests in \texttt{tests/test\_segment\_tensors.py}.
 
+% ============================================================
+\section*{2026-05-09 \quad Slosh-tank env introduced; dimensionless analysis guides parameter selection}
+% ============================================================
+
+\textit{New environment, branch \texttt{main}; env source \texttt{scripts/seed\_tasks/slosh\_tank\_env.py}}
+
+\subsection*{Decision: pivot from harder-puck to slosh tank}
+
+The planned harder-puck variant (small $\mu=0.05$, wider tilt, tight headroom,
+two-state policy interface) was abandoned before any code was committed. The
+core problem: the signal of interest --- tilt estimation from transition
+residuals --- requires the model to compute $(v_{\rm new}-v_{\rm prev})/dt -
+a \approx \text{tilt}$, a mathematical identity. The environment cannot test
+\emph{how well} the model uses that identity because a policy that writes it
+verbatim from the prompt succeeds trivially. There is no gradient to climb.
+
+The slosh-tank replaces it. The hidden unknowns affect \emph{how} to control
+--- deadband changes command style, delay changes timing, slosh length changes
+feedback gain tuning --- and no single formula bridges the gap. The probe
+reveals the unknown; the model must then write a qualitatively adapted
+controller. This is a harder reasoning task with a clearer reward surface.
+
+\subsection*{Environment summary}
+
+A 1D cart ($x$, $v$) carries liquid modelled as one damped pendulum mode
+($\theta$, $\omega$). Policy commands horizontal acceleration, clipped to
+$[-1, 1]$\,m/s$^2$. Hidden per-scenario parameters:
+actuator gain $\kappa$, action delay $D$ (steps), deadband $b$,
+slosh length $L$, damping $c$. Observed state:
+$\{t, x, v, \theta, \omega, g, \text{steps\_left}\}$.
+Dynamics: cart motion plus a forced damped pendulum with coupling
+$\dot\omega = -(g/L)\theta - c\,\omega - a_{\rm true}$.
+Success requires all four conditions: $|x-g|<0.12$, $|v|<0.12$,
+$|\theta|<0.07$, $|\omega|<0.18$. The four-condition criterion prevents
+degenerate solutions (reach position without settling liquid).
+Episode length: $N_{\rm steps} = 105$, $\Delta t = 0.06$\,s (6.3\,s total).
+
+Source: \texttt{scripts/seed\_tasks/slosh\_tank\_env.py}.
+Difficulty ladder and curriculum: \texttt{slosh\_tank\_difficulty\_plan.md}.
+
+\subsection*{Dimensionless analysis via Buckingham $\pi$}
+
+We applied the Buckingham $\pi$ theorem directly to the physical
+parameters, setting aside the integration step, success thresholds, and
+RL reward weights (those belong to the measurement and training layers,
+not the dynamics).
+
+\paragraph{The 8 governing parameters.}
+
+\begin{center}\small
+\begin{tabular}{lllll}
+\toprule
+Parameter & Symbol & Value & Dimension \\
+\midrule
+Gravitational accel.    & $g$              & 9.81\,m\,s$^{-2}$        & $\mathsf{L\,T}^{-2}$ \\
+Max commanded accel.    & $a_{\max}$        & 1.00\,m\,s$^{-2}$        & $\mathsf{L\,T}^{-2}$ \\
+Cart$\to$slosh coupling & $\eta$           & 1.00\,m$^{-1}$           & $\mathsf{L}^{-1}$    \\
+Slosh pendulum length   & $L$              & 0.70\,m                  & $\mathsf{L}$         \\
+Slosh damping rate      & $c$              & 0.06\,s$^{-1}$           & $\mathsf{T}^{-1}$    \\
+Goal distance           & $D_g$            & ${\sim}1.8$\,m           & $\mathsf{L}$         \\
+Episode time            & $T_{\rm ep}$     & 6.3\,s                   & $\mathsf{T}$         \\
+Actuator gain (hidden)  & $\kappa$         & $\{0.65,0.80,1.00\}$     & $1$                  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Buckingham $\pi$ (repeating vars: $a_{\max}$, $D_g$).}
+7 dimensional params, 2 fundamental dims $\Rightarrow$ 5 new groups $+$ $\kappa$:
+
+\[
+  \pi_1 = \frac{g}{a_{\max}} = 9.81,\quad
+  \pi_2 = \eta D_g = 1.80,\quad
+  \pi_3 = \frac{L}{D_g} = 0.39,\quad
+  \pi_4 = c\sqrt{\frac{D_g}{a_{\max}}} = 0.080,\quad
+  \pi_5 = T_{\rm ep}\sqrt{\frac{a_{\max}}{D_g}} = 4.70.
+\]
+
+\paragraph{Meaningful recombinations.}
+\[
+  T_{\rm tr} = 2\sqrt{D_g/a_{\max}} = 2.68\,\text{s},\qquad
+  \tau = \tfrac{1}{2}\pi_5 = \frac{T_{\rm ep}}{T_{\rm tr}} = 2.35,
+\]
+\[
+  N_s = \frac{1}{\pi}\sqrt{\frac{\pi_1}{\pi_3}}
+      = \frac{T_{\rm tr}}{T_s} = 1.60\;\text{(slosh cycles/transit)},\qquad
+  \zeta = \frac{\pi_4}{2\sqrt{\pi_1/\pi_3}} = \frac{c}{2\omega_n} = 0.008,
+\]
+\[
+  \theta_{\rm ss} = \frac{\pi_2\,\pi_3}{\pi_1}
+    = \frac{\eta\,a_{\max}\,L}{g} = 0.071\;\text{rad}.
+\]
+
+$\theta_{\rm ss}$ is the equilibrium slosh angle under sustained full thrust.
+No tolerance parameter appears in its formula, yet $\theta_{\rm ss} \approx
+\epsilon_\theta = 0.07$\,rad --- a collision between the dynamics and the
+success condition that falls directly out of the $\pi$ groups. It means
+any final approach at full commanded acceleration violates the slosh
+constraint; near-goal corrections must be gentle.
+
+\subsection*{Confirmed V1 configuration and empirical gap}
+
+\paragraph{V1: actuator gain only at \texttt{max\_steps}=105 ($\tau=2.35$).}
+
+\begin{center}\small
+\begin{tabular}{llll}
+\toprule
+Parameter & Symbol & V1 value & Note \\
+\midrule
+Episode steps & $N_{\rm steps}$ & 105 & $\tau = 2.35$ \\
+Actuator gain & $\kappa$ & $\{0.65,\,0.80,\,1.00\}$ & V1 unknown \\
+Goal distance & $D_g$ & $[1.4, 2.2]$\,m & unchanged \\
+Action delay & $D$ & 0 steps & fixed \\
+Deadband & $b$ & 0 & fixed \\
+Slosh length & $L$ & 0.70\,m & fixed \\
+Damping & $c$ & 0.06\,s$^{-1}$ & fixed \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Empirically confirmed gap (200 seeds per $\kappa$).}
+Sweep of blind nominal PD vs.\ oracle (PD gains divided by $\kappa$) at
+\texttt{max\_steps}=105, goal$=[1.4,2.2]$\,m, $L=0.70$\,m:
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+$\kappa$ & Blind success & Oracle success \\
+\midrule
+0.65 & 0\%   & 100\% \\
+0.70 & 0\%   & 100\% \\
+0.75 & 25.5\% & 100\% \\
+0.80 & 50.5\% & 100\% \\
+0.85 & 85\%  & 100\% \\
+0.90 & 100\% & 100\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The gap is not a transit-timeout effect (condition \eqref{eq:gain_cond}
+requires $\tau < 1.24$, but $\tau=2.35$). It arises through settling: at
+$\kappa<1$ the actuator delivers $\kappa$-attenuated corrections in the
+near-goal linear regime, slowing convergence in position, velocity, and
+slosh simultaneously. The oracle compensates by scaling its command by
+$1/\kappa$, restoring the intended correction magnitude.
+
+This gap satisfies the minimum requirement: blind vs.\ oracle separation
+exceeds 20\% across $\kappa \in \{0.65, 0.80\}$, with oracle at 100\% for
+all $\kappa \geq 0.65$.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{slosh_gain_sweep.png}
+\caption{Blind (nominal PD) vs.\ oracle (gains$/\kappa$) success rate over 200
+seeds at each $\kappa$ level. \texttt{max\_steps}=105, goal$=[1.4,2.2]$\,m,
+$L=0.70$\,m. Generated by \texttt{scripts/gain\_sweep.py}.}
+\end{figure}
+
+\subsection*{Reproduce}
+
+\texttt{scripts/gain\_sweep.py} --- runs 200 seeds $\times$ 13 $\kappa$ levels,
+saves \texttt{docs/slosh\_gain\_sweep.png}. Env source:
+\texttt{scripts/seed\_tasks/slosh\_tank\_env.py} at current \texttt{main}
+(\texttt{max\_steps}=105, $\kappa\in\{0.65,0.80,1.00\}$ in \texttt{sample\_hidden}).
+
+\subsection*{Open questions / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Confirm gap at $\tau \approx 1.4$.} Implement the recommended
+    \texttt{max\_steps} and unknown ranges; run blind, oracle, and
+    probe-then-adapt baselines on 200 seeds.
+  \item \textbf{Design probe-then-adapt oracle.} The hand-written oracle
+    currently adjusts gains only; it does not plan trajectories. For action
+    delay, a proper oracle uses a bang-bang plan with delay-shifted braking
+    point. This determines the achievable two-turn ceiling.
+  \item \textbf{First GRPO run.} Once the gap is confirmed: use same config
+    as run 8 (LR $= 10^{-4}$, DAPO loss, $\beta = 0$) on V1 (action delay
+    only). Probe at iters 0, 4, 8, 16, 20 to track whether the model learns
+    to write a probe in turn 1 and adapt in turn 2.
+  \item \textbf{Does the model learn to probe at all?} The key empirical
+    question: does the trained model's turn-1 function look like the
+    canonical diagnostic pulse, or does it collapse to a fixed controller?
+    The turn-1 reward curve (mean reward of turn-1 draft against training step)
+    is the primary diagnostic.
+\end{enumerate}
+
 \end{document}

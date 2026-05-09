@@ -662,6 +662,221 @@ $[s \,|\, y^{(1)} \,|\, m]$ into the prompt slot of HF's training
 interface and $y^{(2)}$ alone into the completion slot, so
 $\texttt{logits\_to\_keep} = T_2$ behaves as expected.
 
+\section{Slosh-tank environment: design and dimensionless parameter analysis}
+\label{app:slosh}
+
+This appendix introduces the slosh-tank environment and derives the
+dimensionless groups that govern whether a hidden unknown can actually
+be exploited by a probe-and-adapt two-turn policy. The analysis applies
+to any custom mechanics environment designed for this protocol; the
+puck env of \S\ref{sec:setup} is the prior case.
+
+\subsection*{Environment}
+
+A one-dimensional cart carries liquid modelled as one damped pendulum mode
+(slosh angle $\theta$, angular velocity $\omega$). The policy commands
+horizontal acceleration, clipped to $[-1,\,1]$\,m/s$^2$. Observed state:
+$\{t,\, x,\, v,\, \theta,\, \omega,\, g,\, \text{steps\_left}\}$.
+Five hidden per-scenario parameters are absent from the state:
+
+\smallskip
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Parameter & Symbol & Role \\
+\midrule
+Actuator gain  & $\kappa$ & Scales commanded acceleration before actuation \\
+Action delay   & $D$      & Steps before a command reaches the actuator \\
+Deadband       & $b$      & Commands $|a|<b$ produce no output \\
+Slosh length   & $L$      & Pendulum length; sets slosh natural frequency \\
+Damping        & $c$      & Linear damping on the slosh mode \\
+\bottomrule
+\end{tabular}
+\end{center}
+\smallskip
+
+Dynamics (semi-implicit Euler, $\Delta t = 0.06$\,s):
+\begin{align}
+a_{\mathrm{true}} &= \kappa \cdot \mathrm{deadband}(a_{\mathrm{cmd}[t-D]}), \notag \\
+v &\mathrel{+}= \Delta t \cdot a_{\mathrm{true}}, \quad x \mathrel{+}= \Delta t \cdot v, \\
+\dot\omega &= -\tfrac{g}{L}\,\theta - c\,\omega - a_{\mathrm{true}}, \quad \dot\theta = \omega. \notag
+\end{align}
+
+Success requires all four conditions simultaneously:
+$|x - g| < \epsilon_x$, $|v| < \epsilon_v$, $|\theta| < \epsilon_\theta$,
+$|\omega| < \epsilon_\omega$. This prevents policies that ram the cart to
+position without settling the liquid.
+
+\subsection*{Physical parameters and their dimensions}
+
+Setting aside the integration step, success thresholds, and reward weights,
+eight parameters govern the dynamics (fundamental dimensions: $\mathsf{L}$,
+$\mathsf{T}$; angles are dimensionless):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Parameter & Symbol & Value & Dimension \\
+\midrule
+Gravitational acceleration & $g$              & 9.81\,m\,s$^{-2}$        & $\mathsf{L\,T}^{-2}$ \\
+Max commanded acceleration & $a_{\max}$        & 1.00\,m\,s$^{-2}$        & $\mathsf{L\,T}^{-2}$ \\
+Cart$\to$slosh coupling    & $\eta$           & 1.00\,m$^{-1}$           & $\mathsf{L}^{-1}$    \\
+Slosh pendulum length      & $L$              & 0.70\,m                  & $\mathsf{L}$         \\
+Slosh damping rate         & $c$              & 0.06\,s$^{-1}$           & $\mathsf{T}^{-1}$    \\
+Goal distance              & $D_g$            & ${\sim}1.8$\,m           & $\mathsf{L}$         \\
+Episode time               & $T_{\mathrm{ep}}$ & 6.3\,s                  & $\mathsf{T}$         \\
+Actuator gain (hidden)     & $\kappa$         & $\{0.65,\,0.80,\,1.00\}$ & $1$                  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\smallskip\noindent
+The coupling $\eta$ enters the slosh dynamics as $\dot\omega = \cdots -
+\eta\,a_{\mathrm{true}}$; for $\dot\omega\in[\mathsf{T}^{-2}]$ and
+$a_{\mathrm{true}}\in[\mathsf{L\,T}^{-2}]$ one requires $[\eta]=\mathsf{L}^{-1}$,
+equivalent to an inverse coupling-arm length. At $\eta=1.0$\,m$^{-1}$ the
+effective arm is 1\,m, independent of the pendulum length $L$.
+
+\subsection*{Buckingham $\pi$ theorem}
+
+With 7 dimensional parameters and 2 fundamental dimensions, the theorem
+yields $7-2=5$ independent dimensionless groups, plus $\kappa$ directly.
+Choose $a_{\max}$ [$\mathsf{L\,T}^{-2}$] and $D_g$ [$\mathsf{L}$] as
+repeating variables, defining time scale $\sqrt{D_g/a_{\max}}$.
+Applying the theorem to each remaining parameter:
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Group & Expression & Value & Non-repeating parameter \\
+\midrule
+$\pi_1$ & $g / a_{\max}$                         & $9.81$ & $g$ \\
+$\pi_2$ & $\eta\,D_g$                             & $1.80$ & $\eta$ \\
+$\pi_3$ & $L / D_g$                               & $0.39$ & $L$ \\
+$\pi_4$ & $c\,\sqrt{D_g / a_{\max}}$              & $0.080$ & $c$ \\
+$\pi_5$ & $T_{\mathrm{ep}}\,\sqrt{a_{\max}/D_g}$ & $4.70$ & $T_{\mathrm{ep}}$ \\
+$\pi_6=\kappa$ & $\kappa$                         & $\{0.65,0.80,1.00\}$ & (already dimensionless) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Products and ratios of $\pi$ groups are equally valid. The physically
+interpretable recombinations are:
+\begin{align}
+T_{\mathrm{tr}} &= 2\sqrt{D_g/a_{\max}} = 2.68\;\text{s}
+  \quad\text{(minimum bang-bang transit)},
+  \label{eq:slosh_Ttr}\\
+\tau &= \tfrac{1}{2}\pi_5 = \frac{T_{\mathrm{ep}}}{T_{\mathrm{tr}}} = 2.35
+  \quad\text{(episode slack)},
+  \label{eq:slosh_tau}\\
+N_s &= \frac{1}{\pi}\sqrt{\frac{\pi_1}{\pi_3}} = \frac{T_{\mathrm{tr}}}{T_s}
+  = 1.60\;\text{(slosh cycles per transit)},
+  \label{eq:slosh_Ns}\\
+\zeta &= \frac{\pi_4}{2\sqrt{\pi_1/\pi_3}} = \frac{c}{2\omega_n}
+  = 0.008\;\text{(damping ratio)},
+  \label{eq:slosh_zeta}\\
+\theta_{\mathrm{ss}} &= \frac{\pi_2\,\pi_3}{\pi_1}
+  = \frac{\eta\,a_{\max}\,L}{g}
+  = 0.071\;\text{rad}\quad\text{(equilibrium slosh at full thrust).}
+  \label{eq:slosh_thetass}
+\end{align}
+$\theta_{\mathrm{ss}}$ involves no tolerance parameter yet matches
+$\epsilon_\theta = 0.07$\,rad to within rounding --- a constraint that
+falls directly from the dynamics. Any final approach at full commanded
+acceleration will fail the slosh condition; near-goal corrections must be
+gentle.
+
+\subsection*{When each unknown actually matters}
+
+\paragraph{Actuator gain ($\kappa$).}
+A gain-unaware controller plans transit assuming $\kappa=1$; at true gain
+$\kappa<1$ the actual transit takes $1/\sqrt{\kappa}$ times longer by
+\eqref{eq:slosh_Ttr}. Transit timeout occurs when
+\begin{equation}
+\tau < \frac{1}{\sqrt{\kappa_{\min}}}.
+\label{eq:gain_cond}
+\end{equation}
+At $\kappa_{\min}=0.65$ and $\tau=2.35$, this condition is not met ($2.35 >
+1.24$): the controller still has slack for transit. The empirically observed
+gap arises through the settling phase: at $\kappa < 1$ the actuator delivers
+only $\kappa$-attenuated corrections in the near-goal regime, slowing
+convergence in position, velocity, and slosh simultaneously. Confirmed at
+$N_{\rm steps}=105$: a blind nominal PD achieves $0\%$ success at
+$\kappa=0.65$ while an oracle (gains divided by $\kappa$) achieves $100\%$,
+with a clean transition from $0\%$ to $100\%$ blind success between
+$\kappa=0.75$ and $\kappa=0.90$.
+
+\paragraph{Action delay ($D$).}
+Delay adds phase to the closed-loop response. High-gain feedback becomes
+marginally stable around $\delta \approx 0.3$--$0.5$ for typical position
+gains. Even when feedback oscillates, the controller converges given
+sufficient time. For delay to mandate a qualitatively different strategy
+(trajectory planning with anticipatory braking rather than reactive
+feedback), the episode must be short enough that slow oscillatory
+convergence exceeds the time budget. At $\tau=2.35$ this condition is not
+met for $D \in \{0,\,2,\,4\}$; it is marginal at $D \in \{0,\,4,\,8\}$.
+
+\paragraph{Slosh length ($L$) and damping ($c$).}
+Fixed anti-slosh gains tuned for $L_0$ become suboptimal at other lengths.
+The mismatch exceeds the success threshold $\epsilon_\theta$ only when
+$\zeta$ is small enough that settling requires many cycles, and when $\tau$
+is tight enough that there is no time to wait. At current $\zeta = 0.008$
+and $\tau = 2.35$, the nominal gains $k_\theta = 1.30$, $k_\omega = 0.45$
+succeed across moderate $L$ variation: the available slack absorbs the gain
+mismatch. Tightening $\tau$ below $1.5$ is expected to expose the
+slosh-length gap.
+
+\subsection*{Confirmed V1 configuration}
+
+The confirmed V1 varies \textbf{actuator gain only}, with all other
+parameters fixed at nominal:
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Parameter & Symbol & V1 value & Status \\
+\midrule
+Episode steps & $N_{\rm steps}$ & 105 ($\tau=2.35$) & Confirmed \\
+Actuator gain & $\kappa$ & $\{0.65,\,0.80,\,1.00\}$ & Confirmed; clean gap \\
+Action delay & $D$ & 0 steps & Fixed (V1) \\
+Deadband & $b$ & 0 & Fixed (V1) \\
+Slosh length & $L$ & 0.70\,m & Fixed (V1) \\
+Damping & $c$ & 0.06\,s$^{-1}$ & Fixed (V1) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Actuator gain is chosen as the first unknown because its effect is a smooth
+rescaling of the settling bandwidth, directly interpretable from a
+short probe: the ratio of observed to commanded velocity change in the
+linear regime estimates $\kappa$. The blind/oracle gap is empirically
+confirmed at 200 seeds per $\kappa$ level with $N_{\rm steps}=105$.
+
+\subsection*{Relation to the multi-turn protocol}
+
+The two-turn protocol's value is testable only if there exists a real gap
+between a policy written without probing and one written after observing
+the first-turn trace. The dimensionless analysis above identifies the
+parameter regime where this gap is non-trivial. Concretely, the required
+baselines before any RL run are:
+\begin{itemize}
+  \item \emph{Blind nominal controller}: a fixed PD with standard anti-slosh
+    gains, no first-turn probe. Sets the single-turn ceiling.
+  \item \emph{Oracle-aware controller}: a controller that reads the hidden
+    parameters directly and plans the optimal trajectory. Sets the two-turn
+    ceiling.
+  \item \emph{Probe-then-adapt controller}: a hand-written controller that
+    runs the canonical pulse probe, estimates the unknown from the trace, and
+    adapts its gains accordingly. The achievable probe-aware baseline.
+\end{itemize}
+The benchmark is useful for multi-turn RL only if
+$\text{blind} < \text{probe-then-adapt} < \text{oracle}$ at the chosen
+parameter setting.
+
 \begin{thebibliography}{99}
 \bibitem{shao2024deepseekmath} Z.~Shao et~al.
 \emph{DeepSeekMath}. arXiv:2402.03300, 2024.
