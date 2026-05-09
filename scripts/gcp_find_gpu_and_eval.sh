@@ -21,7 +21,7 @@
 # Override the zone list:
 #   LORA4VR_ZONE_LIST="europe-west4-b europe-west1-c ..." bash scripts/gcp_find_gpu_and_eval.sh ...
 
-set -uo pipefail
+set -euo pipefail
 
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <run_name> [--accelerator <type>] [--wait] [-- <eval args>]" >&2
