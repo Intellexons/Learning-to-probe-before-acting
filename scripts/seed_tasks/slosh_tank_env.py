@@ -8,7 +8,7 @@ State = Dict[str, float]
 
 @dataclass(frozen=True)
 class HiddenParams:
-    actuator_gain: float = 1.0
+    actuator_gain: float
 
 
 @dataclass(frozen=True)
