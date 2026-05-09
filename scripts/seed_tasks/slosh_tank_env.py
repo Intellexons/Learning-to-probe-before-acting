@@ -154,6 +154,8 @@ class SloshTankEnv:
         self.theta = self.rng.uniform(-0.015, 0.015)
         self.omega = 0.0
         self.done = False
+        self.a_cmd = 0.0
+        self.a_true = 0.0
         self.failure_reason: Optional[str] = None
 
         # Delay queue stores clipped command accelerations before actuator gain/deadband.
@@ -203,9 +205,9 @@ class SloshTankEnv:
 
         return h.actuator_gain * delayed
 
-    def step(self, action: Any) -> Tuple[State, float, bool, Dict[str, Any]]:
+    def step(self, action: Any) -> Tuple[State, float, bool, bool, Dict[str, Any]]:
         if self.done:
-            return self.observe(), 0.0, True, {"already_done": True}
+            return self.observe(), 0.0, True, False, {}
 
         c = self.config
         h = self.hidden
@@ -234,32 +236,20 @@ class SloshTankEnv:
 
         success = self.is_success()
         unsafe = self.is_unsafe()
-        timeout = self.t >= c.max_steps
 
         if success:
             reward += c.success_bonus
-            self.done = True
             self.failure_reason = None
         elif unsafe:
             reward -= c.fail_penalty
-            self.done = True
             self.failure_reason = "unsafe_or_spilled"
-        elif timeout:
-            self.done = True
+        elif self.t >= c.max_steps:
             self.failure_reason = "timeout"
 
-        info = {
-            "a_cmd": a_cmd,
-            "a_true": a_true,
-            "x_true": self.x,
-            "v_true": self.v,
-            "theta_true": self.theta,
-            "omega_true": self.omega,
-            "success": success,
-            "unsafe": unsafe,
-            "failure_reason": self.failure_reason,
-        }
-        return self.observe(), reward, self.done, info
+        self.a_cmd = a_cmd
+        self.a_true = a_true
+        self.done = success or unsafe or (self.t >= c.max_steps)
+        return self.observe(), reward, self.done, False, {}
 
     def is_success(self) -> bool:
         c = self.config
@@ -306,7 +296,7 @@ def run_episode(
                 "trace": trace if return_trace else None,
             }
 
-        next_state, reward, done, info = env.step(action)
+        next_state, reward, terminated, truncated, _ = env.step(action)
         total_reward += reward
 
         if return_trace:
@@ -317,14 +307,14 @@ def run_episode(
                 "theta": float(env.theta),
                 "omega": float(env.omega),
                 "goal": float(env.goal),
-                "a_cmd": float(info["a_cmd"]),
-                "a_true": float(info["a_true"]),
+                "a_cmd": float(env.a_cmd),
+                "a_true": float(env.a_true),
                 "reward": float(reward),
             }
             trace.append(row)
 
         state = next_state
-        if done:
+        if terminated or truncated:
             break
 
     return {
