@@ -236,24 +236,20 @@ class SloshTankEnv:
 
         success = self.is_success()
         unsafe = self.is_unsafe()
-        timeout = self.t >= c.max_steps
 
         if success:
             reward += c.success_bonus
-            self.done = True
             self.failure_reason = None
         elif unsafe:
             reward -= c.fail_penalty
-            self.done = True
             self.failure_reason = "unsafe_or_spilled"
-        elif timeout:
-            self.done = True
+        elif self.t >= c.max_steps:
             self.failure_reason = "timeout"
 
         self.a_cmd = a_cmd
         self.a_true = a_true
-        terminated = success or unsafe or timeout
-        return self.observe(), reward, terminated, False, {}
+        self.done = success or unsafe or (self.t >= c.max_steps)
+        return self.observe(), reward, self.done, False, {}
 
     def is_success(self) -> bool:
         c = self.config
