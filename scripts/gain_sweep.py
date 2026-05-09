@@ -17,7 +17,7 @@ from slosh_tank_utils import run_episode, nominal_fast_policy
 CFG = EnvConfig()  # max_steps=105, goal=[1.4,2.2], L=0.70 via defaults
 
 SEEDS = list(range(200))
-KAPPAS = [round(0.40 + 0.05 * i, 2) for i in range(13)]  # 0.40..1.00
+KAPPAS = [round(0.40 + 0.02 * i, 2) for i in range(31)]  # 0.40..1.00
 
 
 def make_oracle(kappa):
