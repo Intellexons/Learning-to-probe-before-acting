@@ -32,8 +32,7 @@ def make_oracle(kappa):
 blind_rates, oracle_rates = [], []
 
 for kappa in KAPPAS:
-    hidden = HiddenParams(actuator_gain=kappa, action_delay=0, actuator_deadband=0.0,
-                          slosh_length=0.70, damping=0.06)
+    hidden = HiddenParams(actuator_gain=kappa)
     blind_ok = oracle_ok = 0
     for s in SEEDS:
         if run_episode(nominal_fast_policy, seed=s, hidden=hidden, config=CFG)["success"]:

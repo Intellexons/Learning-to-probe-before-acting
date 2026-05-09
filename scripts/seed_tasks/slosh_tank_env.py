@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import math
 import random
 
@@ -9,10 +9,6 @@ State = Dict[str, float]
 @dataclass(frozen=True)
 class HiddenParams:
     actuator_gain: float = 1.0
-    action_delay: int = 0
-    actuator_deadband: float = 0.0
-    slosh_length: float = 0.70
-    damping: float = 0.06
 
 
 @dataclass(frozen=True)
@@ -22,6 +18,8 @@ class EnvConfig:
     gravity: float = 9.81
     coupling: float = 1.00
     max_accel: float = 1.00
+    slosh_length: float = 0.70
+    damping: float = 0.06
     track_limit: float = 3.0
     goal_min_abs: float = 1.4
     goal_max_abs: float = 2.2
@@ -49,13 +47,7 @@ class SloshTankEnv:
 
     @staticmethod
     def sample_hidden(rng):
-        return HiddenParams(
-            actuator_gain=rng.choice([0.65, 0.80, 1.00]),
-            action_delay=0,
-            actuator_deadband=0.0,
-            slosh_length=0.70,
-            damping=0.06,
-        )
+        return HiddenParams(actuator_gain=rng.choice([0.65, 0.80, 1.00]))
 
     def reset(self, seed=None):
         if seed is not None:
@@ -72,8 +64,6 @@ class SloshTankEnv:
         self.a_cmd = 0.0
         self.a_true = 0.0
         self.failure_reason: Optional[str] = None
-        delay_len = max(0, int(self.hidden.action_delay))
-        self._action_queue: List[float] = [0.0] * delay_len
         return self.observe()
 
     def observe(self):
@@ -87,15 +77,6 @@ class SloshTankEnv:
             "steps_left": float(self.config.max_steps - self.t),
         }
 
-    def _apply_actuator_fault(self, a_cmd):
-        h = self.hidden
-        if h.action_delay > 0:
-            self._action_queue.append(a_cmd)
-            a_cmd = self._action_queue.pop(0)
-        if abs(a_cmd) < h.actuator_deadband:
-            a_cmd = 0.0
-        return h.actuator_gain * a_cmd
-
     def step(self, action):
         if self.done:
             return self.observe(), 0.0, True, False, {}
@@ -107,12 +88,12 @@ class SloshTankEnv:
         if not math.isfinite(a):
             a = 0.0
         self.a_cmd = max(-c.max_accel, min(c.max_accel, a))
-        self.a_true = self._apply_actuator_fault(self.a_cmd)
+        self.a_true = self.hidden.actuator_gain * self.a_cmd
 
         self.v += c.dt * self.a_true
         self.x += c.dt * self.v
-        self.omega += c.dt * (-(c.gravity / self.hidden.slosh_length) * self.theta
-                              - self.hidden.damping * self.omega
+        self.omega += c.dt * (-(c.gravity / c.slosh_length) * self.theta
+                              - c.damping * self.omega
                               - c.coupling * self.a_true)
         self.theta += c.dt * self.omega
         self.t += 1
