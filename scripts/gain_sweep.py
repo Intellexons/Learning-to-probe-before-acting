@@ -11,7 +11,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from slosh_tank_env import EnvConfig, HiddenParams, run_episode, nominal_fast_policy
+from slosh_tank_env import EnvConfig, HiddenParams
+from slosh_tank_utils import run_episode, nominal_fast_policy
 
 CFG = EnvConfig()  # max_steps=105, goal=[1.4,2.2], L=0.70 via defaults
 
