@@ -44,8 +44,8 @@ for kappa in KAPPAS:
     print(f"kappa={kappa:.2f}  blind={blind_rates[-1]:.1f}%  oracle={oracle_rates[-1]:.1f}%")
 
 fig, ax = plt.subplots(figsize=(7, 4))
-ax.plot(KAPPAS, blind_rates,  "o-", label="blind (nominal PD)", color="steelblue")
-ax.plot(KAPPAS, oracle_rates, "s-", label="oracle (gains / κ)", color="darkorange")
+ax.plot(KAPPAS, blind_rates,  "-", label="blind (nominal PD)", color="steelblue")
+ax.plot(KAPPAS, oracle_rates, "-", label="oracle (gains / κ)", color="darkorange")
 ax.axhline(50, color="gray", linewidth=0.8, linestyle="--")
 ax.set_xlabel("actuator gain κ")
 ax.set_ylabel("success rate (%)")
