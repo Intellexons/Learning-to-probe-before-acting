@@ -1,6 +1,6 @@
 """Slosh gain sweep: blind vs oracle success rate vs kappa.
 
-Config: max_steps=50, goal=[0.2,0.4]m, L=0.70m, theta_tol=0.07 (all defaults).
+Config: max_steps=105, goal=[1.4,2.2]m, L=0.70m, theta_tol=0.07 (all defaults).
 Sweep kappa from 0.40 to 1.00 in steps of 0.05.
 """
 
@@ -49,12 +49,12 @@ ax.plot(KAPPAS, oracle_rates, "s-", label="oracle (gains / κ)", color="darkoran
 ax.axhline(50, color="gray", linewidth=0.8, linestyle="--")
 ax.set_xlabel("actuator gain κ")
 ax.set_ylabel("success rate (%)")
-ax.set_title("Slosh tank: blind vs oracle — max_steps=50, goal=[0.2,0.4]m, L=0.70m")
+ax.set_title("Slosh tank: blind vs oracle — max_steps=105, goal=[1.4,2.2]m, L=0.70m")
 ax.legend()
 ax.set_ylim(-5, 105)
 ax.grid(True, alpha=0.3)
 fig.tight_layout()
 
-out = os.path.join(os.path.dirname(__file__), "..", "docs", "slosh_gain_sweep_ms50.png")
+out = os.path.join(os.path.dirname(__file__), "..", "docs", "slosh_gain_sweep.png")
 fig.savefig(out, dpi=150)
 print(f"\nSaved to {os.path.abspath(out)}")
