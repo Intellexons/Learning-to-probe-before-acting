@@ -165,10 +165,10 @@ def run_episode(seed, max_steps):
             action = policy(state)
         except Exception as e:
             return {{"reward": total_reward, "steps": steps, "error": f"policy() error: {{e}}"}}
-        state, reward, done, *_ = env.step(action)
+        state, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         steps += 1
-        if done:
+        if terminated:
             break
     return {{"reward": total_reward, "steps": steps, "error": None}}
 

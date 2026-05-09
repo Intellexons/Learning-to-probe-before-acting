@@ -73,10 +73,7 @@ class PuckTiltedPlaneEnv:
         self.steps += 1
         dist = math.hypot(self.px - self.gx, self.py - self.gy)
         reward = -self.dt * dist
-        done = False
+        terminated = dist < self.goal_radius or self.steps >= self.max_steps
         if dist < self.goal_radius:
             reward += 50.0
-            done = True
-        elif self.steps >= self.max_steps:
-            done = True
-        return self.get_state(), reward, done
+        return self.get_state(), reward, terminated, False, {}
