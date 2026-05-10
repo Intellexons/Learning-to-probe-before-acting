@@ -148,6 +148,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
         g1: int,
         g2: int,
         task_map: dict[str, dict],
+        prompt_turn2_map: dict[str, str] | None = None,
         max_turn_tokens: int = 400,
         scoring_timeout: int = 30,
         scoring_max_steps: int = 500,
@@ -159,6 +160,13 @@ class BranchedGRPOTrainer(GRPOTrainer):
         self.g1 = g1
         self.g2 = g2
         self.task_map = task_map
+        # Per-task pre-rendered turn-2 prompt body. The eval pipeline
+        # (`scripts/eval_frozen_baseline.py:198-203`) re-renders the turn-2
+        # prompt and prepends it to the tool-result message; training matches
+        # that contract so the model's chat history during rollouts is
+        # byte-identical to what was measured at frozen baseline.
+        # Empty dict => skip the prepend (legacy behaviour).
+        self.prompt_turn2_map = prompt_turn2_map or {}
         self.max_turn_tokens = max_turn_tokens
         self.scoring_timeout = scoring_timeout
         self.scoring_max_steps = scoring_max_steps
@@ -284,8 +292,18 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # and score each as a final policy turn. Records flow into trajectories.
         rewards_grid: list[list[float]] = []
         trajectories: list[_Trajectory] = []
+        # Eval (`scripts/eval_frozen_baseline.py:198-203`) builds the turn-2
+        # user message as `{prompt_t2}\n\n[Tool output from turn 1]\n{body}`.
+        # Mirror that here. With an empty prompt_turn2 (legacy / non-branched
+        # callers that don't provide it), fall back to body-only — which
+        # was the previous behaviour.
+        prompt_turn2 = self.prompt_turn2_map.get(task["task_id"], "")
         for i, ((p_ids, t1_ids, t1_text), tr1) in enumerate(zip(turn1_outputs, turn1_results)):
-            tool_msg = format_tool_message(tr1.text)
+            if prompt_turn2:
+                user_content = f"{prompt_turn2}\n\n[Tool output from turn 1]\n{tr1.text}"
+            else:
+                user_content = tr1.text
+            tool_msg = format_tool_message(user_content)
             tool_ids = self._tokenize_tool_message(tool_msg)
             prefix_messages = (
                 list(prompt_messages)
