@@ -425,6 +425,46 @@ Two further measurements sharpen the mechanism story.
         headline claim weakens.
 \end{enumerate}
 
+\paragraph{Arm A: frozen one-shot baseline (preliminary).}
+Table~\ref{tab:arm_a} reports the first completed arm.
+Qwen2.5-Coder-3B-Instruct (no LoRA, $N{=}1$, temperature 0.8) achieves
+\textbf{0\% success} at all three gain values $\kappa \in \{0.65, 0.80, 1.00\}$
+over 20 sampled policies $\times$ 50 seeds each.
+The mean reward $\approx -112$ is well below both the blind PD ($-10$ to $+112$
+depending on $\kappa$) and the oracle ($+111$), a gap of $\approx\!223$ points.
+Even the single best generated policy scores $-12.1$ at every $\kappa$,
+confirming the base model cannot write a working controller zero-shot.
+Two failure modes account for the result: $\approx$40\% of policies crash at
+runtime (hallucinated state keys; penalised at $-200$), and the rest produce
+control-theoretically wrong code (reversed-sign bang-bang, pendulum dynamics
+mis-applied as a control law).
+The flat reward across all three $\kappa$ values confirms the model has no
+awareness of the hidden gain.
+This large gap to both reference curves establishes that RL fine-tuning has
+a clear training signal, validating the benchmark difficulty.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$\kappa$ & Qwen 1-shot (mean) & Qwen 1-shot (max) & Blind PD & Oracle PD \\
+\midrule
+0.65 & $-112.0$ & $-12.1$ & $-9.6$  & $+111.2$ \\
+0.80 & $-111.9$ & $-12.1$ & $+45.9$ & $+111.4$ \\
+1.00 & $-111.9$ & $-12.1$ & $+111.5$ & $+111.5$ \\
+\bottomrule
+\end{tabular}
+\caption{Arm A: frozen one-shot Qwen2.5-Coder-3B-Instruct vs.\ reference
+policies on the slosh-tank task ($\kappa \in \{0.65, 0.80, 1.00\}$,
+20 policy samples, 50 seeds each, $\kappa$ fixed per episode).
+Mean reward averages over all samples; max is the best mean achieved by any
+single generated policy.
+Crashed policies scored at $-200$ (matching the GRPO training signal).
+Oracle scales PD gains by $1/\kappa$; blind uses nominal gains.}
+\label{tab:arm_a}
+\end{table}
+
 \paragraph{Failure modes to declare upfront.} If F $\not>$ D under
 matched leaves, the hierarchical baseline does not improve results in this
 domain and the contribution reduces to ``branching amortizes generate
