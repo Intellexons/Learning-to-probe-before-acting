@@ -18,8 +18,6 @@ Action: {action_spec}
 ```
 
 ## Requirements
-- Define exactly one function `def policy(state)` returning a valid action.
-- Only import `math` and `random`. No global variables or state between calls.
-- Only read the state keys listed above.
+{requirements}
 
 {response_format}
