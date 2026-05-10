@@ -35,7 +35,7 @@ def _build_multi_turn_protocol(turn_idx: int, total_turns: int) -> str:
 
 Turn {turn_idx} of {total_turns}. {budget_note}
 
-Each turn must output ONE Python fenced code block (open with ````python` and close with `````). The first non-blank line inside the fence is a mode directive comment, exactly one of:
+Each turn must output ONE Python fenced code block (use the python language tag). The first non-blank line inside the fence is a mode directive comment, exactly one of:
 
   # MODE: policy    -> block defines `def policy(state)`. Tool returns total reward across all scenarios.
   # MODE: main      -> arbitrary Python. A pre-instantiated `env` is available (same class as in `## Environment source` above, with the SAME hidden parameters as the turn-{total_turns} evaluation); call its methods (e.g. `env.reset()`, `env.step(a)`) to probe partially-observable properties. `print(...)` whatever you want returned. Tool returns stdout.
