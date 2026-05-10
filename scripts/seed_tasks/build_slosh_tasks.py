@@ -1,5 +1,12 @@
 """Build slosh_train.jsonl / slosh_eval.jsonl from slosh_tank_env.py.
 
+Each output file contains one task entry per (seed, kappa) pair, with a
+single-element `scenarios` list. The branched-rollout training scheme
+estimates V_1^(i) by averaging G_2 leaves at the same prompt; for that
+estimator to be unbiased the env must be byte-identical across leaves and
+between turn-1 calibration and turn-2 scoring. Multi-scenario tasks
+violated that — see issue #47.
+
 Embeds the env source verbatim into each task's env_code field so the prompt
 template can paste it into the model's context. Run whenever the env source
 changes.
@@ -33,32 +40,43 @@ EVAL_SEEDS = list(range(10_000, 10_004))
 KAPPAS = [0.65, 0.80, 1.00]
 
 
-def task_entry(task_id: str, seeds: list[int]) -> dict:
+def task_entry(task_id_prefix: str, seed: int, kappa: float) -> dict:
+    """One task = one (seed, kappa) scenario. See module docstring for why."""
     return {
-        "task_id": task_id,
+        "task_id": f"{task_id_prefix}_s{seed}_k{kappa:.2f}",
         "env_class": "SloshTankEnv",
         "env_code": ENV_SRC,
         "state_spec": STATE_SPEC,
         "action_spec": ACTION_SPEC,
         "goal": GOAL,
         "scenarios": [
-            {"scenario_id": f"s{seed}_k{kappa:.2f}", "seed": seed, "kappa": kappa}
-            for seed in seeds
-            for kappa in KAPPAS
+            {"scenario_id": f"s{seed}_k{kappa:.2f}", "seed": seed, "kappa": kappa},
         ],
     }
 
 
+def _write_jsonl(path: Path, entries: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+
+
 def main() -> None:
-    train = task_entry("slosh_tank_train", TRAIN_SEEDS)
-    eval_ = task_entry("slosh_tank_eval", EVAL_SEEDS)
+    train_entries = [
+        task_entry("slosh_tank_train", seed, kappa)
+        for seed in TRAIN_SEEDS
+        for kappa in KAPPAS
+    ]
+    eval_entries = [
+        task_entry("slosh_tank_eval", seed, kappa)
+        for seed in EVAL_SEEDS
+        for kappa in KAPPAS
+    ]
 
     out_train = HERE / "slosh_train.jsonl"
-    out_eval  = HERE / "slosh_eval.jsonl"
-    out_train.write_text(json.dumps(train) + "\n")
-    out_eval.write_text(json.dumps(eval_) + "\n")
-    print(f"Wrote {out_train} ({len(TRAIN_SEEDS)} scenarios)")
-    print(f"Wrote {out_eval}  ({len(EVAL_SEEDS)} scenarios)")
+    out_eval = HERE / "slosh_eval.jsonl"
+    _write_jsonl(out_train, train_entries)
+    _write_jsonl(out_eval, eval_entries)
+    print(f"Wrote {out_train} ({len(train_entries)} tasks, 1 scenario each)")
+    print(f"Wrote {out_eval}  ({len(eval_entries)} tasks, 1 scenario each)")
 
 
 if __name__ == "__main__":
