@@ -37,13 +37,60 @@ print(math.sqrt(2))
     assert "import math" in code
 
 
-def test_extract_python_fence_is_invalid():
-    """Plain ```python``` is not a recognized mode for multi-turn dispatch."""
+def test_extract_python_fence_without_mode_is_invalid():
+    """Plain ```python``` with no `# MODE:` directive is rejected."""
     text = """```python
 def policy(state):
     return 0
 ```"""
+    mode, _ = extract_code_with_mode(text)
+    assert mode == "invalid"
+
+
+def test_extract_python_fence_with_policy_directive():
+    """```python``` plus a leading `# MODE: policy` comment dispatches to policy."""
+    text = """```python
+# MODE: policy
+def policy(state):
+    return 0
+```"""
     mode, code = extract_code_with_mode(text)
+    assert mode == "policy"
+    assert "def policy" in code
+    # The directive comment is preserved in the returned code (it's a no-op
+    # Python comment, and stripping it would shift line numbers).
+    assert "# MODE: policy" in code
+
+
+def test_extract_python_fence_with_main_directive():
+    text = """```python
+# MODE: main
+print(env.reset())
+```"""
+    mode, code = extract_code_with_mode(text)
+    assert mode == "main"
+    assert "print(env.reset())" in code
+
+
+def test_extract_directive_tolerates_blank_lines_and_case():
+    text = """```python
+
+# mode:Main
+print('hi')
+```"""
+    mode, _ = extract_code_with_mode(text)
+    assert mode == "main"
+
+
+def test_extract_directive_must_be_first_nonblank_line():
+    """A `# MODE:` line later in the block does NOT count."""
+    text = """```python
+import math
+# MODE: policy
+def policy(state):
+    return 0
+```"""
+    mode, _ = extract_code_with_mode(text)
     assert mode == "invalid"
 
 

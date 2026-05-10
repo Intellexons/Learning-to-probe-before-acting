@@ -43,23 +43,27 @@ DEFAULT_MAX_STEPS = 500
 DEFAULT_ENV_CLASS = "CartPoleEnv"
 
 
-# Recognized fence language tags for multi-turn dispatch. Anything else (or
-# no fence at all) is treated as `mode = "invalid"` and rejected at the floor.
+# Fenced-block matcher for multi-turn dispatch. Anything that doesn't yield
+# a recognized mode is treated as `mode = "invalid"` and rejected at the floor.
 _FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```(?!\w)", re.DOTALL)
-
-
-# ---------------------------------------------------------------------------
-# Code parsing + static validation
-# ---------------------------------------------------------------------------
+_MODE_DIRECTIVE_RE = re.compile(
+    r"^\s*#\s*MODE\s*:\s*(policy|main)\b", re.IGNORECASE
+)
+# Code-language tags we accept as a generic Python fence; mode is then read
+# from a `# MODE: policy|main` directive on the first non-blank line.
+_PY_TAGS = {"python", "py", ""}
 
 
 def extract_code_with_mode(text: str) -> tuple[str, str]:
     """Parse a model completion into (mode, code).
 
     Modes:
-      - "policy": fenced block tagged ```policy``` — code defines `def policy(state)`
-      - "main":   fenced block tagged ```main```   — arbitrary scratchpad code
-      - "invalid": no recognized fence (untagged, wrong tag, missing fence)
+      - "policy":  block whose first non-blank line is `# MODE: policy`
+                   (or, for backward compat, a fence tagged ```policy```)
+      - "main":    block whose first non-blank line is `# MODE: main`
+                   (or, for backward compat, a fence tagged ```main```)
+      - "invalid": no recognized fence, or a python/untagged fence without
+                   a mode directive on its first non-blank line.
 
     The first matching fenced block wins. If multiple fences are present, only
     the first is considered — the runner does NOT execute multiple code blocks
@@ -74,6 +78,14 @@ def extract_code_with_mode(text: str) -> tuple[str, str]:
     code = (match.group(2) or "").strip()
     if tag in ("policy", "main"):
         return tag, code
+    if tag in _PY_TAGS:
+        for line in code.splitlines():
+            if not line.strip():
+                continue
+            m = _MODE_DIRECTIVE_RE.match(line)
+            if m:
+                return m.group(1).lower(), code
+            break
     return "invalid", ""
 
 
@@ -157,7 +169,7 @@ import random
 # --- Runner ---
 def run_episode(seed, max_steps):
     env = {env_class}(seed=seed, hidden=HiddenParams(actuator_gain={kappa}))
-    state = env.reset()
+    state, _ = env.reset()
     total_reward = 0.0
     steps = 0
     for _ in range(max_steps):

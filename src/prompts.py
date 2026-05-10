@@ -35,11 +35,12 @@ def _build_multi_turn_protocol(turn_idx: int, total_turns: int) -> str:
 
 Turn {turn_idx} of {total_turns}. {budget_note}
 
-Each turn must output ONE fenced code block tagged either:
-- ```` ```policy ```` — defines `def policy(state)`. Tool returns total_reward across all scenarios.
-- ```` ```main ```` — arbitrary Python; you may instantiate the environment to probe partially-observable properties (e.g. estimate κ). Tool returns stdout.
+Each turn must output ONE Python fenced code block (open with ````python` and close with `````). The first non-blank line inside the fence is a mode directive comment, exactly one of:
 
-The final turn (turn {total_turns}) MUST be ```` ```policy ```` — a `main` final turn is rejected at the error floor. Any turn missing a recognized fence tag is also rejected.
+  # MODE: policy    -> block defines `def policy(state)`. Tool returns total reward across all scenarios.
+  # MODE: main      -> arbitrary Python. A pre-instantiated `env` is available (same class as in `## Environment source` above, with the SAME hidden parameters as the turn-{total_turns} evaluation); call its methods (e.g. `env.reset()`, `env.step(a)`) to probe partially-observable properties. `print(...)` whatever you want returned. Tool returns stdout.
+
+The final turn (turn {total_turns}) MUST start with `# MODE: policy`; a `main` final turn is rejected at the error floor. A block whose first non-blank line is not one of the two directives above is also rejected.
 """
 
 
@@ -56,14 +57,15 @@ def _build_response_format(turn_idx: int, total_turns: int) -> str:
     is_last = (turn_idx == total_turns)
     if is_last:
         body = (
-            "Output exactly one fenced code block tagged ```` ```policy ````.\n"
-            "Inside the fence, define `def policy(state)`."
+            "Output exactly one Python fenced code block. Its first non-blank "
+            "line must be `# MODE: policy`. Inside, define `def policy(state)`. "
+            "Do not output any text outside the single fenced block."
         )
     else:
         body = (
-            "Output exactly one fenced code block tagged either ```` ```policy ```` "
-            "(define `def policy(state)`) or ```` ```main ```` (arbitrary code; "
-            "stdout is returned to you).\n"
+            "Output exactly one Python fenced code block. Its first non-blank "
+            "line must be either `# MODE: policy` (define `def policy(state)`) "
+            "or `# MODE: main` (arbitrary code; stdout is returned to you).\n"
             "Do not output any text outside the single fenced block."
         )
     return f"## Response Format\n\n{body}"
@@ -88,9 +90,10 @@ def _build_requirements(turn_idx: int, total_turns: int) -> str:
         )
     # Non-final turn: model may choose main or policy
     return (
-        "- If outputting `````policy`````: define `def policy(state)` returning a valid action.\n"
-        "- If outputting `````main`````: use `print()` to probe or derive — "
-        "run env instances, compute gains, whatever helps. stdout is returned to you next turn. No `def policy` needed here.\n"
+        "- If `# MODE: policy`: define `def policy(state)` returning a valid action.\n"
+        "- If `# MODE: main`: use `print()` to probe or derive — run env instances, "
+        "compute gains, whatever helps. stdout is returned to you next turn. "
+        "No `def policy` needed here.\n"
         + common
     )
 

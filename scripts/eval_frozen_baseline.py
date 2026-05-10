@@ -40,7 +40,7 @@ import json, math, random
 def _run(seed, kappa, max_steps):
     hidden = HiddenParams(actuator_gain=kappa)
     env = SloshTankEnv(seed=seed, hidden=hidden)
-    state = env.reset()
+    state, _ = env.reset()
     total_reward = 0.0
     for _ in range(max_steps):
         try:

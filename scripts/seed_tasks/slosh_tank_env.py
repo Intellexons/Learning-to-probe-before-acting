@@ -69,7 +69,7 @@ class SloshTankEnv:
         self.a_cmd = 0.0
         self.a_true = 0.0
         self.failure_reason: Optional[str] = None
-        return self.observe()
+        return self.observe(), {}
 
     def observe(self):
         return {

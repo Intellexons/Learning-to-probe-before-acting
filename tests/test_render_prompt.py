@@ -57,11 +57,11 @@ def test_multi_turn_first_turn_prompt():
     assert "1 turn remains" in rendered
     # First turn (not last) — not the FINAL marker
     assert "FINAL turn" not in rendered
-    # Both fence modes available on a non-final turn
-    assert "```policy" in rendered
-    assert "```main" in rendered
+    # Both mode directives available on a non-final turn
+    assert "# MODE: policy" in rendered
+    assert "# MODE: main" in rendered
     # last-turn-must-be-policy clause is always visible in the protocol
-    assert "final turn (turn 2) MUST be" in rendered
+    assert "final turn (turn 2) MUST" in rendered
 
 
 def test_multi_turn_final_turn_prompt():
@@ -72,8 +72,8 @@ def test_multi_turn_final_turn_prompt():
     # Final turn requires policy block specifically — the response_format
     # narrows to policy-only.
     final_section = rendered.split("## Response Format", 1)[1]
-    assert "```policy" in final_section
-    assert "```main" not in final_section
+    assert "# MODE: policy" in final_section
+    assert "# MODE: main" not in final_section
 
 
 def test_multi_turn_three_turns_middle():
