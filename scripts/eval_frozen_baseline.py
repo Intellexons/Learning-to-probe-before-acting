@@ -165,13 +165,19 @@ def generate_two_turn(
     prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
     t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature, max_tokens=max_tokens)
     if not t1["success"]:
-        return {"code": "", "success": False, "error": f"turn1: {t1['error']}", "t1_raw": t1["raw_response"]}
+        logger.warning(f"  turn1 failed: {t1['error']} | raw: {t1['raw_response'][:120]!r}")
+        return {"code": "", "success": False, "error": f"turn1: {t1['error']}",
+                "t1_raw": t1["raw_response"], "t1_mode": "none", "tool_output": "", "t2_raw": ""}
 
     t1_mode, t1_code = extract_code_with_mode(t1["raw_response"])
+    logger.info(f"  turn1 mode={t1_mode}  raw: {t1['raw_response'][:120]!r}")
+
     if t1_mode == "policy":
         is_valid, err = validate_code(t1_code)
         if is_valid:
-            return {"code": t1_code, "success": True, "error": None, "t1_raw": t1["raw_response"], "t1_mode": "policy"}
+            logger.info("  turn1 jumped straight to policy — accepted")
+            return {"code": t1_code, "success": True, "error": None,
+                    "t1_raw": t1["raw_response"], "t1_mode": "policy", "tool_output": "", "t2_raw": ""}
 
     if t1_mode == "main":
         main_result = run_main_in_subprocess(
@@ -182,8 +188,12 @@ def generate_two_turn(
             env_class=task.get("env_class", "SloshTankEnv"),
         )
         tool_output = main_result["stdout"] or "[empty output]"
+        logger.info(f"  tool output: {tool_output[:300]!r}")
+        if main_result["error"]:
+            logger.warning(f"  main error: {main_result['error']}")
     else:
         tool_output = "[turn 1 produced no recognized code block]"
+        logger.warning(f"  turn1 unrecognized mode={t1_mode}")
 
     prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
     t2_messages = [
@@ -192,16 +202,21 @@ def generate_two_turn(
         {"role": "user", "content": f"{prompt_t2}\n\n[Tool output from turn 1]\n{tool_output}"},
     ]
     t2 = generate_code_from_messages(model, tokenizer, t2_messages, temperature=temperature, max_tokens=max_tokens)
+    logger.info(f"  turn2 raw: {t2['raw_response'][:200]!r}")
     if not t2["success"]:
-        return {"code": "", "success": False, "error": f"turn2: {t2['error']}", "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
+        return {"code": "", "success": False, "error": f"turn2: {t2['error']}",
+                "t1_raw": t1["raw_response"], "t1_mode": t1_mode,
+                "tool_output": tool_output, "t2_raw": t2["raw_response"]}
 
     _, t2_code = extract_code_with_mode(t2["raw_response"])
     if not t2_code:
         t2_code = t2["code"]
     is_valid, err = validate_code(t2_code)
     if not is_valid:
-        return {"code": t2_code, "success": False, "error": err, "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
-    return {"code": t2_code, "success": True, "error": None, "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
+        logger.warning(f"  turn2 policy invalid: {err}")
+    return {"code": t2_code, "success": is_valid, "error": err if not is_valid else None,
+            "t1_raw": t1["raw_response"], "t1_mode": t1_mode,
+            "tool_output": tool_output, "t2_raw": t2["raw_response"]}
 
 
 def main():
@@ -297,13 +312,13 @@ def main():
                     per_sample_results.append({
                         "sample_id": sample_idx, "kappa": kappa, "valid": False,
                         "error": sample.get("error"),
-                        "t1_raw": sample.get("t1_raw", ""),
                         "t1_mode": sample.get("t1_mode", ""),
+                        "t1_raw": sample.get("t1_raw", ""),
+                        "tool_output": sample.get("tool_output", ""),
+                        "t2_raw": sample.get("t2_raw", ""),
                         "per_kappa": {},
                     })
                 else:
-                    result = _run_at_kappa(sample["code"], env_code, seed=0, kappa=kappa)
-                    # Evaluate across all n_seeds
                     successes, rewards = 0, []
                     for seed in eval_seeds:
                         r = _run_at_kappa(sample["code"], env_code, seed=seed, kappa=kappa)
@@ -315,9 +330,11 @@ def main():
                     kappa_rewards[kappa].append(mr)
                     per_sample_results.append({
                         "sample_id": sample_idx, "kappa": kappa, "valid": True,
-                        "code": sample["code"],
-                        "t1_raw": sample.get("t1_raw", ""),
                         "t1_mode": sample.get("t1_mode", ""),
+                        "t1_raw": sample.get("t1_raw", ""),
+                        "tool_output": sample.get("tool_output", ""),
+                        "t2_raw": sample.get("t2_raw", ""),
+                        "code": sample["code"],
                         "success_rate": sr, "mean_reward": mr,
                         "per_kappa": {str(kappa): {"success_rate": sr, "mean_reward": mr}},
                     })
