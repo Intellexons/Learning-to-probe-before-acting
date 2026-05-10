@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 _SEED_TASKS_DIR = Path(__file__).resolve().parent / "seed_tasks"
 sys.path.insert(0, str(_SEED_TASKS_DIR))
 
-from src.hf_generator import load_model_for_generation, generate_code
+from src.hf_generator import load_model_for_generation, generate_code, generate_code_from_messages
 from src.prompts import load_template, render_prompt
 from src.runner import validate_code, run_main_in_subprocess, extract_code_with_mode, ERROR_PENALTY_PER_SCENARIO
 from src.dataset import load_jsonl
@@ -174,14 +174,14 @@ def generate_two_turn(
     else:
         tool_output = "[turn 1 produced no recognized code block]"
 
-    # Turn 2: policy
+    # Turn 2: policy — send full chat history so model sees its own turn-1 response
     prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
-    # Append the turn-1 exchange to the prompt as context
-    t2_context = (
-        prompt_t2
-        + f"\n\n[Turn 1 output]\n{tool_output}\n"
-    )
-    t2 = generate_code(model, tokenizer, t2_context, temperature=temperature, max_tokens=max_tokens)
+    t2_messages = [
+        {"role": "user", "content": prompt_t1},
+        {"role": "assistant", "content": t1["raw_response"]},
+        {"role": "user", "content": f"{prompt_t2}\n\n[Tool output from turn 1]\n{tool_output}"},
+    ]
+    t2 = generate_code_from_messages(model, tokenizer, t2_messages, temperature=temperature, max_tokens=max_tokens)
     if not t2["success"]:
         return {"code": "", "success": False, "error": f"turn2: {t2['error']}", "t1_raw": t1["raw_response"]}
 

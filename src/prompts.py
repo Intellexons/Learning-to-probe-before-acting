@@ -69,6 +69,32 @@ def _build_response_format(turn_idx: int, total_turns: int) -> str:
     return f"## Response Format\n\n{body}"
 
 
+def _build_requirements(turn_idx: int, total_turns: int) -> str:
+    """Build the Requirements bullet list.
+
+    Single-turn and the final turn of a multi-turn sequence both require a
+    def policy. Non-final turns can output either main or policy, so the
+    requirement to define a policy function is conditional rather than absolute
+    — otherwise the model skips the scratchpad turn and jumps straight to code.
+    """
+    common = (
+        "- Only import `math` and `random`. No global variables or state between calls.\n"
+        "- Only read the state keys listed above."
+    )
+    if total_turns <= 1 or turn_idx == total_turns:
+        return (
+            "- Define exactly one function `def policy(state)` returning a valid action.\n"
+            + common
+        )
+    # Non-final turn: model may choose main or policy
+    return (
+        "- If outputting `````policy`````: define `def policy(state)` returning a valid action.\n"
+        "- If outputting `````main`````: use `print()` to surface derivations — "
+        "stdout is returned to you next turn. No `def policy` needed here.\n"
+        + common
+    )
+
+
 def load_template(template_path: str = "configs/prompt_template.txt") -> str:
     return Path(template_path).read_text()
 
@@ -90,6 +116,7 @@ def render_prompt(
         action_spec=task["action_spec"],
         goal=task["goal"],
         multi_turn_protocol=_build_multi_turn_protocol(turn_idx, total_turns),
+        requirements=_build_requirements(turn_idx, total_turns),
         response_format=_build_response_format(turn_idx, total_turns),
     )
 
