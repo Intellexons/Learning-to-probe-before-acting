@@ -1521,4 +1521,149 @@ bash scripts/gcp_find_gpu_and_eval.sh arm_b_qwen3_4b_001 --wait \
 
 Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_\{a,b\}\_qwen3\_4b\_001/}.
 
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Arm B turn-1 probe analysis: the gate opens
+but the value is not extracted}
+
+\commit{cd1290a} $\cdot$ \textit{static analysis of all 60 turn-1
+\texttt{main} bodies in arm\_b\_qwen3\_4b\_001}
+
+\subsection*{Setup}
+
+The aggregate Arm B numbers (100\% \texttt{\# MODE: main} usage, $0.7\%$
+success at $\kappa=0.65$ driven by a single $+5.7$-reward sample) raised
+two questions the per-sample table did not answer: \emph{what} is the
+model probing in turn 1, and \emph{does the probe content feed the
+turn-2 policy}? The 60 turn-1 \texttt{t1\_raw} bodies were grepped for
+calls to \texttt{env.reset()} / \texttt{env.step(...)}, presence of
+\texttt{for}/\texttt{while} loops, the actions passed to \texttt{step},
+and any code that names or computes the actuator gain. The killer
+sample was inspected by hand to see whether its turn-2 policy referenced
+turn-1 output.
+
+\subsection*{Results}
+
+\textit{Probe shape distribution.} All 60 samples open with
+\texttt{state, \_\ = env.reset()} followed by a \texttt{print} of the
+initial state. Beyond that:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Pattern} & \textbf{Count} & \textbf{Description} \\
+\midrule
+D --- reset-only                & 39 / 60 & literal example body, no further probing \\
+A --- reset + stepped trajectory & 20 / 60 & at least one \texttt{env.step(a)}, often in a loop \\
+B --- reset + unrolled step calls &  1 / 60 & multiple hardcoded \texttt{step} calls, no loop \\
+C --- reset + loop without step  &  0 / 60 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Probe content within the active 21.} Of the 21 samples that
+call \texttt{env.step}, none try a sweep of distinct accelerations to
+back out the actuator gain. Action values are dominated by the
+hardcoded literals $0.5$, $-0.5$, $1.0$. Only a single sample tests
+$a = 0.0$ (the natural-dynamics baseline that would isolate the
+gravity / coupling effects from the actuator path). 60/60 samples
+include a comment stating they are probing ``to gain information
+about the hidden actuator gain $\kappa$''; 1/60 contains code that
+references \texttt{actuator\_gain} / \texttt{kappa} / \texttt{k\_est}
+or computes a $\Delta v / (a \cdot \Delta t)$ ratio. The intent is
+stated in the comment, the arithmetic never happens.
+
+\textit{The killer sample did not probe.} The Arm B winner at
+$\kappa=0.65$ (mean reward $+5.7$, 14\% per-seed success rate) is a
+Pattern-D probe --- \texttt{env.reset()} followed by
+\texttt{print(state)} and nothing else. Its turn-2 policy is a
+four-state PD with signed errors:
+$\text{action} = 0.8\,(g{-}x)/0.12 - 0.2\,v/0.12 - 0.3\,\theta/0.07 -
+0.1\,\omega/0.18$, clipped. The abs-error bug from the previous-model
+2-turn baseline is gone, and the controller addresses all four success
+conditions explicitly. The most active probe in the run (sample~0, full
+stepped trajectory under both positive and negative actions, scored
+$-57.7$) did not use its probe data in turn 2 either; it was a
+weaker controller of the same family.
+
+\subsection*{Interpretation}
+
+The probe-then-adapt protocol is \emph{nominal but not operative}.
+Every sample passes the format gate (\texttt{\# MODE: main} on turn 1,
+\texttt{\# MODE: policy} on turn 2, valid state-key reads), and the
+prompt's instruction to use the pre-instantiated \texttt{env} for
+probing is followed by a wide majority either literally (Pattern D) or
+loosely (Pattern A). But the value the protocol is supposed to deliver
+--- a $\kappa$ estimate that conditions the turn-2 controller --- never
+materialises. Two independent observations support this:
+
+\begin{enumerate}[nosep]
+  \item No sample computes a $\kappa$ estimate from probe data, even
+    when the data needed (a known commanded action, an observed
+    velocity change, the dt visible in the env source) is on screen.
+  \item The single sample that did achieve repeatable success on the
+    hardest $\kappa$ did so without a probe at all. Its win came from
+    cleaner control reasoning, not from cross-turn information transfer.
+\end{enumerate}
+
+The Arm B headline ``$0.7$\% success rate at $\kappa=0.65$'' is therefore
+correctly read as a control-reasoning result that happens to occur in a
+two-turn rollout, not as an instance of probe-then-adapt. The
+mean-reward improvement of 2-turn over 1-turn ($\approx 12$--$18$
+points per $\kappa$) is consistent with the model writing slightly
+better controllers in the second turn after seeing the actual state
+shape printed in the first --- a weak, format-side effect, not an
+information-gathering one.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{The gap GRPO needs to close is now sharp.} A 2-turn
+    rollout that actually estimates $\kappa$ in turn 1 and adapts in
+    turn 2 should beat reset-only Pattern D on every $\kappa$, not just
+    one outlier. GRPO with $G_2 \geq 2$ branched continuations gives
+    the trainer the signal to reward probe content that improves
+    turn-2 reward.
+  \item \textbf{Probe-aware reward bonus (optional).} Augment the
+    reward with a small term proportional to the mutual information
+    between the printed turn-1 stdout and the resulting turn-2 reward,
+    or a simpler proxy (e.g.\ ``did turn 2 read the printed numbers'').
+    Risk: gameable. Worth keeping in the back pocket if vanilla GRPO
+    plateaus on Pattern D.
+  \item \textbf{Make the example marginally more informative.}
+    Replace the example's
+    \texttt{print("state keys:", sorted(state.keys()))} line with a
+    single \texttt{state, \_\ = env.step(1.0)} followed by a print, so
+    the demonstrated probe shows \emph{what} a step does. Trades a
+    smaller chance of GRPO collapsing onto the example for a larger
+    chance of the model generalising probe content. Decision deferred
+    until after the first GRPO run.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Does the model already \emph{understand} that
+    $\Delta v / a$ at $\theta \approx 0$, $\omega \approx 0$ on a single
+    step gives $\kappa$, but choose not to use it? Or is the missing
+    arithmetic genuine? A targeted prompt asking the same model
+    ``estimate $\kappa$ from one step'' (outside the slosh study) would
+    answer this cleanly.
+  \item How much of the 100\% probe rate is generalisation vs.\ literal
+    example copying? 65\% Pattern D (reset-only, like the example) and
+    33\% Pattern A (extends the example with \texttt{step}) suggest the
+    answer is roughly two-thirds copy, one-third generalisation.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{cd1290a}: the analysis is a static grep over the
+\texttt{t1\_raw} field of each entry in
+\texttt{arm\_b\_summary.json}, plus manual inspection of the highest
+\texttt{mean\_reward} sample at each $\kappa$. No additional code; the
+patterns used were \texttt{env\textbackslash.reset\textbackslash(} and
+\texttt{env\textbackslash.step\textbackslash(} for shape, and
+\texttt{kappa|actuator\_gain|k\_est} for $\kappa$-naming. Source:
+\texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_b\_qwen3\_4b\_001/arm\_b\_qwen3\_4b\_001/arm\_b\_summary.json}.
+
 \end{document}
