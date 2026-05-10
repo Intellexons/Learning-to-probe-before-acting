@@ -133,6 +133,6 @@ echo "[gcp_eval] Fetching results..."
 bash "$SCRIPT_DIR/gcp_fetch_eval.sh" "$RUN_NAME"
 
 echo "[gcp_eval] Destroying VM..."
-bash "$SCRIPT_DIR/gcp_destroy_vm.sh"
+bash "$SCRIPT_DIR/gcp_destroy_vm.sh" --yes
 
 echo "[gcp_eval] Done."

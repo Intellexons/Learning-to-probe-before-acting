@@ -157,6 +157,6 @@ echo "[gcp_train] Fetching artifacts..."
 bash "$SCRIPT_DIR/gcp_fetch_artifacts.sh" "$RUN_NAME"
 
 echo "[gcp_train] Destroying VM..."
-bash "$SCRIPT_DIR/gcp_destroy_vm.sh"
+bash "$SCRIPT_DIR/gcp_destroy_vm.sh" --yes
 
 echo "[gcp_train] Done."
