@@ -59,26 +59,32 @@ def error_floor_reward(n_scenarios: int) -> float:
 
 def _policy_tool_text(reward_total: float, n_scenarios: int) -> str:
     return (
-        f"[tool] policy executed across {n_scenarios} scenarios. "
+        f"Turn-1 policy was scored across {n_scenarios} scenarios. "
         f"total_reward = {reward_total:.2f}"
     )
 
 
 def _main_tool_text(stdout: str) -> str:
-    return f"[tool] main() executed. stdout:\n{stdout}"
+    """Body of the tool-result message for an intermediate `# MODE: main` turn.
+
+    Returns the captured stdout verbatim (or "[empty output]" if blank), with
+    no extra prefix — eval (`scripts/eval_frozen_baseline.py`) wraps the body
+    with `[Tool output from turn 1]\n...` at message-construction time and
+    training does the same in `BranchedGRPOTrainer._branched_rollout_one_prompt`.
+    """
+    return stdout or "[empty output]"
 
 
 def _final_turn_rejected_text(mode: str) -> str:
     return (
-        f"[tool] turn rejected: final turn must be a `policy` block "
+        f"Final-turn rejected: final turn must start with `# MODE: policy` "
         f"(got mode={mode!r}). Trajectory scored at error floor."
     )
 
 
-_INTERMEDIATE_INVALID_TEXT = (
-    "[tool] turn rejected: code did not declare a recognized mode "
-    "(expected ```policy or ```main fence)."
-)
+# When turn 1 emits no recognized mode directive, eval surfaces this exact
+# string (`scripts/eval_frozen_baseline.py:195`); training mirrors it.
+_INTERMEDIATE_INVALID_TEXT = "[turn 1 produced no recognized code block]"
 
 
 # ---------------------------------------------------------------------------

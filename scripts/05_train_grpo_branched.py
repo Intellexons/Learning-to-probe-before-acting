@@ -86,11 +86,17 @@ def main():
 
     template = load_template("configs/prompt_template.txt")
     task_map = {}
+    prompt_turn2_map = {}
     dataset_rows = []
     for task in tasks:
         tid = task["task_id"]
         prompt_text = render_prompt(
             template, task, turn_idx=1, total_turns=TOTAL_TURNS_FOR_BRANCHED,
+        )
+        prompt_turn2_map[tid] = render_prompt(
+            template, task,
+            turn_idx=TOTAL_TURNS_FOR_BRANCHED,
+            total_turns=TOTAL_TURNS_FOR_BRANCHED,
         )
         task_map[tid] = task
         dataset_rows.append({
@@ -177,6 +183,7 @@ def main():
         g1=g1,
         g2=g2,
         task_map=task_map,
+        prompt_turn2_map=prompt_turn2_map,
         max_turn_tokens=max_turn_tokens,
         scoring_timeout=scoring_cfg["timeout_seconds"],
         scoring_max_steps=scoring_cfg["max_steps"],
