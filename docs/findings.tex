@@ -1376,4 +1376,149 @@ bash scripts/gcp_find_gpu_and_eval.sh arm_a_qwen3_4b_001 --wait \
 Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_a\_qwen3\_4b\_001/}.
 HF-repo-id support: PR \#41.
 
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Frozen baseline summary on Qwen3-4B-Instruct-2507:
+naive, oracle, 1-turn, 2-turn}
+
+\commit{cd1bc4e} $\cdot$ \textit{arm\_a\_qwen3\_4b\_001 +
+arm\_b\_qwen3\_4b\_001, 20 samples per $\kappa$, 50 seeds}
+
+\subsection*{Setup}
+
+With \texttt{Qwen3-4B-Instruct-2507} adopted as the study's base model,
+this entry consolidates the four frozen reference points the paper will
+cite directly: a naive blind PD controller, the oracle PD controller
+(gains scaled by $1/\kappa$), the model in a single-turn prompt
+(\texttt{arm\_a\_qwen3\_4b\_001}), and the model in the two-turn
+probe-then-adapt prompt (\texttt{arm\_b\_qwen3\_4b\_001}).
+The two-turn run completed shortly before this entry. All four were
+evaluated on the same 50 seeds and the same three actuator-gain
+values $\kappa \in \{0.65,\ 0.80,\ 1.00\}$ used in the previous Arm A/B
+work.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+$\kappa$ & \textbf{Naive PD} & \textbf{Oracle PD}
+         & \textbf{Qwen3-4B 1-turn} & \textbf{Qwen3-4B 2-turn} \\
+\midrule
+0.65 & 0\%   & 100\% & 0\%   & \textbf{0.7\%}\,$^{\dagger}$ \\
+0.80 & 46\%  & 100\% & 0.5\% & 0\%   \\
+1.00 & 100\% & 100\% & 0.7\% & 0\%   \\
+\bottomrule
+\end{tabular}
+\caption{Success rate (fraction of 50 episodes where all four settling
+conditions are satisfied simultaneously). Naive uses nominal PD gains;
+oracle scales gains by $1/\kappa$. Qwen rows are mean over 20
+generated policies $\times$ 50 seeds.
+$^{\dagger}$Aggregate is 0.7\% but driven by a single sample whose
+per-sample success rate was 14\% --- see Interpretation.}
+\end{table}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+$\kappa$ & \textbf{1-turn min} & \textbf{1-turn med} & \textbf{1-turn max}
+         & \textbf{2-turn med} \\
+\midrule
+0.65 & $-89.8$ & $-76.3$ & $-12.5$ & $-57.7$ \\
+0.80 & $-89.0$ & $-86.8$ & $-12.1$ & $-74.2$ \\
+1.00 & $-88.8$ & $-86.5$ & $-11.7$ & $-68.2$ \\
+\bottomrule
+\end{tabular}
+\caption{Per-sample mean-reward distribution (across 50 seeds), for
+the new model under both protocols. Best 2-turn sample at $\kappa=0.65$
+reached $+5.7$ --- the first positive frozen-baseline reward in any
+slosh run on any model.}
+\end{table}
+
+\textbf{Turn-1 mode usage in Arm B.} 60/60 samples (100\%) opened with
+\texttt{\# MODE: main}. The Qwen2.5-Coder-3B baseline at the same
+prompt was 27\%.
+
+\subsection*{Interpretation}
+
+\textit{Universal probing.} Every Arm B sample probed in turn 1.
+Inspection of the raw outputs shows the probes are content-bearing,
+not just shape: most call \texttt{env.reset()} \emph{and} step the env
+with a known acceleration (e.g.\ \texttt{env.step(0.0)},
+\texttt{env.step(1.0)}) before printing observations, with comments
+like ``probing the environment to gain insights about the hidden
+actuator gain.'' The Qwen2.5 baseline never produced this behaviour
+without further intervention.
+
+\textit{Two-turn modestly outperforms one-turn on mean reward, but
+not on success rate.} Median reward improves at every $\kappa$ ($-57.7$
+vs.\ $-76.3$ at 0.65; $-74.2$ vs.\ $-86.8$ at 0.80; $-68.2$ vs.\ $-86.5$
+at 1.00). Success-rate differences across protocols are within sampling
+noise at $n=20$: the 1-turn 0.5\%/0.7\% successes at $\kappa=0.80,1.00$
+disappeared in 2-turn while a 0.7\% success appeared at $\kappa=0.65$.
+
+\textit{First positive reward.} The best Arm B sample at $\kappa=0.65$
+achieved a mean reward of $+5.7$ over 50 seeds, with 14\% per-seed
+success rate --- the first time any frozen baseline policy on the
+slosh task crossed zero reward. The same sample is the only single
+policy in the run that hits the four-condition criterion repeatably.
+
+\textit{Gap to oracle remains large.} Aggregate success rate is
+$\leq 0.7$\% across all $\kappa$ versus oracle's 100\%, leaving
+$\geq 99.3$ percentage points of headroom and roughly 175--195 reward
+points of mean shortfall. The frozen-baseline ceiling is now
+characterised cleanly: probing is universal and informative, control
+reasoning is the residual blocker, and the gap is exactly the kind of
+signal GRPO is designed to amplify.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{First slosh GRPO run on Qwen3-4B-Instruct-2507.} Same
+    config as run 8 (LR $=10^{-4}$, DAPO, $\beta=0$), same V1 unknown
+    ($\kappa$ only). The four-row table above is the reference the
+    training run will be plotted against.
+  \item \textbf{Inspect the $\kappa=0.65$, $+5.7$ outlier sample.}
+    What did its probe reveal, and did the turn-2 controller use that
+    information? If yes, this is the first concrete instance of the
+    probe-then-adapt mechanism in the wild.
+  \item \textbf{Document outlier-driven aggregate metric.} The
+    $\kappa=0.65$ Arm B aggregate (0.7\%) is one sample with 14\%
+    success, not 20 samples averaging 0.7\%. The paper write-up
+    should report both the aggregate and the per-sample distribution
+    so this isn't read as broad capability.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Why does $\kappa=0.65$ (the hardest condition) get the only
+    Arm B success while $\kappa=0.80,1.00$ regress relative to 1-turn?
+    The 1-turn / 2-turn variance at $n=20$ is large; a larger seed
+    budget would clarify whether this is a real protocol effect or
+    sampling noise.
+  \item How much of the universal probing is the in-context example
+    being copied vs.\ a genuine model-side preference? The example
+    shows \texttt{env.reset(); print(state)}; the observed probes
+    extend that with \texttt{env.step()} and explanatory comments,
+    which suggests at least partial generalisation.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{cd1bc4e}:
+
+\begin{verbatim}
+bash scripts/gcp_find_gpu_and_eval.sh arm_a_qwen3_4b_001 --wait \
+  -- --turns 1 --n-samples 20 --n-seeds 50 \
+     --model-path Qwen/Qwen3-4B-Instruct-2507
+
+bash scripts/gcp_find_gpu_and_eval.sh arm_b_qwen3_4b_001 --wait \
+  -- --turns 2 --n-samples 20 --n-seeds 50 \
+     --model-path Qwen/Qwen3-4B-Instruct-2507
+\end{verbatim}
+
+Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_\{a,b\}\_qwen3\_4b\_001/}.
+
 \end{document}
