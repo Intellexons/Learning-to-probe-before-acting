@@ -977,4 +977,280 @@ bash scripts/gcp_find_gpu_and_eval.sh arm_a_001 --wait \
 Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_a\_001/arm\_a\_001/}.
 Crash penalty fix: PR \#27.
 
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Arm B: frozen two-turn Qwen2.5-Coder-3B baseline}
+
+\commit{642400b} $\cdot$ \textit{Branch \texttt{main}; scripts \texttt{scripts/eval\_frozen\_baseline.py},
+\texttt{scripts/gcp\_find\_gpu\_and\_eval.sh}.
+Run: \texttt{arm\_b\_007}, 20 samples per $\kappa$, 50 seeds, L4 GPU.}
+
+\subsection*{Setup}
+
+Base Qwen2.5-Coder-3B-Instruct (no LoRA), two-turn protocol (\texttt{total\_turns=2}),
+temperature 0.8.
+Turn 1 may be \texttt{```policy} or \texttt{```main} (arbitrary scratchpad code;
+a pre-instantiated \texttt{env} object calibrated to the evaluation $\kappa$ is
+available). Turn 2 must be \texttt{```policy}.
+The model was run 20 times per $\kappa \in \{0.65, 0.80, 1.00\}$ (60 total samples).
+Each valid turn-2 policy is evaluated over 50 seeds with $\kappa$ held fixed.
+Reference curves (blind PD, oracle) computed over the same 50 seeds as Arm A.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\caption{Arm B: frozen two-turn Qwen vs.\ reference policies. Success rate = fraction
+of 50 episodes where all four settling conditions are satisfied simultaneously.
+Blind PD uses nominal gains; Oracle PD scales gains by $1/\kappa$.}
+\begin{tabular}{cccc}
+\hline
+$\kappa$ & Qwen 2-turn (success) & Blind PD (success) & Oracle PD (success) \\
+\hline
+0.65 & 0\% & 0\%   & 100\% \\
+0.80 & 0\% & 46\%  & 100\% \\
+1.00 & 0\% & 100\% & 100\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Turn-1 mode distribution} (60 samples):
+
+\begin{center}\small
+\begin{tabular}{lrl}
+\toprule
+Mode & Count & Note \\
+\midrule
+\texttt{invalid} (unrecognized fence) & 45 (75\%) & model emitted \texttt{```python} tag \\
+\texttt{policy}                       & 12 (20\%) & skipped the scratchpad entirely \\
+none (empty response)                 & 3  (5\%)  & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Failure breakdown} (all 60 samples score at error floor or worse):
+
+\begin{center}\small
+\begin{tabular}{ll}
+\toprule
+Failure mode & Count \\
+\midrule
+Syntax error in turn-2 output (double-fence / garbled) & 32 \\
+Runtime crash: \texttt{state['config']} hallucination  & 17 \\
+Runtime crash: other                                    &  1 \\
+Ran but bad control (below blind PD)                    &  7 \\
+Empty code extracted from response                      &  3 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Interpretation}
+
+\begin{itemize}[nosep]
+  \item \textbf{Zero success rate across all $\kappa$.} The model fails identically
+    at $\kappa = 1.00$ where both blind PD (100\%) and oracle PD (100\%) succeed
+    trivially. The failure is entirely protocol-driven, not task-difficulty-driven.
+  \item \textbf{The model never uses \texttt{main} mode.}
+    100\% of turn-1 outputs used a \texttt{```python} fence tag (parsed as
+    \texttt{invalid}) or produced an empty response. The calibration env was available
+    but went completely unused because the frozen model has no prior for the two-turn
+    protocol.
+  \item \textbf{When turn 1 skips to policy (20\%), all outputs crash.}
+    Every one of the 12 samples that went straight to a turn-1 policy also hallucinated
+    \texttt{state['config']} or \texttt{state['hidden']}. These keys do not exist in
+    the state dict; the model is applying API assumptions from standard RL frameworks.
+  \item \textbf{Turn-2 syntax errors dominate (32/60).}
+    When turn 1 is \texttt{invalid}, the tool returns a rejection message. The model
+    then consistently outputs another \texttt{```python}-tagged fence, which the runner
+    cannot parse as a policy, causing a syntax error at validation.
+  \item \textbf{Oracle PD confirms the task is solvable.}
+    100\% success at all three $\kappa$ values. The gap between Qwen frozen (0\%) and
+    oracle (100\%) is entirely a \textit{protocol learning} gap: the model must
+    learn (a) to use \texttt{```main} to probe $\kappa$ on turn 1, and (b) to
+    reference only the state keys that actually exist.
+  \item \textbf{Blind PD $\kappa$-sensitivity validates the probe necessity.}
+    Blind PD drops from 100\% at $\kappa = 1.00$ to 46\% at $\kappa = 0.80$ and 0\%
+    at $\kappa = 0.65$, confirming that $\kappa$ identification is genuinely required
+    for reliable performance across the gain distribution.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+\begin{verbatim}
+bash scripts/gcp_find_gpu_and_eval.sh arm_b_007 --wait \
+  -- --turns 2 --n-samples 20 --n-seeds 50
+\end{verbatim}
+
+Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_b\_007/arm\_b\_007/}.
+Debug-logging and per-sample \texttt{t1\_mode}/\texttt{tool\_output}/\texttt{t2\_raw}
+fields: PR \#35.
+
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Arm B revisited: parsing was a mask; the real
+gap is control reasoning, not protocol}
+
+\commit{8943cbd} $\cdot$ \textit{arm\_b\_008/009/010 across PRs \#36, \#37, \#38, \#39}
+
+\subsection*{Setup}
+
+The previous Arm B entry (run \texttt{arm\_b\_007}) attributed the 0\%
+success rate at every $\kappa$ to a ``protocol learning gap.'' Inspection
+of the per-sample artefacts told a different story: 75\% of turn-1
+outputs were emitting \texttt{```python}-tagged fences (the model's
+training-data prior), parsed as \texttt{mode=invalid} by a runner
+expecting tagged \texttt{```policy}/\texttt{```main} fences. The 0\%
+success rate was an artefact of the parser, not a measurement of
+two-turn reasoning. Three follow-up PRs progressively peeled the
+masking layers; each Arm B re-run revealed the next one.
+
+PR \#36 switched fence dispatch to \texttt{```python} + a \texttt{\# MODE:
+policy|main} directive on the first non-blank line, made both seed envs
+return \texttt{(state, info)} from \texttt{reset()} (matching
+Gymnasium's \texttt{step()} 5-tuple), and updated the runner templates.
+PR \#37 added a minimal in-context example showing
+\texttt{state, \_\ = env.reset(); print(state)} in
+\texttt{\# MODE: main} followed by a no-op \texttt{\# MODE: policy} ---
+deliberately uninformative to avoid the run-5 collapse fixed point.
+PR \#38 regenerated the task JSONLs (whose embedded \texttt{env\_code}
+was a stale snapshot of the env source), which PR \#36 had not done.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Run} & \textbf{invalid} & \textbf{main} & \textbf{policy}
+  & \textbf{above floor} & \textbf{best reward} & \textbf{success} \\
+\midrule
+arm\_b\_007 (pre-fix)         & 75\%  & 0\%   & 20\%  & 0 / 60   & $-200$    & 0\% \\
+arm\_b\_008 (PR \#36)         & 0\%   & 0\%   & 100\% & 0 / 60   & $-200$    & 0\% \\
+arm\_b\_009 (PR \#37)         & 1.7\% & 27\%  & 71\%  & 0 / 60   & $-200$    & 0\% \\
+arm\_b\_010 (PR \#38, \#39)   & 0\%   & 27\%  & 73\%  & 30 / 60  & $\approx -10$ & 0\% \\
+\bottomrule
+\end{tabular}
+\caption{Arm B turn-1 mode distribution and reward stats across four
+re-runs of the same prompt template under progressive bug fixes.
+``Above floor'' counts samples whose mean reward exceeds the
+$-200$ per-scenario error penalty.}
+\end{table}
+
+\subsection*{Interpretation}
+
+The 007 ``protocol learning'' diagnosis was wrong --- or, more precisely,
+incomplete. Three independent failure modes had stacked, and only the
+outermost (parsing) was visible until the layer was peeled.
+
+\textit{Layer 1 --- 008.} With the fence protocol fixed, all 60 samples
+parsed as \texttt{mode=policy} but every sample still hit the $-200$
+floor. The new failure was state-key hallucination: every sample read
+nonexistent keys (\texttt{state['config']}, \texttt{state['hidden']},
+\texttt{state['a\_cmd']}, \texttt{EnvConfig()}) drawn from RL-codebase
+priors over the env source rather than from the \texttt{\#\# Interface}
+section. Without an example, the model had no incentive to use
+\texttt{\# MODE: main}: 0/60 probed.
+
+\textit{Layer 2 --- 009.} The in-context example moved 16/60 (27\%)
+samples into \texttt{mode=main}, but every probe crashed with
+\texttt{ValueError: too many values to unpack (expected 2, got 7)}.
+PR \#36 had updated \texttt{slosh\_tank\_env.py} on disk to return
+\texttt{(state, info)} but had not regenerated
+\texttt{slosh\_train.jsonl}, whose \texttt{env\_code} field is a verbatim
+snapshot of the env source. The model wrote
+\texttt{state, \_\ = env.reset()} as taught by the example; the
+subprocess used the old single-return env code; the unpack failed; tool
+output was \texttt{[empty output]} plus a truncated \texttt{[main
+error]}. The model never saw the real state dict, so turn 2 fell back
+to hallucinated keys. Still 0\% above floor.
+
+\textit{Layer 3 --- 010.} With the JSONLs regenerated, probes succeed
+and return real state dicts. 30/60 samples now run to completion
+above the $-200$ floor; the best mean reward is $\approx -10$ to $-12$
+across all $\kappa$. Success rate stays at 0\%, but for an entirely
+new reason: the policies that run are bad controllers, not crashed
+ones.
+
+The capacity ceiling of the frozen 3B coder is now visible. The single
+best policy at $\kappa=0.80$ reads the four-condition success criterion
+($|x-g|<0.12$, $|v|<0.12$, $|\theta|<0.07$, $|\omega|<0.18$) and
+writes:
+
+\begin{quote}\small
+\texttt{action = 0.1 * (abs(x-goal) + abs(v) + abs(theta) + abs(omega))} \\
+\texttt{action = clip(action, -1, 1)}
+\end{quote}
+
+The output is always non-negative, so the cart only pushes one
+direction regardless of which side of the goal it starts on. The model
+read ``minimise $|e|$'' as ``output is the magnitude of $e$,'' missing
+the connection to signed error in a control law. This is a reasoning
+gap, not a protocol gap.
+
+The probe is similarly shape-only. Of the 16 main-mode samples in 010,
+only 3 escape the floor. Every probe I sampled calls
+\texttt{env.reset()} and prints \texttt{state.keys()} --- the literal
+shape of the example. None probe $\kappa$ (the actual hidden parameter)
+by stepping the env with a known acceleration and observing the
+resulting velocity change. The deliberately uninformative example
+taught the format but not what probing is for, which was the predicted
+tradeoff at PR \#37.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Frozen-baseline sweep at larger / newer Qwen.} Run
+    Arm A and Arm B on \texttt{Qwen2.5-Coder-7B-Instruct} (same family
+    scale-up) and \texttt{Qwen3-4B-Instruct-2507} (newer training,
+    similar size class). Both fit a slight L4 upgrade. The aim is to
+    check whether the abs-error control bug and the shape-only probe
+    persist at higher capacity, or whether they are 3B-specific.
+  \item \textbf{First slosh GRPO run.} The gap signal is now clean
+    (Qwen-frozen $\approx -10$ best vs.\ oracle $+111$) and large. Use
+    the same config that worked for run 8 (LR $=10^{-4}$, DAPO,
+    $\beta=0$), with the V1 actuator-gain unknown.
+  \item \textbf{Make the example slightly more informative.}
+    Replace \texttt{print(state.keys())} with one canonical step
+    (\texttt{state, \_\ = env.step(1.0)}) so the model sees what
+    \texttt{step} returns and what a unit acceleration does to velocity.
+    Risk: that one step becomes a GRPO attractor.
+  \item \textbf{Add a CI guard against env/JSONL drift.} The
+    \texttt{env\_code} embedding in \texttt{slosh\_train.jsonl} silently
+    diverged from \texttt{slosh\_tank\_env.py}. A pre-commit or CI hook
+    that re-runs \texttt{build\_*\_tasks.py} and fails on diff would
+    have caught the 009 regression at PR \#36.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Will GRPO discover signed-error control without an explicit
+    demonstration? Run 8 found a velocity-tracking template on the
+    puck task without a prompt example; the slosh task is harder
+    because four conditions must settle simultaneously.
+  \item How sensitive is the result to the example's exact wording?
+    One sample in 009 (sample 7) literally copied the strings
+    ``\texttt{[Tool output from turn 1]}'' and ``\texttt{Turn 2 ---
+    final \# MODE: policy:}'' into its own response, suggesting the
+    template-style framing of the example is read as a transcript to
+    fill in rather than a pattern. The 010 logs do not show the same
+    issue at scale, but the framing remains a candidate for
+    simplification.
+  \item Does the abs-error control bug reproduce on \texttt{Qwen3-4B}
+    or does it lift? If it lifts, the slosh study needs to consider
+    the model size as a controlled variable.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{8943cbd}:
+
+\begin{verbatim}
+bash scripts/gcp_find_gpu_and_eval.sh arm_b_010 --wait \
+  -- --turns 2 --n-samples 20 --n-seeds 50
+\end{verbatim}
+
+Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_b\_010/arm\_b\_010/}.
+Earlier intermediate runs at \texttt{arm\_b\_008/} and \texttt{arm\_b\_009/}.
+Relevant PRs: \#36 (fence protocol + Gymnasium reset), \#37 (in-context
+example), \#38 (JSONL regen), \#39 (auto-confirm VM teardown).
+
 \end{document}
