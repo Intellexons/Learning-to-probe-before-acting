@@ -9,6 +9,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
+# A valid HuggingFace repo id is exactly "<org>/<name>" — two dot/hyphen/word
+# segments separated by a single slash. This intentionally excludes nested
+# paths like "models/hf_base/iter_000" (three segments) so a typo in a
+# local path doesn't silently fall through to a (failing) HF download.
+_HF_REPO_ID_RE = re.compile(r"^[\w][\w.-]*/[\w][\w.-]*$")
+
 
 def load_model_for_generation(
     base_model_path: str,
@@ -18,17 +24,26 @@ def load_model_for_generation(
 ) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
     """Load base model and merge all LoRA adapters up to iter_num.
 
+    `base_model_path` may be either a local checkpoint directory or an HF
+    repo id of the form "<org>/<name>" (e.g. "Qwen/Qwen3-4B-Instruct-2507");
+    in the latter case `from_pretrained` downloads + caches via the HF hub.
+
     For iter 0, loads just the base model.
     For iter N, loads base and merges adapters 0..N-1.
     """
     from pathlib import Path
 
-    # Check base model exists
     base_path = Path(base_model_path)
-    if not base_path.exists() or not any(base_path.iterdir()):
+    is_local_checkpoint = base_path.is_dir() and any(base_path.iterdir())
+    looks_like_repo_id = bool(_HF_REPO_ID_RE.match(base_model_path))
+
+    if not is_local_checkpoint and not looks_like_repo_id:
         raise FileNotFoundError(
-            f"Base model not found at {base_model_path}. "
-            f"Run 'bash scripts/00_setup_env.sh' to download it."
+            f"Base model not found at {base_model_path}, and the value does "
+            f"not match the HF repo-id pattern '<org>/<name>'. "
+            f"Either run 'bash scripts/00_setup_env.sh' to download a local "
+            f"checkpoint, or pass an HF repo id (e.g. "
+            f"'Qwen/Qwen3-4B-Instruct-2507')."
         )
 
     use_mps = torch.backends.mps.is_available()
