@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 _SEED_TASKS_DIR = Path(__file__).resolve().parent / "seed_tasks"
 sys.path.insert(0, str(_SEED_TASKS_DIR))
 
-from src.hf_generator import load_model_for_generation, generate_code
+from src.hf_generator import load_model_for_generation, generate_code, generate_code_from_messages
 from src.prompts import load_template, render_prompt
 from src.runner import validate_code, run_main_in_subprocess, extract_code_with_mode, ERROR_PENALTY_PER_SCENARIO
 from src.dataset import load_jsonl
@@ -153,41 +153,51 @@ def generate_two_turn(
     task: dict, template: str,
     temperature: float, max_tokens: int,
 ) -> dict:
-    """Generate a two-turn (main + policy) rollout. Returns dict with code, success, error."""
-    # Turn 1: main (scratchpad)
+    """Generate a two-turn (main + policy) rollout using proper chat history.
+
+    Passes the full conversation — user turn 1, assistant turn 1, user turn 2 —
+    to apply_chat_template so the model sees its own prior response in context.
+    """
     prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
-    t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature, max_tokens=max_tokens)
+
+    # Turn 1
+    t1 = generate_code_from_messages(
+        model, tokenizer,
+        messages=[{"role": "user", "content": prompt_t1}],
+        temperature=temperature, max_tokens=max_tokens,
+    )
     if not t1["success"]:
         return {"code": "", "success": False, "error": f"turn1: {t1['error']}", "t1_raw": ""}
 
     t1_mode, t1_code = extract_code_with_mode(t1["raw_response"])
     if t1_mode == "policy":
-        # Model jumped straight to policy on turn 1 — accept it
         is_valid, err = validate_code(t1_code)
         if is_valid:
             return {"code": t1_code, "success": True, "error": None, "t1_raw": t1["raw_response"]}
 
-    # Execute turn 1 (main) in sandbox and feed stdout back
+    # Execute turn 1 main in sandbox
     if t1_mode == "main":
         main_result = run_main_in_subprocess(t1_code)
         tool_output = main_result["stdout"] or "[empty output]"
     else:
         tool_output = "[turn 1 produced no recognized code block]"
 
-    # Turn 2: policy
-    prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
-    # Append the turn-1 exchange to the prompt as context
-    t2_context = (
-        prompt_t2
-        + f"\n\n[Turn 1 output]\n{tool_output}\n"
+    # Turn 2: full chat history so the model sees its own turn-1 response
+    t2 = generate_code_from_messages(
+        model, tokenizer,
+        messages=[
+            {"role": "user",      "content": prompt_t1},
+            {"role": "assistant", "content": t1["raw_response"]},
+            {"role": "user",      "content": f"[Turn 1 output]\n{tool_output}"},
+        ],
+        temperature=temperature, max_tokens=max_tokens,
     )
-    t2 = generate_code(model, tokenizer, t2_context, temperature=temperature, max_tokens=max_tokens)
     if not t2["success"]:
         return {"code": "", "success": False, "error": f"turn2: {t2['error']}", "t1_raw": t1["raw_response"]}
 
     _, t2_code = extract_code_with_mode(t2["raw_response"])
     if not t2_code:
-        t2_code = t2["code"]  # fallback to raw extract
+        t2_code = t2["code"]
     is_valid, err = validate_code(t2_code)
     if not is_valid:
         return {"code": t2_code, "success": False, "error": err, "t1_raw": t1["raw_response"]}
@@ -254,7 +264,7 @@ def main():
             for kappa in KAPPAS:
                 kappa_successes[kappa].append(0.0)
                 kappa_rewards[kappa].append(0.0)
-            per_sample_results.append({"sample_id": i, "valid": False, "per_kappa": {}})
+            per_sample_results.append({"sample_id": i, "valid": False, "per_kappa": {}, "error": sample.get("error", "")})
             continue
 
         logger.info(f"Evaluating sample {i+1}/{args.n_samples} × {len(KAPPAS)} κ × {args.n_seeds} seeds")
