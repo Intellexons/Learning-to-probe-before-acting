@@ -907,4 +907,74 @@ saves \texttt{docs/slosh\_gain\_sweep.png}. Env source:
     is the primary diagnostic.
 \end{enumerate}
 
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Arm A: frozen one-shot Qwen2.5-Coder-3B baseline}
+
+\textit{Branch \texttt{main}; scripts \texttt{scripts/eval\_frozen\_baseline.py},
+\texttt{scripts/gcp\_find\_gpu\_and\_eval.sh}.
+Run: \texttt{arm\_a\_001}, 20 samples, 50 seeds, L4 GPU.}
+
+\subsection*{Setup}
+
+Base Qwen2.5-Coder-3B-Instruct (no LoRA), single-turn prompt
+(\texttt{total\_turns=1}), temperature 0.8.
+Each of the 20 sampled policies is evaluated at each of the three V1 actuator
+gain values $\kappa \in \{0.65, 0.80, 1.00\}$ over 50 seeds with $\kappa$
+held fixed per episode.
+Crashed policies (runtime exception, subprocess error, or timeout) are scored
+at \texttt{ERROR\_PENALTY\_PER\_SCENARIO} $= -200$ to match the GRPO training
+signal (same constant, imported from \texttt{src/runner.py}).
+Reference curves (blind PD, oracle) computed over the same 50 seeds.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\caption{Arm A: frozen one-shot Qwen vs.\ reference policies.
+Mean reward averaged over 20 generated policies $\times$ 50 seeds;
+max reward is the best mean reward achieved by any single generated policy.
+Oracle scales PD gains by $1/\kappa$; blind uses nominal gains regardless of $\kappa$.}
+\begin{tabular}{ccccc}
+\hline
+$\kappa$ & Qwen 1-shot (mean) & Qwen 1-shot (max) & Blind PD & Oracle PD \\
+\hline
+0.65 & $-112.0$ & $-12.1$ & $-9.6$  & $111.2$ \\
+0.80 & $-111.9$ & $-12.1$ & $45.9$  & $111.4$ \\
+1.00 & $-111.9$ & $-12.1$ & $111.5$ & $111.5$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection*{Interpretation}
+
+\begin{itemize}[nosep]
+  \item \textbf{Zero success rate across all $\kappa$.} Not a single generated
+    policy achieves the simultaneous tolerance conditions over 50 seeds at any
+    gain value, including $\kappa = 1.00$ where the blind PD achieves 100\%.
+  \item \textbf{Two failure modes.} Approximately 8/20 policies crash at
+    runtime (hallucinated state keys such as \texttt{state["config"]};
+    scored at $-200$). The remaining 12/20 run but produce wrong control
+    (reversed-sign bang-bang, pendulum dynamics used as a control law);
+    their mean reward $\approx -12$ to $-16$.
+  \item \textbf{Best single policy: $-12.1$ at all $\kappa$.}
+    Even the best generated policy scores well below blind PD at
+    $\kappa = 0.80$ ($+45.9$) and $\kappa = 1.00$ ($+111.5$).
+  \item \textbf{Gap to oracle: $\approx 223$ reward points}
+    (mean Qwen $-112$ vs.\ oracle $+111$). This is the training signal
+    available to GRPO and is large enough to provide a clear learning gradient.
+  \item \textbf{$\kappa$-invariant Qwen reward.} Flat mean and max across all
+    three $\kappa$ values confirms the model has no awareness of the hidden
+    gain --- it produces the same broken policies regardless of $\kappa$.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+\begin{verbatim}
+bash scripts/gcp_find_gpu_and_eval.sh arm_a_001 --wait \
+  -- --turns 1 --n-samples 20 --n-seeds 50
+\end{verbatim}
+
+Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_a\_001/arm\_a\_001/}.
+Crash penalty fix: PR \#27.
+
 \end{document}
