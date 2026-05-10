@@ -145,6 +145,63 @@ def generate_code(
         }
 
 
+def generate_code_from_messages(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    messages: list[dict],
+    temperature: float = 0.8,
+    top_p: float = 0.95,
+    max_tokens: int = 900,
+) -> dict:
+    """Generate a single code sample from a full message history.
+
+    Accepts a list of {"role": ..., "content": ...} dicts so multi-turn
+    callers can pass the complete conversation rather than a single prompt.
+    Returns the same dict shape as generate_code.
+    """
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+
+    try:
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+        response = tokenizer.decode(
+            output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True
+        )
+        code = extract_code(response)
+
+        if not code:
+            return {
+                "code": "",
+                "success": False,
+                "error": "Empty code extracted from response",
+                "raw_response": response,
+            }
+        return {
+            "code": code,
+            "success": True,
+            "error": None,
+            "raw_response": response,
+        }
+    except Exception as e:
+        return {
+            "code": "",
+            "success": False,
+            "error": f"Generation failed: {e}",
+            "raw_response": "",
+        }
+
+
 def generate_batch(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
