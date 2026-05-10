@@ -45,7 +45,7 @@ DEFAULT_ENV_CLASS = "CartPoleEnv"
 
 # Recognized fence language tags for multi-turn dispatch. Anything else (or
 # no fence at all) is treated as `mode = "invalid"` and rejected at the floor.
-_FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```", re.DOTALL)
+_FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```(?!\w)", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
