@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.12.11)  10 MAY 2026 16:11
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.12.11)  10 MAY 2026 18:47
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -708,8 +708,34 @@ e runs at \OT1/cmtt/m/n/10.95 arm[]b[]008/
  []
 
 
+Overfull \hbox (6.066pt too wide) in paragraph at lines 1265--1279
+\OT1/cmr/m/n/10.95 (-20) The previous-entry anal-y-sis iden-ti-fied two fail-ur
+e modes in the frozen \OT1/cmtt/m/n/10.95 Qwen2.5-Coder-3B-Instruct
+ []
 
-[19] (./findings.aux)
+
+Overfull \hbox (37.9106pt too wide) in paragraph at lines 1265--1279
+\OT1/cmr/m/n/10.95 (-20) base-line that were not load-bearing to the re-search 
+ques-tion: (i) state-key hal-lu-ci-na-tion (\OT1/cmtt/m/n/10.95 state['config']
+\OT1/cmr/m/n/10.95 (-20) ,
+ []
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+
+[19]
+Overfull \hbox (13.72491pt too wide) in paragraph at lines 1328--1333
+[]\OT1/cmr/m/n/10.95 (-20) The de-ci-sion is to re-tire the Qwen2.5 fam-ily fro
+m the study and pro-ceed on \OT1/cmtt/m/n/10.95 Qwen3-4B-Instruct-2507
+ []
+
+
+
+[20]
+
+[21] (./findings.aux)
  ***********
 LaTeX2e <2024-11-01> patch level 2
 L3 programming layer <2025-01-18>
@@ -725,11 +751,11 @@ Package rerunfilecheck Info: File `findings.out' has not changed.
 (rerunfilecheck)             Checksum: D41D8CD98F00B204E9800998ECF8427E;0.
  ) 
 Here is how much of TeX's memory you used:
- 13112 strings out of 473190
- 204111 string characters out of 5715799
+ 13126 strings out of 473190
+ 204219 string characters out of 5715799
  662878 words of memory out of 5000000
  35954 multiletter control sequences out of 15000+600000
- 575738 words of font info for 179 fonts, out of 8000000 for 9000
+ 576016 words of font info for 183 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  75i,9n,79p,1197b,627s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
@@ -749,10 +775,10 @@ e/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/
 2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texlive/2
 025/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></usr/local/texlive/20
 25/texmf-dist/fonts/type1/public/cm-super/sfrm1095.pfb>
-Output written on findings.pdf (19 pages, 684658 bytes).
+Output written on findings.pdf (21 pages, 693006 bytes).
 PDF statistics:
- 236 PDF objects out of 1000 (max. 8388607)
- 173 compressed objects within 2 object streams
- 60 named destinations out of 1000 (max. 500000)
+ 249 PDF objects out of 1000 (max. 8388607)
+ 184 compressed objects within 2 object streams
+ 66 named destinations out of 1000 (max. 500000)
  50704 words of extra memory for PDF output out of 51595 (max. 10000000)
 

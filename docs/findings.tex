@@ -1253,4 +1253,127 @@ Earlier intermediate runs at \texttt{arm\_b\_008/} and \texttt{arm\_b\_009/}.
 Relevant PRs: \#36 (fence protocol + Gymnasium reset), \#37 (in-context
 example), \#38 (JSONL regen), \#39 (auto-confirm VM teardown).
 
+% ---------------------------------------------------------------------------
+\section*{2026-05-10 \quad Switching base model to Qwen3-4B-Instruct-2507;
+Arm A confirms the swap is worth it}
+
+\commit{fd15c1f} $\cdot$ \textit{arm\_a\_qwen3\_4b\_001, frozen baseline,
+20 samples, 50 seeds}
+
+\subsection*{Setup}
+
+The previous-entry analysis identified two failure modes in the frozen
+\texttt{Qwen2.5-Coder-3B-Instruct} baseline that were not load-bearing
+to the research question: (i) state-key hallucination
+(\texttt{state['config']}, \texttt{state['hidden']},
+\texttt{EnvConfig()}) drawn from RL-codebase priors over the env source,
+and (ii) shape-only probing in Arm B. For paper legitimacy a base model
+that does not pre-trip on these specific artefacts was needed; the
+\texttt{Qwen} family's next major version, \texttt{Qwen3-4B-Instruct-2507}
+(August 2025 refresh), is the closest dense same-class candidate
+(4B vs 3B; no 3B exists in Qwen3 dense). PR \#41 widened
+\texttt{load\_model\_for\_generation} to accept HF repo ids so the swap
+became a single \texttt{--model-path} flag with no setup-script edits.
+Run \texttt{arm\_a\_qwen3\_4b\_001} re-runs the Arm A protocol from the
+earlier baseline entry on the new model.
+
+\subsection*{Results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Metric} & \textbf{Qwen2.5-Coder-3B} & \textbf{Qwen3-4B-Instruct-2507} \\
+                & (\texttt{arm\_a\_001}) & (\texttt{arm\_a\_qwen3\_4b\_001}) \\
+\midrule
+Valid samples (no crash)                  & 12 / 20      & \textbf{20 / 20} \\
+State-key hallucination crashes           & $\approx 8 / 20$ & \textbf{0} \\
+Mean reward, $\kappa = 0.65$              & $-112$       & $-76$ (median) \\
+Mean reward, $\kappa = 0.80$              & $-112$       & $-87$ \\
+Mean reward, $\kappa = 1.00$              & $-112$       & $-86$ \\
+Best single-sample reward (any $\kappa$)  & $-12.1$      & $-11.7$ \\
+Success rate, $\kappa = 0.65$             & 0\%          & 0\% \\
+Success rate, $\kappa = 0.80$             & 0\%          & \textbf{0.5\%} \\
+Success rate, $\kappa = 1.00$             & 0\%          & \textbf{0.7\%} \\
+\bottomrule
+\end{tabular}
+\caption{Frozen Arm A: same prompt, same eval scenarios (20 generated
+policies $\times$ 50 seeds at each of three $\kappa$ values).}
+\end{table}
+
+\subsection*{Interpretation}
+
+Three things shifted, with two clearly load-bearing for the study.
+
+\textit{State-key hallucination is gone.} Every one of 20 sampled
+policies reads only the documented state keys
+($t,\ x,\ v,\ \theta,\ \omega,\ goal,\ steps\_left$). The
+\texttt{state['config']}/\texttt{EnvConfig()} pattern that produced
+$\approx 40\%$ of the Qwen2.5 Arm A failures and dominated the previous
+Arm B re-runs does not reproduce on the new model.
+
+\textit{First non-zero successes appear in single-turn.} 1/20 samples
+at $\kappa = 1.00$ and 1/20 at $\kappa = 0.80$ produced occasional
+goal-and-settle episodes (1 success per 50 seeds = 0.7\% / 0.5\%
+respectively). The previous baseline had 0\% across all $\kappa$,
+reflecting a hard wall that the new model crosses without any prompt
+or training change.
+
+\textit{Mean reward improves by $25$--$36$ points.} Median per-sample
+mean reward shifts from $-112$ to roughly $-86$. The gain is broad
+(every sample now runs to completion above the $-200$ floor) rather
+than concentrated in a few stronger samples; the best single-sample
+reward changes only from $-12.1$ to $-11.7$.
+
+The decision is to retire the Qwen2.5 family from the study and
+proceed on \texttt{Qwen3-4B-Instruct-2507} as the base model going
+forward. The 4B vs 3B size delta is the only visible confound; it is
+small enough to be acceptable and is acknowledged here for the paper
+write-up.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Run Arm B (\texttt{arm\_b\_qwen3\_4b\_001}).} The same
+    protocol on two turns. Open question: does the model use
+    \texttt{\# MODE: main} more readily than the previous baseline (which
+    sat at 27\%), and does the probe content move beyond
+    \texttt{print(state.keys())}?
+  \item \textbf{First slosh GRPO run on the new base.} The frozen
+    baseline's success rate ($\leq 0.7$\%) leaves a clean and large gap
+    to the oracle ($100$\%) for GRPO to amplify, with the previous
+    state-key-hallucination distraction removed.
+  \item \textbf{Update the eval pipeline default} from
+    \texttt{models/hf\_base/iter\_000} to either pre-cache
+    \texttt{Qwen3-4B-Instruct-2507} or document the new
+    \texttt{--model-path} flag in onboarding.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Does the abs-error control bug (sum of absolute errors as the
+    output, identified in the previous entry) reproduce on the new
+    base? The mean-reward improvement is consistent with the bug
+    persisting but being partly compensated by other factors; the new
+    samples need direct inspection.
+  \item How much of the gain is attributable to the parameter-count
+    increase ($3 \to 4$\,B, $+33$\%) vs.\ the family/training change?
+    Within scope to flag for paper reviewers, but a Qwen2.5-Coder-7B
+    control run is not currently planned.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{fd15c1f}:
+
+\begin{verbatim}
+bash scripts/gcp_find_gpu_and_eval.sh arm_a_qwen3_4b_001 --wait \
+  -- --turns 1 --n-samples 20 --n-seeds 50 \
+     --model-path Qwen/Qwen3-4B-Instruct-2507
+\end{verbatim}
+
+Results: \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_a\_qwen3\_4b\_001/}.
+HF-repo-id support: PR \#41.
+
 \end{document}
