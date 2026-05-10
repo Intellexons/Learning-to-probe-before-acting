@@ -9,11 +9,16 @@ echo "=== 1/3 Installing dependencies with uv ==="
 uv sync
 
 echo "=== 2/3 Downloading HF model + tokenizer ==="
+# Override which base model gets cached at models/hf_base/iter_000 by setting
+# LORA4VR_BASE_MODEL before invoking. Default is Qwen3-4B-Instruct-2507, the
+# study's frozen-baseline-validated model (see docs/findings.tex 2026-05-10).
+BASE_MODEL="${LORA4VR_BASE_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+echo "  base model: $BASE_MODEL"
 uv run python -c "
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
-model_id = 'Qwen/Qwen2.5-Coder-3B-Instruct'
+model_id = '$BASE_MODEL'
 save_path = 'models/hf_base/iter_000'
 
 print('Downloading tokenizer...')
