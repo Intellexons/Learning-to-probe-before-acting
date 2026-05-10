@@ -42,6 +42,13 @@ scoring:
   timeout_seconds: 30
   max_steps: 500
 
+# End-of-iteration eval (scripts/08_eval.py). Multi-turn rollouts match
+# the training protocol so the W&B reward curve reflects what the trainer
+# is actually optimising. The last `# MODE: policy` block in the rollout
+# is the one scored; final-turn `# MODE: main` is rejected.
+eval:
+  n_turns: 2
+
 training:
   learning_rate: 1.0e-4
   per_device_train_batch_size: 16    # = g1 * g2 — one prompt's worth of trajectories per step

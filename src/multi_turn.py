@@ -30,6 +30,7 @@ import statistics
 from dataclasses import dataclass
 
 from src.runner import (
+    DEFAULT_ENV_CLASS,
     DEFAULT_MAX_STEPS,
     ERROR_PENALTY_PER_SCENARIO,
     MAIN_DEFAULT_TIMEOUT,
