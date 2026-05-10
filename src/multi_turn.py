@@ -114,6 +114,7 @@ def execute_turn(
     task: dict,
     *,
     is_last_turn: bool,
+    scenario: dict | None = None,
     timeout_policy: int = POLICY_DEFAULT_TIMEOUT,
     timeout_main: int = MAIN_DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
@@ -148,7 +149,15 @@ def execute_turn(
         _, text = _score_policy(code, task, timeout_policy, max_steps)
         return ToolResult(mode=MODE_POLICY, reward=None, text=text)
     if mode == MODE_MAIN:
-        out = score_main_turn(code, timeout=timeout_main)
+        cal = scenario or (task.get("scenarios") or [{}])[0]
+        out = score_main_turn(
+            code,
+            env_code=task.get("env_code", ""),
+            kappa=cal.get("kappa", 1.0),
+            seed=cal.get("seed", 0),
+            env_class=task.get("env_class", DEFAULT_ENV_CLASS),
+            timeout=timeout_main,
+        )
         return ToolResult(mode=MODE_MAIN, reward=None, text=_main_tool_text(out["stdout"]))
     return ToolResult(mode=MODE_INVALID, reward=floor, text=_INTERMEDIATE_INVALID_TEXT)
 

@@ -40,9 +40,14 @@ class EnvConfig:
 
 class SloshTankEnv:
     def __init__(self, seed=0, hidden=None, config=None):
+        if hidden is None:
+            raise ValueError(
+                "hidden must be specified explicitly. "
+                "Use HiddenParams(actuator_gain=k) or SloshTankEnv.sample_hidden(rng)."
+            )
         self.rng = random.Random(seed)
         self.config = config or EnvConfig()
-        self.hidden = hidden or self.sample_hidden(self.rng)
+        self.hidden = hidden
         self.reset(seed=seed)
 
     @staticmethod

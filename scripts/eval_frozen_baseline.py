@@ -151,10 +151,17 @@ def generate_one_shot(model, tokenizer, prompt: str, temperature: float, max_tok
 def generate_two_turn(
     model, tokenizer,
     task: dict, template: str,
+    kappa: float,
+    calibration_seed: int,
     temperature: float, max_tokens: int,
 ) -> dict:
-    """Generate a two-turn (main + policy) rollout. Returns dict with code, success, error."""
-    # Turn 1: main (scratchpad)
+    """Generate a two-turn (main + policy) rollout calibrated to a specific kappa.
+
+    Turn 1 (main): model receives the task prompt with env source and a
+    pre-instantiated `env` object (same kappa/seed as evaluation) to run
+    calibration experiments. Stdout is fed back as the tool result.
+    Turn 2 (policy): model writes a policy informed by the calibration.
+    """
     prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
     t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature, max_tokens=max_tokens)
     if not t1["success"]:
@@ -162,19 +169,22 @@ def generate_two_turn(
 
     t1_mode, t1_code = extract_code_with_mode(t1["raw_response"])
     if t1_mode == "policy":
-        # Model jumped straight to policy on turn 1 — accept it
         is_valid, err = validate_code(t1_code)
         if is_valid:
-            return {"code": t1_code, "success": True, "error": None, "t1_raw": t1["raw_response"]}
+            return {"code": t1_code, "success": True, "error": None, "t1_raw": t1["raw_response"], "t1_mode": "policy"}
 
-    # Execute turn 1 (main) in sandbox and feed stdout back
     if t1_mode == "main":
-        main_result = run_main_in_subprocess(t1_code)
+        main_result = run_main_in_subprocess(
+            t1_code,
+            env_code=task["env_code"],
+            kappa=kappa,
+            seed=calibration_seed,
+            env_class=task.get("env_class", "SloshTankEnv"),
+        )
         tool_output = main_result["stdout"] or "[empty output]"
     else:
         tool_output = "[turn 1 produced no recognized code block]"
 
-    # Turn 2: policy — send full chat history so model sees its own turn-1 response
     prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
     t2_messages = [
         {"role": "user", "content": prompt_t1},
@@ -183,15 +193,15 @@ def generate_two_turn(
     ]
     t2 = generate_code_from_messages(model, tokenizer, t2_messages, temperature=temperature, max_tokens=max_tokens)
     if not t2["success"]:
-        return {"code": "", "success": False, "error": f"turn2: {t2['error']}", "t1_raw": t1["raw_response"]}
+        return {"code": "", "success": False, "error": f"turn2: {t2['error']}", "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
 
     _, t2_code = extract_code_with_mode(t2["raw_response"])
     if not t2_code:
-        t2_code = t2["code"]  # fallback to raw extract
+        t2_code = t2["code"]
     is_valid, err = validate_code(t2_code)
     if not is_valid:
-        return {"code": t2_code, "success": False, "error": err, "t1_raw": t1["raw_response"]}
-    return {"code": t2_code, "success": True, "error": None, "t1_raw": t1["raw_response"]}
+        return {"code": t2_code, "success": False, "error": err, "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
+    return {"code": t2_code, "success": True, "error": None, "t1_raw": t1["raw_response"], "t1_mode": t1_mode}
 
 
 def main():
@@ -225,61 +235,94 @@ def main():
         iter_num=0,
     )
 
-    # Generate policies
-    samples = []
-    for i in range(args.n_samples):
-        logger.info(f"Generating sample {i+1}/{args.n_samples} (arm {arm_label})")
-        if args.turns == 1:
-            prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
-            sample = generate_one_shot(model, tokenizer, prompt, args.temperature, args.max_tokens)
-        else:
-            sample = generate_two_turn(model, tokenizer, task, template, args.temperature, args.max_tokens)
-        samples.append(sample)
-        if not sample["success"]:
-            logger.warning(f"  Sample {i+1} failed: {sample['error']}")
-
     # Compute reference rates once
     logger.info(f"Computing blind/oracle reference rates over {args.n_seeds} seeds...")
     blind_rates, oracle_rates = compute_reference_rates(eval_seeds)
     for kappa in KAPPAS:
         logger.info(f"  κ={kappa:.2f}  blind={blind_rates[kappa]*100:.1f}%  oracle={oracle_rates[kappa]*100:.1f}%")
 
-    # Evaluate each sample
+    # For arm B: generate n_samples per kappa, each calibrated to that kappa.
+    # For arm A: generate n_samples once and evaluate across all kappas.
     kappa_successes = {k: [] for k in KAPPAS}
     kappa_rewards = {k: [] for k in KAPPAS}
     per_sample_results = []
 
-    for i, sample in enumerate(samples):
-        if not sample["success"] or not sample.get("code"):
-            for kappa in KAPPAS:
-                kappa_successes[kappa].append(0.0)
-                kappa_rewards[kappa].append(0.0)
-            per_sample_results.append({
-                "sample_id": i,
-                "valid": False,
-                "error": sample.get("error"),
-                "t1_raw": sample.get("t1_raw", ""),
-                "per_kappa": {},
-            })
-            continue
+    if args.turns == 1:
+        prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
+        samples = []
+        for i in range(args.n_samples):
+            logger.info(f"Generating sample {i+1}/{args.n_samples} (arm A)")
+            sample = generate_one_shot(model, tokenizer, prompt, args.temperature, args.max_tokens)
+            samples.append(sample)
+            if not sample["success"]:
+                logger.warning(f"  Sample {i+1} failed: {sample['error']}")
 
-        logger.info(f"Evaluating sample {i+1}/{args.n_samples} × {len(KAPPAS)} κ × {args.n_seeds} seeds")
-        per_kappa = eval_policy(sample["code"], env_code, eval_seeds)
+        for i, sample in enumerate(samples):
+            if not sample["success"] or not sample.get("code"):
+                for kappa in KAPPAS:
+                    kappa_successes[kappa].append(0.0)
+                    kappa_rewards[kappa].append(0.0)
+                per_sample_results.append({
+                    "sample_id": i, "kappa": None, "valid": False,
+                    "error": sample.get("error"), "t1_raw": "", "per_kappa": {},
+                })
+                continue
+            logger.info(f"Evaluating sample {i+1}/{args.n_samples} × {len(KAPPAS)} κ × {args.n_seeds} seeds")
+            per_kappa = eval_policy(sample["code"], env_code, eval_seeds)
+            for kappa in KAPPAS:
+                kappa_successes[kappa].append(per_kappa[kappa]["success_rate"])
+                kappa_rewards[kappa].append(per_kappa[kappa]["mean_reward"])
+            per_sample_results.append({
+                "sample_id": i, "kappa": None, "valid": True,
+                "code": sample["code"], "t1_raw": "",
+                "per_kappa": {str(k): v for k, v in per_kappa.items()},
+            })
+            logger.info("  " + "  ".join(
+                f"κ={k:.2f}:{per_kappa[k]['success_rate']*100:.1f}%" for k in KAPPAS))
+    else:
+        # Arm B: one generation batch per kappa, calibrated to that kappa
+        sample_idx = 0
         for kappa in KAPPAS:
-            kappa_successes[kappa].append(per_kappa[kappa]["success_rate"])
-            kappa_rewards[kappa].append(per_kappa[kappa]["mean_reward"])
-        per_sample_results.append({
-            "sample_id": i,
-            "valid": True,
-            "code": sample["code"],
-            "t1_raw": sample.get("t1_raw", ""),
-            "per_kappa": {str(k): v for k, v in per_kappa.items()},
-        })
-        logger.info(
-            f"  κ=0.65:{per_kappa[0.65]['success_rate']*100:5.1f}%  "
-            f"κ=0.80:{per_kappa[0.80]['success_rate']*100:5.1f}%  "
-            f"κ=1.00:{per_kappa[1.00]['success_rate']*100:5.1f}%"
-        )
+            for i in range(args.n_samples):
+                logger.info(f"Generating κ={kappa:.2f} sample {i+1}/{args.n_samples} (arm B, cal_seed={i})")
+                sample = generate_two_turn(
+                    model, tokenizer, task, template,
+                    kappa=kappa, calibration_seed=i,
+                    temperature=args.temperature, max_tokens=args.max_tokens,
+                )
+                if not sample["success"]:
+                    logger.warning(f"  Failed: {sample['error']}")
+                    kappa_successes[kappa].append(0.0)
+                    kappa_rewards[kappa].append(0.0)
+                    per_sample_results.append({
+                        "sample_id": sample_idx, "kappa": kappa, "valid": False,
+                        "error": sample.get("error"),
+                        "t1_raw": sample.get("t1_raw", ""),
+                        "t1_mode": sample.get("t1_mode", ""),
+                        "per_kappa": {},
+                    })
+                else:
+                    result = _run_at_kappa(sample["code"], env_code, seed=0, kappa=kappa)
+                    # Evaluate across all n_seeds
+                    successes, rewards = 0, []
+                    for seed in eval_seeds:
+                        r = _run_at_kappa(sample["code"], env_code, seed=seed, kappa=kappa)
+                        successes += int(r.get("success", False))
+                        rewards.append(r.get("reward", 0.0))
+                    sr = successes / len(eval_seeds)
+                    mr = sum(rewards) / len(rewards)
+                    kappa_successes[kappa].append(sr)
+                    kappa_rewards[kappa].append(mr)
+                    per_sample_results.append({
+                        "sample_id": sample_idx, "kappa": kappa, "valid": True,
+                        "code": sample["code"],
+                        "t1_raw": sample.get("t1_raw", ""),
+                        "t1_mode": sample.get("t1_mode", ""),
+                        "success_rate": sr, "mean_reward": mr,
+                        "per_kappa": {str(kappa): {"success_rate": sr, "mean_reward": mr}},
+                    })
+                    logger.info(f"  κ={kappa:.2f}: success={sr*100:.1f}%  reward={mr:.1f}")
+                sample_idx += 1
 
     qwen_rates = {
         k: (sum(kappa_successes[k]) / len(kappa_successes[k]) if kappa_successes[k] else 0.0)
