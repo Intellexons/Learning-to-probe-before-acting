@@ -158,7 +158,7 @@ def generate_two_turn(
     prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
     t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature, max_tokens=max_tokens)
     if not t1["success"]:
-        return {"code": "", "success": False, "error": f"turn1: {t1['error']}", "t1_raw": ""}
+        return {"code": "", "success": False, "error": f"turn1: {t1['error']}", "t1_raw": t1["raw_response"]}
 
     t1_mode, t1_code = extract_code_with_mode(t1["raw_response"])
     if t1_mode == "policy":
@@ -254,7 +254,13 @@ def main():
             for kappa in KAPPAS:
                 kappa_successes[kappa].append(0.0)
                 kappa_rewards[kappa].append(0.0)
-            per_sample_results.append({"sample_id": i, "valid": False, "per_kappa": {}})
+            per_sample_results.append({
+                "sample_id": i,
+                "valid": False,
+                "error": sample.get("error"),
+                "t1_raw": sample.get("t1_raw", ""),
+                "per_kappa": {},
+            })
             continue
 
         logger.info(f"Evaluating sample {i+1}/{args.n_samples} × {len(KAPPAS)} κ × {args.n_seeds} seeds")
@@ -266,6 +272,7 @@ def main():
             "sample_id": i,
             "valid": True,
             "code": sample["code"],
+            "t1_raw": sample.get("t1_raw", ""),
             "per_kappa": {str(k): v for k, v in per_kappa.items()},
         })
         logger.info(

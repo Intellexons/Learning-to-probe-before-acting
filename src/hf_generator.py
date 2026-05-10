@@ -78,8 +78,8 @@ def extract_code(text: str) -> str:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Try fenced code block
-    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
+    # Try fenced code block (any tag: python, policy, main, or bare)
+    m = re.search(r"```\w*\s*\n(.*?)```", text, re.DOTALL)
     if m:
         return m.group(1).strip()
 
