@@ -44,6 +44,47 @@ The final turn (turn {total_turns}) MUST start with `# MODE: policy`; a `main` f
 """
 
 
+def _build_multi_turn_example(turn_idx: int, total_turns: int) -> str:
+    """A minimal format-demonstration example for multi-turn prompts.
+
+    Goals:
+      1. Show the model that `# MODE: main` lets it call `env.reset()` and
+         read the actual state dict, before committing to a policy.
+      2. Reinforce the (state, info) reset signature.
+      3. Avoid prescribing a control law (the policy body is `return 0.0`),
+         so GRPO is not anchored to a memorised fixed point.
+
+    Rendered only on the FIRST turn — the chat history carries it forward
+    on later turns, so re-emitting wastes tokens on every continuation.
+    Empty for single-turn — the section only makes sense when `# MODE: main`
+    is available.
+    """
+    if total_turns <= 1 or turn_idx != 1:
+        return ""
+    return f"""## Example (format demonstration; not a useful controller)
+
+Turn 1 — probe with `# MODE: main`:
+```python
+# MODE: main
+# `env` is pre-instantiated with the same hidden params as the turn-{total_turns} evaluation.
+state, _ = env.reset()
+print("state keys:", sorted(state.keys()))
+print("initial state:", state)
+```
+
+[Tool output from turn 1]
+(stdout from your code is returned here as the next user message)
+
+Turn {total_turns} — final `# MODE: policy`:
+```python
+# MODE: policy
+def policy(state):
+    # Only read the state keys listed in `## Interface` above.
+    return 0.0  # replace with your control logic
+```
+"""
+
+
 def _build_response_format(turn_idx: int, total_turns: int) -> str:
     """Build the `## Response Format` section that closes the prompt.
 
@@ -125,6 +166,7 @@ def render_prompt(
         action_spec=task["action_spec"],
         goal=task["goal"],
         multi_turn_protocol=_build_multi_turn_protocol(turn_idx, total_turns),
+        multi_turn_example=_build_multi_turn_example(turn_idx, total_turns),
         requirements=_build_requirements(turn_idx, total_turns),
         response_format=_build_response_format(turn_idx, total_turns),
     )

@@ -105,3 +105,39 @@ def test_task_fields_are_substituted():
     assert "class FakeEnv: pass" in rendered
     assert "drive the puck to the goal." in rendered
     assert "(ax, ay) — 2-tuple of floats" in rendered
+
+
+def test_single_turn_prompt_has_no_example_section():
+    """The format-demonstration example only makes sense for total_turns >= 2."""
+    template = load_template(str(TEMPLATE_PATH))
+    rendered = render_prompt(template, _toy_task())
+    assert "## Example" not in rendered
+
+
+def test_multi_turn_prompt_includes_format_example():
+    """An example showing main-then-policy is rendered for total_turns >= 2,
+    so the model has at least one demonstration of the probe-then-adapt
+    contract before having to write its own."""
+    template = load_template(str(TEMPLATE_PATH))
+    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
+    assert "## Example" in rendered
+    # Both modes are demonstrated
+    assert "# MODE: main" in rendered
+    assert "# MODE: policy" in rendered
+    # The example uses the (state, info) Gymnasium reset signature
+    assert "state, _ = env.reset()" in rendered
+    # The example deliberately ships a no-op controller body (return 0.0) —
+    # the run-5 collapse showed that an opinionated example becomes a GRPO
+    # attractor.
+    assert "return 0.0" in rendered
+
+
+def test_multi_turn_example_only_on_first_turn():
+    """The example renders only on turn 1 — chat history carries it forward
+    to later turns, so re-emitting it would waste tokens on every continuation
+    (matches the existing `env_section` pattern)."""
+    template = load_template(str(TEMPLATE_PATH))
+    t1 = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
+    t2 = render_prompt(template, _toy_task(), turn_idx=2, total_turns=2)
+    assert "## Example" in t1
+    assert "## Example" not in t2
