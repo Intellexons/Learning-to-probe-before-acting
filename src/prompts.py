@@ -37,7 +37,7 @@ Turn {turn_idx} of {total_turns}. {budget_note}
 
 Each turn must output ONE fenced code block tagged either:
 - ```` ```policy ```` — defines `def policy(state)`. Tool returns total_reward across all scenarios.
-- ```` ```main ```` — arbitrary Python with no env access. Tool returns stdout. Use for derivations, not probing.
+- ```` ```main ```` — arbitrary Python; you may instantiate the environment to probe partially-observable properties (e.g. estimate κ). Tool returns stdout.
 
 The final turn (turn {total_turns}) MUST be ```` ```policy ```` — a `main` final turn is rejected at the error floor. Any turn missing a recognized fence tag is also rejected.
 """
@@ -89,8 +89,8 @@ def _build_requirements(turn_idx: int, total_turns: int) -> str:
     # Non-final turn: model may choose main or policy
     return (
         "- If outputting `````policy`````: define `def policy(state)` returning a valid action.\n"
-        "- If outputting `````main`````: use `print()` to surface derivations — "
-        "stdout is returned to you next turn. No `def policy` needed here.\n"
+        "- If outputting `````main`````: use `print()` to probe or derive — "
+        "run env instances, compute gains, whatever helps. stdout is returned to you next turn. No `def policy` needed here.\n"
         + common
     )
 
