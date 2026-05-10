@@ -23,7 +23,7 @@ sys.path.insert(0, str(_SEED_TASKS_DIR))
 
 from src.hf_generator import load_model_for_generation, generate_code
 from src.prompts import load_template, render_prompt
-from src.runner import validate_code, run_main_in_subprocess, extract_code_with_mode
+from src.runner import validate_code, run_main_in_subprocess, extract_code_with_mode, ERROR_PENALTY_PER_SCENARIO
 from src.dataset import load_jsonl
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -67,18 +67,26 @@ def _run_at_kappa(policy_code: str, env_code: str, seed: int, kappa: float) -> d
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(script)
         tmp = f.name
+    _err = lambda msg: {"success": False, "reward": ERROR_PENALTY_PER_SCENARIO, "error": msg}
     try:
         proc = subprocess.run(
             [sys.executable, tmp],
             capture_output=True, text=True, timeout=EPISODE_TIMEOUT,
         )
         if proc.returncode != 0:
-            return {"success": False, "reward": 0.0, "error": proc.stderr[-300:]}
-        return json.loads(proc.stdout.strip())
+            return _err(proc.stderr[-300:])
+        try:
+            result = json.loads(proc.stdout.strip())
+        except (json.JSONDecodeError, ValueError) as e:
+            return _err(f"output parse error: {e}")
+        # Policy crashed mid-episode — apply same penalty as GRPO scorer
+        if result.get("error"):
+            result["reward"] = ERROR_PENALTY_PER_SCENARIO
+        return result
     except subprocess.TimeoutExpired:
-        return {"success": False, "reward": 0.0, "error": "timeout"}
+        return _err("timeout")
     except Exception as e:
-        return {"success": False, "reward": 0.0, "error": str(e)}
+        return _err(str(e))
     finally:
         Path(tmp).unlink(missing_ok=True)
 
