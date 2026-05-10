@@ -42,7 +42,7 @@ class PuckTiltedPlaneEnv:
         self.px, self.py = self.p0x, self.p0y
         self.vx, self.vy = self.v0x, self.v0y
         self.steps = 0
-        return self.get_state()
+        return self.get_state(), {}
 
     def get_state(self):
         return {
