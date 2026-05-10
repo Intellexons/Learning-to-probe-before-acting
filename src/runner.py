@@ -156,7 +156,7 @@ import random
 
 # --- Runner ---
 def run_episode(seed, max_steps):
-    env = {env_class}(seed=seed)
+    env = {env_class}(seed=seed, hidden=HiddenParams(actuator_gain={kappa}))
     state = env.reset()
     total_reward = 0.0
     steps = 0
@@ -179,17 +179,12 @@ print(json.dumps(result))
 '''
 
 
-# `main` turn template: NO env class, NO scenario loop. The model uses this
-# for derivations / scratchpad math / printing intermediate variables it
-# wants to read in turn 2. Per the 2026-04-25 design decision, exposing the
-# env class to main() would let the LLM substitute empirical probing of
-# hidden parameters for analytical reasoning, which defeats the
-# partial-observability point. Reversing this is a one-line change.
 _RUNNER_TEMPLATE_MAIN = '''\
 import math
 import random
 
-# --- Main code (model's scratchpad) ---
+{env_section}
+# --- Main code (model's calibration experiments) ---
 {main_code}
 '''
 
@@ -255,6 +250,7 @@ def run_policy_in_subprocess(
         env_code=env_code,
         policy_code=code,
         seed=scenario.get("seed", 0),
+        kappa=scenario.get("kappa", 1.0),
         max_steps=max_steps,
         env_class=env_class,
     )
@@ -273,14 +269,32 @@ def run_policy_in_subprocess(
         return {"reward": 0.0, "steps": 0, "error": f"Output parse error: {e}"}
 
 
-def run_main_in_subprocess(code: str, timeout: int = MAIN_DEFAULT_TIMEOUT) -> dict:
+def run_main_in_subprocess(
+    code: str,
+    env_code: str = "",
+    kappa: float = 1.0,
+    seed: int = 0,
+    env_class: str = DEFAULT_ENV_CLASS,
+    timeout: int = MAIN_DEFAULT_TIMEOUT,
+) -> dict:
     """Execute a `main` turn in the sandbox and capture stdout.
 
+    When env_code is provided, the env class is injected and a pre-instantiated
+    `env` object is available to the model's code — same kappa and seed as the
+    policy evaluation, so calibration experiments probe the right system.
     Returns: {"stdout": str, "error": str | None}. Stdout is truncated to
     `MAIN_STDOUT_TRUNCATE` bytes — the captured text is the model's "tool
     result" and an unbounded print loop would blow the chat context.
     """
-    script = _RUNNER_TEMPLATE_MAIN.format(main_code=code)
+    if env_code:
+        env_section = (
+            f"# --- Environment code ---\n{env_code}\n\n"
+            f"# Pre-instantiated calibration env (same hidden params as policy evaluation)\n"
+            f"env = {env_class}(seed={seed}, hidden=HiddenParams(actuator_gain={kappa}))\n"
+        )
+    else:
+        env_section = ""
+    script = _RUNNER_TEMPLATE_MAIN.format(env_section=env_section, main_code=code)
     outcome = _run_script_in_subprocess(script, timeout=timeout)
 
     if outcome.timed_out:
@@ -356,7 +370,14 @@ def score_sample(
 score_policy_turn = score_sample
 
 
-def score_main_turn(code: str, timeout: int = MAIN_DEFAULT_TIMEOUT) -> dict:
+def score_main_turn(
+    code: str,
+    env_code: str = "",
+    kappa: float = 1.0,
+    seed: int = 0,
+    env_class: str = DEFAULT_ENV_CLASS,
+    timeout: int = MAIN_DEFAULT_TIMEOUT,
+) -> dict:
     """Score a `main` turn — execute the code in the sandbox, return stdout.
 
     Unlike `score_policy_turn`, this does NOT produce a numeric reward. The
@@ -373,7 +394,7 @@ def score_main_turn(code: str, timeout: int = MAIN_DEFAULT_TIMEOUT) -> dict:
     is_valid, error_msg = validate_main_code(code)
     if not is_valid:
         return {"stdout": f"[main rejected: {error_msg}]", "error": error_msg}
-    result = run_main_in_subprocess(code, timeout=timeout)
+    result = run_main_in_subprocess(code, env_code=env_code, kappa=kappa, seed=seed, env_class=env_class, timeout=timeout)
     if result["error"]:
         return {
             "stdout": f"{result['stdout']}\n[main error: {result['error']}]".strip(),

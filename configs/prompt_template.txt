@@ -11,12 +11,7 @@ Action: {action_spec}
 ## Goal
 {goal}
 
-## Environment source
-
-```python
-{env_code}
-```
-
+{env_section}
 ## Requirements
 {requirements}
 

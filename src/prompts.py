@@ -107,11 +107,17 @@ def render_prompt(
 ) -> str:
     """Fill in template with task fields and (optionally) multi-turn protocol.
 
+    Env source code is included only on the first turn — subsequent turns
+    already have it in the chat history context.
     Single-turn callers can omit `turn_idx` / `total_turns` and the rendered
     output matches the pre-multi-turn prompt exactly.
     """
+    if turn_idx == 1:
+        env_section = f"## Environment source\n\n```python\n{task['env_code']}\n```\n"
+    else:
+        env_section = ""
     return template.format(
-        env_code=task["env_code"],
+        env_section=env_section,
         state_spec=task["state_spec"],
         action_spec=task["action_spec"],
         goal=task["goal"],

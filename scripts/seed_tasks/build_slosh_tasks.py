@@ -30,6 +30,7 @@ GOAL = (
 
 TRAIN_SEEDS = list(range(8))
 EVAL_SEEDS = list(range(10_000, 10_004))
+KAPPAS = [0.65, 0.80, 1.00]
 
 
 def task_entry(task_id: str, seeds: list[int]) -> dict:
@@ -41,8 +42,9 @@ def task_entry(task_id: str, seeds: list[int]) -> dict:
         "action_spec": ACTION_SPEC,
         "goal": GOAL,
         "scenarios": [
-            {"scenario_id": f"s{i}", "seed": seed}
-            for i, seed in enumerate(seeds)
+            {"scenario_id": f"s{seed}_k{kappa:.2f}", "seed": seed, "kappa": kappa}
+            for seed in seeds
+            for kappa in KAPPAS
         ],
     }
 
