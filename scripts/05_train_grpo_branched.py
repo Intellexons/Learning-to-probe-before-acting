@@ -143,7 +143,10 @@ def main():
         loss_type=grpo_cfg.get("loss_type", "dapo"),
         scale_rewards=grpo_cfg.get("scale_rewards", "batch"),
         max_completion_length=2 * max_turn_tokens + COMPLETION_LENGTH_SLACK,
-        temperature=grpo_cfg.get("temperature", 1.0),
+        # Default matches the eval pipeline (`scripts/eval_frozen_baseline.py`,
+        # `--temperature` default = 0.8). Production YAMLs override this
+        # explicitly; the fallback only kicks in if a config omits the key.
+        temperature=grpo_cfg.get("temperature", 0.8),
         top_p=grpo_cfg.get("top_p", 1.0),
         mask_truncated_completions=grpo_cfg.get("mask_truncated_completions", False),
         log_completions=grpo_cfg.get("log_completions", False),
