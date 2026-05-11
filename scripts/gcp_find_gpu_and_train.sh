@@ -6,11 +6,17 @@
 # as a thin wrapper for backwards compatibility with logged commands.
 #
 # On stockout (ZONE_RESOURCE_POOL_EXHAUSTED / "does not have enough resources"),
-# moves to the next zone. On any non-stockout failure, aborts so we don't leave
-# half-created VMs across multiple zones.
+# moves to the next zone. If every zone in the list is stocked out in one pass,
+# sleeps LORA4VR_RETRY_SLEEP seconds (default 180) and starts another pass —
+# repeats indefinitely until a zone has capacity. On any non-stockout failure
+# (e.g. quota exhausted), aborts so we don't leave half-created VMs behind.
 #
 # Usage:
 #   bash scripts/gcp_find_gpu_and_train.sh <config> <run_name> [--accelerator <type>] [--wait]
+#
+# Tunables:
+#   LORA4VR_RETRY_SLEEP=180   # seconds to wait after a fully stocked-out pass
+#   LORA4VR_MAX_PASSES=0      # 0 = infinite passes; >0 = cap (then exit 2)
 #
 # Accelerator presets (the --accelerator value):
 #   l4          (default)  g2-standard-8     nvidia-l4              24 GiB
@@ -109,38 +115,54 @@ fi
 
 STOCKOUT_RE='ZONE_RESOURCE_POOL_EXHAUSTED|does not have enough resources|currently unavailable|STOCKOUT|stockout'
 
+RETRY_SLEEP="${LORA4VR_RETRY_SLEEP:-180}"
+MAX_PASSES="${LORA4VR_MAX_PASSES:-0}"
+
 echo "[find-gpu] accelerator=$ACCELERATOR_KIND machine=$LORA4VR_MACHINE_TYPE accel=$LORA4VR_ACCELERATOR"
+echo "[find-gpu] retry_sleep=${RETRY_SLEEP}s max_passes=${MAX_PASSES} (0=infinite)"
 
-for Z in "${ZONES[@]}"; do
+PASS=0
+while true; do
+  PASS=$((PASS + 1))
   echo ""
-  echo "============================================================"
-  echo "[find-gpu] Attempting zone: $Z"
-  echo "============================================================"
+  echo "[find-gpu] === pass $PASS — walking ${#ZONES[@]} zones ==="
 
-  TMP_LOG=$(mktemp -t gcp_find_gpu.XXXXXX)
+  for Z in "${ZONES[@]}"; do
+    echo ""
+    echo "============================================================"
+    echo "[find-gpu] Attempting zone: $Z (pass $PASS)"
+    echo "============================================================"
 
-  set +e
-  LORA4VR_ZONE="$Z" bash scripts/gcp_train.sh "$CONFIG" "$RUN_NAME" ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} 2>&1 | tee "$TMP_LOG"
-  RC=${PIPESTATUS[0]}
-  set -e
+    TMP_LOG=$(mktemp -t gcp_find_gpu.XXXXXX)
 
-  if [ "$RC" -eq 0 ]; then
-    echo "[find-gpu] success in $Z"
-    rm -f "$TMP_LOG"
-    exit 0
+    set +e
+    LORA4VR_ZONE="$Z" bash scripts/gcp_train.sh "$CONFIG" "$RUN_NAME" ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} 2>&1 | tee "$TMP_LOG"
+    RC=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$RC" -eq 0 ]; then
+      echo "[find-gpu] success in $Z"
+      rm -f "$TMP_LOG"
+      exit 0
+    fi
+
+    if grep -qE "$STOCKOUT_RE" "$TMP_LOG"; then
+      echo "[find-gpu] stockout in $Z (rc=$RC) — trying next zone"
+      rm -f "$TMP_LOG"
+      continue
+    fi
+
+    echo "[find-gpu] non-stockout failure in $Z (rc=$RC) — aborting so we don't leave a partial VM behind"
+    echo "[find-gpu] error log retained at: $TMP_LOG"
+    exit "$RC"
+  done
+
+  echo ""
+  echo "[find-gpu] pass $PASS: all ${#ZONES[@]} zones stocked-out for $ACCELERATOR_KIND."
+  if [ "$MAX_PASSES" -gt 0 ] && [ "$PASS" -ge "$MAX_PASSES" ]; then
+    echo "[find-gpu] reached LORA4VR_MAX_PASSES=$MAX_PASSES — giving up."
+    exit 2
   fi
-
-  if grep -qE "$STOCKOUT_RE" "$TMP_LOG"; then
-    echo "[find-gpu] stockout in $Z (rc=$RC) — trying next zone"
-    rm -f "$TMP_LOG"
-    continue
-  fi
-
-  echo "[find-gpu] non-stockout failure in $Z (rc=$RC) — aborting so we don't leave a partial VM behind"
-  echo "[find-gpu] error log retained at: $TMP_LOG"
-  exit "$RC"
+  echo "[find-gpu] sleeping ${RETRY_SLEEP}s before next pass (Ctrl-C to abort)..."
+  sleep "$RETRY_SLEEP"
 done
-
-echo ""
-echo "[find-gpu] All ${#ZONES[@]} zones exhausted — no $ACCELERATOR_KIND capacity found right now."
-exit 2
