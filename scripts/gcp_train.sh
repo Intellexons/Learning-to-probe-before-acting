@@ -95,14 +95,16 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" \
 
 # Build the command to run inside tmux. WANDB_API_KEY is set inline so it
 # never lands in ~/.bashrc or on-disk history. The `; touch DONE_MARKER` is
-# what --wait polls for.
+# what --wait polls for. ${PIPESTATUS[0]} captures the python orchestrator's
+# real exit code; plain `$?` after the pipe would only see tee's exit code
+# (almost always 0), masking crashes and making --wait teardown lie.
 REMOTE_CMD="cd $REMOTE_DIR && \
   WANDB_API_KEY='$WANDB_API_KEY' \
   PYTORCH_ALLOC_CONF=expandable_segments:True \
   uv run python scripts/09_run_loop.py \
     --config $CONFIG \
     --run_name $RUN_NAME 2>&1 | tee $LOG_FILE; \
-  echo \"exit=\$?\" > $DONE_MARKER"
+  echo \"exit=\${PIPESTATUS[0]}\" > $DONE_MARKER"
 
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" \
   --command="tmux new-session -d -s $TMUX_SESSION \"$REMOTE_CMD\""
