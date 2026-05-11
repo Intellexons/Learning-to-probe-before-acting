@@ -214,7 +214,14 @@ class BranchedGRPOTrainer(GRPOTrainer):
         prompt_len = inputs.input_ids.shape[1]
         pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
 
-        with torch.no_grad():
+        # Temporarily disable gradient checkpointing so the model can use its
+        # KV cache during decode. Without this, transformers forces
+        # use_cache=False whenever gradient_checkpointing is enabled and every
+        # generated token re-runs full attention over all prior tokens (O(N²)
+        # decode instead of O(N)). Restored automatically on context exit.
+        with torch.no_grad(), disable_gradient_checkpointing(
+            self.model, self.args.gradient_checkpointing_kwargs
+        ):
             out = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_turn_tokens,
@@ -223,6 +230,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
                 do_sample=True,
                 pad_token_id=pad_id,
                 num_return_sequences=n_samples,
+                use_cache=True,
             )
         self._generate_call_count += 1
 
@@ -282,14 +290,32 @@ class BranchedGRPOTrainer(GRPOTrainer):
         (V_1 between/within variance, A_turn{1,2} std, signal ratio). Each
         trajectory has its per-token `advantages` and `tool_mask` populated.
         """
+        # Stdout-only phase-timing logs. Each inner step processes one prompt
+        # (prompts_per_step=1) so these line up 1:1 with TRL's `i/24` bar and
+        # close the "what's happening mid-step" gap. Not pushed to W&B.
+        step = int(getattr(self.state, "global_step", -1))
+        tid = task.get("task_id", "?")
+        t_start = time.monotonic()
+
         # Phase A — generate G_1 first-turn variants
+        t_phase = time.monotonic()
         turn1_outputs = self._generate_one_turn(prompt_messages, self.g1)
+        logger.info(
+            f"[step {step} {tid}] phase A turn-1 gen (G1={self.g1}): "
+            f"{time.monotonic() - t_phase:.1f}s"
+        )
 
         # Phase B — execute each first-turn variant in the sandbox
+        t_phase = time.monotonic()
         turn1_results = [self._execute_first_turn(text, task) for _, _, text in turn1_outputs]
+        logger.info(
+            f"[step {step} {tid}] phase B turn-1 sandbox: "
+            f"{time.monotonic() - t_phase:.1f}s"
+        )
 
         # Phase C — for each first-turn variant, generate G_2 continuations
         # and score each as a final policy turn. Records flow into trajectories.
+        t_phase = time.monotonic()
         rewards_grid: list[list[float]] = []
         trajectories: list[_Trajectory] = []
         # Eval (`scripts/eval_frozen_baseline.py:198-203`) builds the turn-2
@@ -330,8 +356,13 @@ class BranchedGRPOTrainer(GRPOTrainer):
                     reward=reward,
                 ))
             rewards_grid.append(row_rewards)
+        logger.info(
+            f"[step {step} {tid}] phase C turn-2 gen+score "
+            f"(G1×G2={self.g1 * self.g2} trajectories): {time.monotonic() - t_phase:.1f}s"
+        )
 
         # Phase D — compute V_0, V_1, per-token advantages, and diagnostics.
+        t_phase = time.monotonic()
         v0, _v1, a_turn1, a_turn2 = compute_branched_advantages(rewards_grid)
         for traj in trajectories:
             t1_len, tool_len, t2_len = traj.segment_lengths()
@@ -342,6 +373,10 @@ class BranchedGRPOTrainer(GRPOTrainer):
             )
             traj.tool_mask = assemble_tool_mask(t1_len, tool_len, t2_len)
         diag = rollout_diagnostics(rewards_grid, a_turn1, a_turn2)
+        logger.info(
+            f"[step {step} {tid}] phase D advantages: {time.monotonic() - t_phase:.2f}s "
+            f"| rollout total {time.monotonic() - t_start:.1f}s | V0={v0:.3f}"
+        )
         return trajectories, v0, diag
 
     # ------------------------------------------------------------------
