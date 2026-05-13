@@ -9,6 +9,8 @@
 \usepackage{abstract}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,backgrounds,fit}
 
 \titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
@@ -227,6 +229,149 @@ prefix rather than the global per-prompt mean: a poor turn-2 sample
 drawn from a strong turn-1 is recognized as poor instead of
 inheriting its prefix's above-average outcome. Tool-message tokens
 are masked via \texttt{tool\_mask}; their advantage is zero.
+Figure~\ref{fig:credit-assignment} contrasts this scheme with the
+two closest critic-free / per-turn-credit baselines for multi-turn
+LLM RL.
+
+\begin{figure}[t]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  >={Stealth[length=1.5mm]},
+  every node/.style={font=\scriptsize, inner sep=1pt},
+  prompt/.style={circle, draw, fill=black!8,  minimum size=4mm},
+  t1/.style    ={circle, draw, fill=blue!18,  minimum size=4mm},
+  t2/.style    ={circle, draw, fill=orange!28, minimum size=4mm},
+  tool/.style  ={rectangle, draw, fill=black!4,
+                 minimum width=4mm, minimum height=3mm},
+  rew/.style   ={font=\tiny},
+  bln/.style   ={font=\tiny, color=red!75!black, anchor=west},
+  arr/.style   ={->, draw=gray!70},
+  panel/.style ={font=\small\bfseries},
+]
+
+%%% (a) Flat baseline — StarPO / Arm D
+\begin{scope}
+  \node[panel] at (1.7, 4.0) {(a) Flat baseline (StarPO)};
+  \node[prompt] (sa) at (0, 2) {$s$};
+  \node[t1] (y1a1) at (0.9, 3.1) {};
+  \node[t1] (y1a2) at (0.9, 0.9) {};
+  \node[tool] (ma1) at (1.6, 3.1) {$m_1$};
+  \node[tool] (ma2) at (1.6, 0.9) {$m_2$};
+  \node[t2] (y2a11) at (2.4, 3.5) {};
+  \node[t2] (y2a12) at (2.4, 2.7) {};
+  \node[t2] (y2a21) at (2.4, 1.3) {};
+  \node[t2] (y2a22) at (2.4, 0.5) {};
+  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
+  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
+  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
+  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+  \draw[arr] (sa) -- (y1a1);  \draw[arr] (sa) -- (y1a2);
+  \draw[arr] (y1a1) -- (ma1); \draw[arr] (y1a2) -- (ma2);
+  \draw[arr] (ma1) -- (y2a11); \draw[arr] (ma1) -- (y2a12);
+  \draw[arr] (ma2) -- (y2a21); \draw[arr] (ma2) -- (y2a22);
+  \draw[red!70!black, thick] (3.75, 0.45) -- (3.95, 0.45)
+    -- (3.95, 3.55) -- (3.75, 3.55);
+  \node[bln, anchor=west] at (4.0, 2.0) {$\widehat V_0$};
+  \node[align=center, font=\tiny] at (1.9, -0.4)
+    {Single baseline shared across both turns;\\
+     $A^{(1)}\!=\!A^{(2)}\!=\!R_{i,j}-\widehat V_0$.};
+\end{scope}
+
+%%% (b) Per-turn learned critic — ArCHer
+\begin{scope}[xshift=5.4cm]
+  \node[panel] at (1.7, 4.0) {(b) Per-turn critic (ArCHer)};
+  \node[prompt] (sb) at (0, 2) {$s$};
+  \node[t1] (y1b1) at (0.9, 3.1) {};
+  \node[t1] (y1b2) at (0.9, 0.9) {};
+  \node[tool] (mb1) at (1.6, 3.1) {$m_1$};
+  \node[tool] (mb2) at (1.6, 0.9) {$m_2$};
+  \node[t2] (y2b11) at (2.4, 3.5) {};
+  \node[t2] (y2b12) at (2.4, 2.7) {};
+  \node[t2] (y2b21) at (2.4, 1.3) {};
+  \node[t2] (y2b22) at (2.4, 0.5) {};
+  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
+  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
+  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
+  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+  \draw[arr] (sb) -- (y1b1);  \draw[arr] (sb) -- (y1b2);
+  \draw[arr] (y1b1) -- (mb1); \draw[arr] (y1b2) -- (mb2);
+  \draw[arr] (mb1) -- (y2b11); \draw[arr] (mb1) -- (y2b12);
+  \draw[arr] (mb2) -- (y2b21); \draw[arr] (mb2) -- (y2b22);
+  % Per-state learned values, drawn as side annotations on the boundary states
+  \node[bln, anchor=east] at (sb.west) {$\widehat V_\phi(s_0)$};
+  \node[bln, anchor=south] at (mb1.north) {$\widehat V_\phi(s_1^{(1)})$};
+  \node[bln, anchor=north] at (mb2.south) {$\widehat V_\phi(s_1^{(2)})$};
+  \node[align=center, font=\tiny] at (1.7, -0.4)
+    {Learned $\widehat V_\phi(s_n)$ at each boundary;\\
+     $A^{(n)}\!=\!\widehat V_\phi(s_{n+1})-\widehat V_\phi(s_n)$.};
+\end{scope}
+
+%%% (c) Per-turn MC — Ours
+\begin{scope}[xshift=10.8cm]
+  \node[panel] at (1.9, 4.0) {(c) Per-turn MC (ours)};
+  \node[prompt] (sc) at (0, 2) {$s$};
+  \node[t1] (y1c1) at (0.9, 3.1) {};
+  \node[t1] (y1c2) at (0.9, 0.9) {};
+  \node[tool] (mc1) at (1.6, 3.1) {$m_1$};
+  \node[tool] (mc2) at (1.6, 0.9) {$m_2$};
+  \node[t2] (y2c11) at (2.4, 3.5) {};
+  \node[t2] (y2c12) at (2.4, 2.7) {};
+  \node[t2] (y2c21) at (2.4, 1.3) {};
+  \node[t2] (y2c22) at (2.4, 0.5) {};
+  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
+  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
+  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
+  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+  \draw[arr] (sc) -- (y1c1);  \draw[arr] (sc) -- (y1c2);
+  \draw[arr] (y1c1) -- (mc1); \draw[arr] (y1c2) -- (mc2);
+  \draw[arr] (mc1) -- (y2c11); \draw[arr] (mc1) -- (y2c12);
+  \draw[arr] (mc2) -- (y2c21); \draw[arr] (mc2) -- (y2c22);
+  % V_1^(i) brackets — one per turn-1 variant
+  \draw[red!70!black, thick] (3.75, 2.65) -- (3.9, 2.65)
+    -- (3.9, 3.55) -- (3.75, 3.55);
+  \node[bln, anchor=west] at (3.95, 3.1) {$\widehat V_1^{(1)}$};
+  \draw[red!70!black, thick] (3.75, 0.45) -- (3.9, 0.45)
+    -- (3.9, 1.35) -- (3.75, 1.35);
+  \node[bln, anchor=west] at (3.95, 0.9) {$\widehat V_1^{(2)}$};
+  % V_0 bracket — root mean over all leaves, drawn outside V_1 brackets
+  \draw[red!70!black, thick, opacity=0.55] (4.55, 0.45) -- (4.75, 0.45)
+    -- (4.75, 3.55) -- (4.55, 3.55);
+  \node[bln, anchor=west, opacity=0.7] at (4.8, 2.0) {$\widehat V_0$};
+  \node[align=center, font=\tiny] at (2.1, -0.4)
+    {$\widehat V_1^{(i)}\!=\!\tfrac{1}{G_2}\!\sum_j R_{i,j}$ per prefix;\\
+     $A^{(1)}_i {=} \widehat V_1^{(i)}{-}\widehat V_0,\ \
+      A^{(2)}_{i,j} {=} R_{i,j}{-}\widehat V_1^{(i)}$.};
+\end{scope}
+
+\end{tikzpicture}%
+}
+\caption{Comparison of credit-assignment mechanisms on a 2-turn
+branched rollout from prompt $s$ with $G_1{=}G_2{=}2$. All three
+panels show the same rollout structure --- turn-1 fan-out
+$\{y^{(1)}_i\}$, tool message $m_i$, turn-2 fan-out
+$\{y^{(2)}_{i,j}\}$, leaf rewards $R_{i,j}$ --- and differ only in
+how the per-token baseline is computed.
+\textbf{(a) Flat baseline} (StarPO / RAGEN~\cite{wang2025ragen}, the
+N=2 generalization of RLOO/GRPO~\cite{shao2024deepseekmath} from
+Figure~2 of \cite{kazemnejad2024vineppo}): one mean $\widehat V_0$
+over all $G_1 G_2$ leaves, broadcast to every model token of both
+turns. A poor turn-2 from a strong turn-1 inherits its prefix's
+above-average outcome.
+\textbf{(b) Per-turn critic} (ArCHer~\cite{zhou2024archer}): a
+learned value head $\widehat V_\phi(s_n)$ provides per-state
+baselines at each turn boundary, with the moving-target bias issues
+typical of bootstrapped value learning.
+\textbf{(c) Per-turn MC} (ours, Arm~F): the conditional mean
+$\widehat V_1^{(i)} = \tfrac{1}{G_2}\sum_j R_{i,j}$ over the $G_2$
+continuations of turn-1 variant $i$ baselines that variant's turn-1
+tokens; $\widehat V_0$ baselines the root. Turn-2 tokens are scored
+against their own prefix's $\widehat V_1^{(i)}$, not the global
+mean. Group-relative within a turn, VinePPO-like across turns ---
+i.e., VinePPO's intra-completion MC re-branching
+\cite{kazemnejad2024vineppo}, applied at turn boundaries.}
+\label{fig:credit-assignment}
+\end{figure}
 
 \subsection{Per-turn loss decomposition}
 \label{sec:per-turn-decomp}
