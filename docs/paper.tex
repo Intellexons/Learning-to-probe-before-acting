@@ -26,22 +26,16 @@
 \begin{abstract}
 \noindent
 Multi-turn RL for code-generating agents fails mainly at credit
-assignment: a single trajectory-level advantage cannot tell whether
-success came from good planning or good final execution. This paper
-targets that gap in code-policy generation, where an LLM writes a
-Python \texttt{policy} and receives only the final scenario reward as
-supervision. The central idea is to treat chat turns as macro-steps:
-branch rollouts at turn boundaries, estimate per-turn Monte Carlo
-values, and assign turn-specific advantages (VinePPO-style, but at
-turn granularity). To make this practical on a single 24\,GB GPU, loss
-computation is decomposed across turns using the additivity of the
+assignment: a trajectory-level advantage cannot tell whether success
+came from good planning or good final execution. Treating chat turns
+as macro-steps, we branch rollouts at turn boundaries, estimate
+per-turn Monte Carlo values, and assign turn-specific advantages
+(VinePPO-style, but at turn granularity). To fit a single 24\,GB GPU,
+the loss is decomposed across turns using the additivity of the
 token-summed clipped surrogate, reducing peak LM-head activation memory
 from $\sum_n T_n$ to $\max_n T_n$ without changing the accumulated
-gradient. The resulting method is a compact synthesis of existing RL
-ingredients (GRPO, VinePPO, hierarchical credit assignment), specialized
-for multi-turn code-policy training under tight compute constraints.
-Experiments instantiate the method at $N{=}2$ with $G_1{=}G_2{=}4$; the
-extension to $N{>}2$ is straightforward.
+gradient. Experiments instantiate the method at $N{=}2$ with
+$G_1{=}G_2{=}4$; extension to $N{>}2$ is straightforward.
 \end{abstract}
 
 \section{Introduction}
@@ -69,27 +63,13 @@ scratchpad (stdout returned as feedback), and the final turn commits the
 scored \texttt{policy}. The scheme is instantiated and evaluated at
 $N{=}2$.
 
-The training scheme has two components. First, trajectory-level credit
-assignment is replaced with a per-turn branched rollout
-and per-turn MC value estimates --- the macro-step analog of
-VinePPO's intra-completion branching, with hierarchical baselines
-conditioned on the prefix at each turn boundary. Second, to make the
-resulting trajectories trainable on a 24\,GB L4, the
-additivity of the token-summed clipped surrogate over disjoint token
-subsets sharing the same global normalizer is exploited to
-run forward and backward passes for each turn independently. Peak LM-head
-saved-activation memory drops from
-$O(B\cdot \sum_n T_n\cdot |V|)$ to
-$O(B\cdot \max_n T_n\cdot |V|)$ without changing the accumulated
-gradient: the parameter gradients summed across the per-turn passes
-equal the single-pass gradient exactly. The trade-off is compute ---
-each later pass recomputes the prefix of earlier turns ---
-not gradient quality.
-
-This combination is a straightforward specialization of standard
-mechanisms rather than a new algorithm. The contribution is a clean
-assembly that fits on a single small GPU, plus a loss decomposition
-that makes that budget feasible.
+The training scheme combines a per-turn branched MC value estimator
+(\S\ref{sec:per-turn-decomp}) with a per-turn loss decomposition that
+exploits the additivity of the token-summed clipped surrogate to swap
+peak LM-head memory from $O(\sum_n T_n)$ to $O(\max_n T_n)$ at the
+cost of $N$ forward+backward passes per trajectory. The combination
+is a specialization of standard mechanisms; the contribution is an
+assembly that fits on a single 24\,GB GPU.
 
 \section{Related work}
 
@@ -102,11 +82,10 @@ makes the per-turn loss decomposition exact.
 \paragraph{Branching for credit assignment.} The closest existing
 method is VinePPO~\cite{kazemnejad2024vineppo}, which estimates
 $\widehat V(s_t)$ at chosen intra-completion states via on-policy MC
-re-branching and uses it as a per-token baseline. The same
-mechanism is used, but branching occurs only at \emph{turn boundaries} of a chat
-trajectory and broadcast the resulting advantage as a constant within
-each turn --- group-relative within a turn, VinePPO-like across
-turns.
+re-branching and uses it as a per-token baseline. We apply the same mechanism, but only at \emph{turn boundaries} of a
+chat trajectory, broadcasting the resulting advantage as a constant
+within each turn --- group-relative within a turn, VinePPO-like
+across turns.
 
 \paragraph{Hierarchical multi-turn agents.}
 ArCHer~\cite{zhou2024archer} adopts the same macro-step decomposition
@@ -411,23 +390,15 @@ computes $\mathcal{L}_{\mathcal{I}_n}$, backwards, and frees. By
 $N$ passes equal the single-pass gradient exactly.
 
 \paragraph{Why this saves memory.} The dominant activation cost is
-the LM head's logit tensor, with $|V| \approx 152{,}000$ for our base
-model. The HF \texttt{logits\_to\_keep} API materializes logits only
-at the positions where they are needed for the loss
-(Appendix~\ref{app:memory}); at training time those are the model-
-emitted token positions. In a single forward+backward over the full
-trajectory, the autograd graph holds the saved-for-backward LM-head
-tensors at all $\sum_n T_n$ model-token positions across all turns
-simultaneously, until backward completes. By computing each turn's
-loss in a separate forward+backward, only one turn's
-saved-for-backward tensors are held at peak ($T_n^{\max}$ positions), and
-the graph is freed before the next turn begins. The decomposition is
-gradient accumulation at the turn level within a trajectory: same
-accumulated gradient by \eqref{eq:additive}, lower peak activation
-memory by a factor of roughly $N$ when turns are equal-length.
-Appendix~\ref{app:memory} has concrete numbers for $N{=}2$; at our
-settings the saving over a careful single-pass implementation is
-roughly $2\times$.
+the LM-head logit tensor ($|V| = 151{,}936$). A single
+forward+backward over the full trajectory holds the saved-for-backward
+LM-head tensors at all $\sum_n T_n$ model-token positions
+simultaneously; doing one forward+backward per turn holds at most
+$\max_n T_n$ positions at peak, and \eqref{eq:additive} guarantees
+the accumulated gradient is identical. This is gradient accumulation
+at the turn level within a trajectory --- the saving is a factor of
+roughly $N$ for equal-length turns, $\approx 2\times$ at our $N{=}2$
+settings. Appendix~\ref{app:memory} works through the accounting.
 
 \paragraph{Restrictions.} The decomposition's exactness has one
 \emph{conceptual} requirement and two \emph{implementation}
@@ -761,7 +732,7 @@ token has a distinct target. The token-summed normalizer of
 $\alpha$ when $N_{\text{tok}}$ is updated to count only the kept
 positions; per-row averaged variants would be biased by uneven
 drops across trajectories, an additional reason the token-summed
-form is the right baseline. The memory benefit compounds with the
+form is the right choice. The memory benefit compounds with the
 per-turn decomposition: peak LM-head saved-activation memory drops
 from $\max_n T_n$ to $\alpha \max_n T_n$, on top of the
 $\sum_n T_n \to \max_n T_n$ saving of \S\ref{sec:per-turn-decomp}.
@@ -798,19 +769,11 @@ training. The argument turns on a single API constraint in HF
 \texttt{transformers} which we make explicit here rather than in the
 body.
 
-\paragraph{The LLM as an autoregressive policy.} A causal LLM is a
-stochastic policy whose action space at each step is the vocabulary
-$\mathcal{V} = \{1, \dots, |V|\}$. Given a sequence of $T$ token IDs
-as input, the model produces, at each position $t$, a logit vector
-$\ell_t \in \mathbb{R}^{|V|}$; the next-token distribution is
-$\mathrm{softmax}(\ell_t)$, and the log-prob of having emitted token
-$a$ at position $t{+}1$ is $\log\mathrm{softmax}(\ell_t)_a$. To form
-the policy-gradient surrogate \eqref{eq:loss} we need exactly these
-log-probs at every position $t$ such that $t{+}1$ was a
-\emph{model-emitted} token. Logits at other positions --- prompt
-positions, and (in our multi-turn setting) tool-message positions
---- are not needed for the gradient and are wasted compute if we
-materialize them.
+\paragraph{What the loss needs.} The surrogate \eqref{eq:loss}
+consumes $\log\pi_\theta(a_{t+1} \mid s_{\le t})$ at every position
+$t$ whose successor is a model-emitted token. Logits at prompt and
+tool-message positions are not needed for the gradient and are wasted
+compute if materialized.
 
 \paragraph{Where the memory goes.} The model splits into two pieces
 with very different memory profiles. We distinguish three buckets
@@ -907,48 +870,28 @@ Regime & Positions through LM head & Logit tensor \\
 (c) Two passes (ours), int \texttt{logits\_to\_keep}$=\max_n T_n$ per pass & $400$ per pass, freed between & $\approx 3.9$\,GB \\
 \bottomrule
 \end{tabular}
-\caption{LM-head logit tensor size under each regime, plus an
-equal-sized autograd buffer for the backward pass (not shown).
-Regime~(a) is the truly naive single forward. Regime~(b) is what a
-careful single-forward implementation does, using the 1D-tensor form
-of \texttt{logits\_to\_keep} to select exactly the model-token
-positions across all turns. Regime~(c) is the per-turn decomposition
-of \S\ref{sec:per-turn-decomp}, which holds at most one turn's
-LM-head saved-for-backward tensors at peak.}
+\caption{LM-head logit tensor size under each regime; an equal-sized
+autograd buffer is held during backward but not shown.}
 \label{tab:memory}
 \end{table}
 
-The relevant comparison for this setting is (b) vs.\ (c) --- a roughly
-$2\times$ saving for $N{=}2$, scaling to $\sim N\times$ as the number
-of equal-length turns grows. Regime~(a) is shown for completeness
-but is not what a careful implementation actually does.
+The relevant comparison is (b) vs.\ (c) --- a $\approx 2\times$ saving
+for $N{=}2$, scaling to $\sim N\times$ as turns grow.
 
-\paragraph{Arithmetic, not measured.} The numbers in
-Table~\ref{tab:memory} are arithmetic from the LM-head output tensor
-shape $(B, K, |V|)$ at 4 bytes per element; peak end-to-end GPU memory
-under the three regimes has not yet been measured. End-to-end memory
-also includes parameter weights and gradients, optimizer state,
-gradient-checkpointed body activations, KV-cache (during rollout, not
-training), masks, and allocator overhead. The decomposition's
-expected effect is on the LM-head activation term specifically, and a
-benchmark comparing measured peak GPU memory under (b) and (c) at the
-same batch size, trajectory length, and model would provide a direct
-empirical complement to the arithmetic above. That benchmark has not
-yet been run.
+\paragraph{Arithmetic, not measured.} Table~\ref{tab:memory}'s numbers
+are arithmetic from the LM-head output shape $(B, K, |V|)$ at 4\,B per
+element; total GPU memory adds parameter weights, optimizer state,
+body activations, KV cache, and allocator overhead. A direct (b)-vs-(c)
+peak-memory measurement is future work.
 
-\paragraph{What the per-turn decomposition is and isn't.} It is not a
-new memory optimization over \texttt{logits\_to\_keep}; it is gradient
-accumulation at the turn level within a trajectory. The HF API
-already supports specifying any subset of positions for which to
-compute logits, so all three regimes above use the same primitive ---
-the difference is whether saved-for-backward tensors are held
-simultaneously through one backward call or sequentially through $N$
-backward calls. The non-trivial observation is that the gradients
-accumulated across per-turn passes equal the single-pass gradient
-\emph{exactly} (eq.\ \ref{eq:additive}), and that this exactness
-depends on the token-summed normalizer of \eqref{eq:loss}. Per-row-
-averaged GRPO variants would have to fall back to a single forward
-(regime b) or accept a normalizer approximation.
+\paragraph{What the per-turn decomposition is and isn't.} It is
+gradient accumulation at the turn level within a trajectory, not a
+new \texttt{logits\_to\_keep} optimization --- all three regimes use
+the same HF primitive. The non-trivial claim is that the per-turn
+gradients sum to the single-pass gradient \emph{exactly}
+(eq.\ \ref{eq:additive}), which is what the token-summed normalizer
+of \eqref{eq:loss} buys; per-row-averaged variants would have to fall
+back to regime (b) or accept a normalizer approximation.
 
 \paragraph{Implementation note.} Pass~1 forwards $[s \,|\, y^{(1)}]$
 as a self-contained sequence with $\texttt{logits\_to\_keep} = T_1$.
