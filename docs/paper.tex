@@ -622,6 +622,84 @@ Oracle scales PD gains by $1/\kappa$; blind uses nominal gains.}
 \label{tab:arm_a}
 \end{table}
 
+\paragraph{Arm B: frozen two-turn baseline (preliminary).}
+Table~\ref{tab:arm_b} reports the second completed arm: the same model
+in the two-turn probe-then-adapt prompt ($N{=}2$, temperature 0.8, 20
+sampled policies $\times$ 50 seeds per $\kappa$). Arm~B was run after
+adopting \texttt{Qwen3-4B-Instruct-2507} as the study's base model; for
+direct comparability, the 1-turn run was repeated on the same base and
+is included as the third column of Table~\ref{tab:arm_b}.
+Table~\ref{tab:arm_a}'s Qwen2.5-Coder-3B numbers remain as the original
+Arm~A record.
+
+\emph{The format gate fires, the value transfer does not.}
+60/60 samples open turn 1 with \texttt{\# MODE: main} and call
+\texttt{env.reset()} --- vs.\ 27\% \texttt{main}-mode usage on the
+earlier 3B baseline; 21/60 also step the env at least once with a known
+commanded acceleration. Yet \textbf{0/60 samples compute a $\kappa$
+estimate} from the probe data: the arithmetic that would turn the
+printed $\Delta v$ into a gain estimate ---
+$\kappa \approx \Delta v / (a_{\text{cmd}}\,\Delta t)$ at
+$\theta\!\approx\!\omega\!\approx\!0$ on a single step --- is never
+written, even when all of $a_{\text{cmd}}$, $\Delta v$, and $\Delta t$
+are on screen. The protocol's intent appears in 60/60 turn-1 comments
+(``probing the environment to gain insights about the hidden actuator
+gain $\kappa$''); the corresponding code appears zero times.
+
+\emph{Mean reward improves modestly; success rate does not.}
+The 2-turn per-sample median mean-reward exceeds the 1-turn median by
+12--18 points at every $\kappa$ ($-57.7$ vs.\ $-76.3$ at $\kappa=0.65$;
+$-74.2$ vs.\ $-86.8$ at $\kappa=0.80$; $-68.2$ vs.\ $-86.5$ at
+$\kappa=1.00$), consistent with the model writing slightly better
+controllers in turn~2 after seeing the state shape printed in turn~1 ---
+a weak format-side effect, not information gathering. Success rate
+stays $\leq 0.7\%$ across all $\kappa$, driven by a single
+$\kappa=0.65$ sample whose Pattern-D (reset-only) probe transferred no
+information and whose turn-2 body is a clean four-state PD controller
+earning $+5.7$ mean reward and 14\% per-seed success rate --- the
+first positive frozen-baseline reward on the slosh task, and an
+instance of \emph{control reasoning} improving rather than
+probe-then-adapt operating.
+
+The probe-then-adapt protocol is therefore \emph{nominal but not
+operative}: every sample passes the format gate, the prompt's
+instruction to probe is followed, but the value the protocol is
+supposed to deliver --- a $\kappa$ estimate that conditions the turn-2
+controller --- never materialises. The headline gap RL fine-tuning has
+to close is exactly to make $\kappa$-estimation arithmetic appear in
+turn-1 probe code and be \emph{read} by the turn-2 policy. The signal
+the trainer needs is supplied by the $G_2$ branched continuations of
+\S\ref{sec:per-turn-decomp}: a turn-1 probe that contains the
+information turn-2 needs should produce, on average, higher-reward
+$G_2$ leaves, and the per-turn baseline $\widehat V_1^{(i)}$ of
+Figure~\ref{fig:credit-assignment}~(c) is what propagates that signal
+back to turn-1 tokens.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$\kappa$ & Naive PD & Oracle PD & Qwen3-4B 1-turn & Qwen3-4B 2-turn \\
+\midrule
+0.65 & $0\%$   & $100\%$ & $0\%$   & $\mathbf{0.7\%}^{\dagger}$ \\
+0.80 & $46\%$  & $100\%$ & $0.5\%$ & $0\%$ \\
+1.00 & $100\%$ & $100\%$ & $0.7\%$ & $0\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Arms~A and~B on \texttt{Qwen3-4B-Instruct-2507} vs.\ reference
+controllers on the slosh-tank task. Success rate is the fraction of 50
+episodes simultaneously meeting all four settling conditions
+($|x{-}g|, |v|, |\theta|, |\omega|$), averaged over 20 generated
+policies. Naive uses nominal PD gains; oracle scales gains by $1/\kappa$.
+$^{\dagger}$The $\kappa=0.65$ Arm~B aggregate is driven by a single
+outlier sample with 14\% per-seed success; the per-sample distribution
+is otherwise within sampling noise of the 1-turn column at $n{=}20$
+(median rewards $-57.7$ vs.\ $-76.3$). The best Arm~B sample is the
+first positive frozen-baseline mean reward observed on this task.}
+\label{tab:arm_b}
+\end{table}
+
 \paragraph{Failure modes to declare upfront.} If F $\not>$ D under
 matched leaves, the hierarchical baseline does not improve results in this
 domain and the contribution reduces to ``branching amortizes generate
