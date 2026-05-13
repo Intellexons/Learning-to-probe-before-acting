@@ -250,95 +250,107 @@ LLM RL.
   panel/.style ={font=\small\bfseries},
 ]
 
+%%% Shared geometry for all three panels (vertical layout):
+%%%   prompt   y = 5.0   (centered)
+%%%   turn-1   y = 4.0
+%%%   tool     y = 3.1
+%%%   turn-2   y = 2.0
+%%%   reward   y ≈ 1.55  (just below leaves)
+%%%   bracket  y ∈ [0.8, 1.25]
+%%%   caption  y ≈ -0.2
+%%% x-axis: 0.2 / 1.2 / 2.2 / 3.2 for the four leaves; panel width ≈ 3.4
+
 %%% (a) Flat baseline — StarPO / Arm D
 \begin{scope}
-  \node[panel] at (1.7, 4.0) {(a) Flat baseline (StarPO)};
-  \node[prompt] (sa) at (0, 2) {$s$};
-  \node[t1] (y1a1) at (0.9, 3.1) {};
-  \node[t1] (y1a2) at (0.9, 0.9) {};
-  \node[tool] (ma1) at (1.6, 3.1) {$m_1$};
-  \node[tool] (ma2) at (1.6, 0.9) {$m_2$};
-  \node[t2] (y2a11) at (2.4, 3.5) {};
-  \node[t2] (y2a12) at (2.4, 2.7) {};
-  \node[t2] (y2a21) at (2.4, 1.3) {};
-  \node[t2] (y2a22) at (2.4, 0.5) {};
-  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
-  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
-  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
-  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+  \node[panel] at (1.7, 5.7) {(a) Flat baseline (StarPO)};
+  \node[prompt] (sa) at (1.7, 5.0) {$s$};
+  \node[t1] (y1a1) at (0.7, 4.0) {};
+  \node[t1] (y1a2) at (2.7, 4.0) {};
+  \node[tool] (ma1) at (0.7, 3.1) {$m_1$};
+  \node[tool] (ma2) at (2.7, 3.1) {$m_2$};
+  \node[t2] (y2a11) at (0.2, 2.0) {};
+  \node[t2] (y2a12) at (1.2, 2.0) {};
+  \node[t2] (y2a21) at (2.2, 2.0) {};
+  \node[t2] (y2a22) at (3.2, 2.0) {};
+  \node[rew, below=0.5mm of y2a11] {$R_{1,1}$};
+  \node[rew, below=0.5mm of y2a12] {$R_{1,2}$};
+  \node[rew, below=0.5mm of y2a21] {$R_{2,1}$};
+  \node[rew, below=0.5mm of y2a22] {$R_{2,2}$};
   \draw[arr] (sa) -- (y1a1);  \draw[arr] (sa) -- (y1a2);
   \draw[arr] (y1a1) -- (ma1); \draw[arr] (y1a2) -- (ma2);
   \draw[arr] (ma1) -- (y2a11); \draw[arr] (ma1) -- (y2a12);
   \draw[arr] (ma2) -- (y2a21); \draw[arr] (ma2) -- (y2a22);
-  \draw[red!70!black, thick] (3.75, 0.45) -- (3.95, 0.45)
-    -- (3.95, 3.55) -- (3.75, 3.55);
-  \node[bln, anchor=west] at (4.0, 2.0) {$\widehat V_0$};
-  \node[align=center, font=\tiny] at (1.9, -0.4)
+  % Single V_0 bracket spanning all four leaves, below rewards
+  \draw[red!70!black, thick] (-0.05, 1.20) -- (-0.05, 1.05)
+    -- (3.45, 1.05) -- (3.45, 1.20);
+  \node[bln, anchor=north] at (1.7, 1.00) {$\widehat V_0$};
+  \node[align=center, font=\tiny] at (1.7, 0.30)
     {Single baseline shared across both turns;\\
      $A^{(1)}\!=\!A^{(2)}\!=\!R_{i,j}-\widehat V_0$.};
 \end{scope}
 
 %%% (b) Per-turn learned critic — ArCHer
-\begin{scope}[xshift=5.4cm]
-  \node[panel] at (1.7, 4.0) {(b) Per-turn critic (ArCHer)};
-  \node[prompt] (sb) at (0, 2) {$s$};
-  \node[t1] (y1b1) at (0.9, 3.1) {};
-  \node[t1] (y1b2) at (0.9, 0.9) {};
-  \node[tool] (mb1) at (1.6, 3.1) {$m_1$};
-  \node[tool] (mb2) at (1.6, 0.9) {$m_2$};
-  \node[t2] (y2b11) at (2.4, 3.5) {};
-  \node[t2] (y2b12) at (2.4, 2.7) {};
-  \node[t2] (y2b21) at (2.4, 1.3) {};
-  \node[t2] (y2b22) at (2.4, 0.5) {};
-  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
-  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
-  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
-  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+\begin{scope}[xshift=4.8cm]
+  \node[panel] at (1.7, 5.7) {(b) Per-turn critic (ArCHer)};
+  \node[prompt] (sb) at (1.7, 5.0) {$s$};
+  \node[t1] (y1b1) at (0.7, 4.0) {};
+  \node[t1] (y1b2) at (2.7, 4.0) {};
+  \node[tool] (mb1) at (0.7, 3.1) {$m_1$};
+  \node[tool] (mb2) at (2.7, 3.1) {$m_2$};
+  \node[t2] (y2b11) at (0.2, 2.0) {};
+  \node[t2] (y2b12) at (1.2, 2.0) {};
+  \node[t2] (y2b21) at (2.2, 2.0) {};
+  \node[t2] (y2b22) at (3.2, 2.0) {};
+  \node[rew, below=0.5mm of y2b11] {$R_{1,1}$};
+  \node[rew, below=0.5mm of y2b12] {$R_{1,2}$};
+  \node[rew, below=0.5mm of y2b21] {$R_{2,1}$};
+  \node[rew, below=0.5mm of y2b22] {$R_{2,2}$};
   \draw[arr] (sb) -- (y1b1);  \draw[arr] (sb) -- (y1b2);
   \draw[arr] (y1b1) -- (mb1); \draw[arr] (y1b2) -- (mb2);
   \draw[arr] (mb1) -- (y2b11); \draw[arr] (mb1) -- (y2b12);
   \draw[arr] (mb2) -- (y2b21); \draw[arr] (mb2) -- (y2b22);
-  % Per-state learned values, drawn as side annotations on the boundary states
-  \node[bln, anchor=east] at (sb.west) {$\widehat V_\phi(s_0)$};
-  \node[bln, anchor=south] at (mb1.north) {$\widehat V_\phi(s_1^{(1)})$};
-  \node[bln, anchor=north] at (mb2.south) {$\widehat V_\phi(s_1^{(2)})$};
-  \node[align=center, font=\tiny] at (1.7, -0.4)
+  % Per-state learned-critic values, side-annotated on the boundary nodes.
+  % s_0 to the right of s, s_1^{(i)} between turn-1 variant and tool message.
+  \node[bln] at (sb.east) [anchor=west, xshift=1mm] {$\widehat V_\phi(s_0)$};
+  \node[bln] at (y1b1.west) [anchor=east, xshift=-1mm] {$\widehat V_\phi(s_1^{(1)})$};
+  \node[bln] at (y1b2.east) [anchor=west, xshift=1mm] {$\widehat V_\phi(s_1^{(2)})$};
+  \node[align=center, font=\tiny] at (1.7, 0.30)
     {Learned $\widehat V_\phi(s_n)$ at each boundary;\\
      $A^{(n)}\!=\!\widehat V_\phi(s_{n+1})-\widehat V_\phi(s_n)$.};
 \end{scope}
 
 %%% (c) Per-turn MC — Ours
-\begin{scope}[xshift=10.8cm]
-  \node[panel] at (1.9, 4.0) {(c) Per-turn MC (ours)};
-  \node[prompt] (sc) at (0, 2) {$s$};
-  \node[t1] (y1c1) at (0.9, 3.1) {};
-  \node[t1] (y1c2) at (0.9, 0.9) {};
-  \node[tool] (mc1) at (1.6, 3.1) {$m_1$};
-  \node[tool] (mc2) at (1.6, 0.9) {$m_2$};
-  \node[t2] (y2c11) at (2.4, 3.5) {};
-  \node[t2] (y2c12) at (2.4, 2.7) {};
-  \node[t2] (y2c21) at (2.4, 1.3) {};
-  \node[t2] (y2c22) at (2.4, 0.5) {};
-  \node[rew] at (3.05, 3.5) {$R_{1,1}$};
-  \node[rew] at (3.05, 2.7) {$R_{1,2}$};
-  \node[rew] at (3.05, 1.3) {$R_{2,1}$};
-  \node[rew] at (3.05, 0.5) {$R_{2,2}$};
+\begin{scope}[xshift=9.6cm]
+  \node[panel] at (1.7, 5.7) {(c) Per-turn MC (ours)};
+  \node[prompt] (sc) at (1.7, 5.0) {$s$};
+  \node[t1] (y1c1) at (0.7, 4.0) {};
+  \node[t1] (y1c2) at (2.7, 4.0) {};
+  \node[tool] (mc1) at (0.7, 3.1) {$m_1$};
+  \node[tool] (mc2) at (2.7, 3.1) {$m_2$};
+  \node[t2] (y2c11) at (0.2, 2.0) {};
+  \node[t2] (y2c12) at (1.2, 2.0) {};
+  \node[t2] (y2c21) at (2.2, 2.0) {};
+  \node[t2] (y2c22) at (3.2, 2.0) {};
+  \node[rew, below=0.5mm of y2c11] {$R_{1,1}$};
+  \node[rew, below=0.5mm of y2c12] {$R_{1,2}$};
+  \node[rew, below=0.5mm of y2c21] {$R_{2,1}$};
+  \node[rew, below=0.5mm of y2c22] {$R_{2,2}$};
   \draw[arr] (sc) -- (y1c1);  \draw[arr] (sc) -- (y1c2);
   \draw[arr] (y1c1) -- (mc1); \draw[arr] (y1c2) -- (mc2);
   \draw[arr] (mc1) -- (y2c11); \draw[arr] (mc1) -- (y2c12);
   \draw[arr] (mc2) -- (y2c21); \draw[arr] (mc2) -- (y2c22);
-  % V_1^(i) brackets — one per turn-1 variant
-  \draw[red!70!black, thick] (3.75, 2.65) -- (3.9, 2.65)
-    -- (3.9, 3.55) -- (3.75, 3.55);
-  \node[bln, anchor=west] at (3.95, 3.1) {$\widehat V_1^{(1)}$};
-  \draw[red!70!black, thick] (3.75, 0.45) -- (3.9, 0.45)
-    -- (3.9, 1.35) -- (3.75, 1.35);
-  \node[bln, anchor=west] at (3.95, 0.9) {$\widehat V_1^{(2)}$};
-  % V_0 bracket — root mean over all leaves, drawn outside V_1 brackets
-  \draw[red!70!black, thick, opacity=0.55] (4.55, 0.45) -- (4.75, 0.45)
-    -- (4.75, 3.55) -- (4.55, 3.55);
-  \node[bln, anchor=west, opacity=0.7] at (4.8, 2.0) {$\widehat V_0$};
-  \node[align=center, font=\tiny] at (2.1, -0.4)
+  % Inner V_1^(i) brackets — one per turn-1 prefix, spans G_2 leaves of that prefix
+  \draw[red!70!black, thick] (-0.05, 1.30) -- (-0.05, 1.15)
+    -- (1.45, 1.15) -- (1.45, 1.30);
+  \node[bln, anchor=north] at (0.7, 1.10) {$\widehat V_1^{(1)}$};
+  \draw[red!70!black, thick] (1.95, 1.30) -- (1.95, 1.15)
+    -- (3.45, 1.15) -- (3.45, 1.30);
+  \node[bln, anchor=north] at (2.7, 1.10) {$\widehat V_1^{(2)}$};
+  % Outer V_0 bracket — root mean over all four leaves, drawn beneath V_1 brackets
+  \draw[red!70!black, thick, opacity=0.55] (-0.05, 0.80) -- (-0.05, 0.65)
+    -- (3.45, 0.65) -- (3.45, 0.80);
+  \node[bln, anchor=north, opacity=0.7] at (1.7, 0.60) {$\widehat V_0$};
+  \node[align=center, font=\tiny] at (1.7, -0.05)
     {$\widehat V_1^{(i)}\!=\!\tfrac{1}{G_2}\!\sum_j R_{i,j}$ per prefix;\\
      $A^{(1)}_i {=} \widehat V_1^{(i)}{-}\widehat V_0,\ \
       A^{(2)}_{i,j} {=} R_{i,j}{-}\widehat V_1^{(i)}$.};
