@@ -1,533 +1,315 @@
-# Policy Self-Play Loop
+# Branched Multi-Turn GRPO for Code-Policy Generation
 
-Iterative post-training loop that teaches an LLM to write better policy code through self-play. The model generates Python `policy(state) -> action` functions, executes them in an environment, and uses LoRA fine-tuning to improve from its own outputs — repeating the cycle with the merged model each iteration.
+Iterative post-training loop that teaches an LLM to write better Python control policies on a single 24 GB GPU. The model emits a `def policy(state)` body over two chat turns — a rehearsal turn (probe the env or draft a policy) and a committed-policy turn — and gets gradient-based credit from a branched Monte Carlo rollout with per-turn advantages and a per-turn loss decomposition.
 
-Two trainers are supported: **DPO** (Direct Preference Optimization) and **GRPO** (Group Relative Policy Optimization). Pick one with the `loop.trainer` config key.
+See `docs/paper.tex` for the full method write-up and `docs/findings.tex` for the dated experiment log.
 
-**Base model:** Qwen2.5-Coder 3B Instruct (configurable in `configs/loop.yaml`)
+**Base model:** `Qwen/Qwen3-4B-Instruct-2507` (overridable via `LORA4VR_BASE_MODEL`).
+**Trainer:** `BranchedGRPOTrainer` (`src/branched_trainer.py`) — TRL 0.28 `GRPOTrainer` subclass with two overrides: branched rollout in `_generate_and_score_completions` and a two-pass turn-decomposed loss in `compute_loss` / `training_step`.
 
 ## How it works
 
-Generation and evaluation always load the base model and merge all previous LoRA adapters in GPU memory (bfloat16), so there is no disk-based merging or GGUF conversion.
-
-### DPO path (`trainer: dpo`)
+Each outer iteration runs one training subprocess (`scripts/05_train_grpo_branched.py`) and one eval pass (`scripts/08_eval.py`):
 
 ```
-For each iteration k:
-  1. Generate code candidates    — loads base model + adapters 0..k-1 on GPU
-  2. Score by running in env     — sandboxed subprocess execution
-  3. Build DPO preference pairs  — best vs median/worst by reward
-  4. Train LoRA adapter k        — loads base + adapters 0..k-1, trains new adapter
-  5. Evaluate                    — loads base + adapters 0..k, scores on held-out tasks
+For each outer iteration k:
+  1. Train         — load base + merge adapters 0..k-1, fresh LoRA on top,
+                     run max_steps inner GRPO updates; save adapter k
+  2. Evaluate      — load base + merge adapters 0..k, score on held-out tasks
 ```
 
-### GRPO path (`trainer: grpo`)
+Inside the trainer, one inner step does:
 
 ```
-For each iteration k:
-  1. GRPO training               — trainer generates G completions per task, scores
-                                   them in the same sandbox via src/reward.py, and
-                                   updates the policy in one combined step
-  2. Evaluate                    — loads base + adapters 0..k, scores on held-out tasks
+For each prompt s in the batch:
+  Phase A — sample G_1 turn-1 variants y^(1)_i ~ π(.|s)          (one generate call)
+  Phase B — execute each y^(1)_i in the sandbox -> tool message m_i
+  Phase C — for each i, sample G_2 continuations y^(2)_{i,j} ~ π(.|s, y^(1)_i, m_i)
+            (G_1 generate calls); score each leaf -> R_{i,j}
+  Phase D — empirical values
+              V_0       = mean over G_1 G_2 leaves
+              V_1^(i)   = mean over G_2 continuations of variant i
+            per-turn advantages, broadcast to that turn's tokens:
+              A^(1)_i   = V_1^(i) - V_0          on y^(1)_i
+              A^(2)_{i,j} = R_{i,j} - V_1^(i)    on y^(2)_{i,j}
+  Loss    — two passes with shared global token normalizer:
+              pass 1: forward [s | y^(1)] and backward L_turn1
+              pass 2: forward [s | y^(1) | m | y^(2)], logits_to_keep=T_turn2,
+                      and backward L_turn2
+            L_turn1 + L_turn2 equals the single-pass DAPO loss exactly
+            (token-summed normalizer + disjoint subsets). Peak LM-head
+            saved-activation memory drops from sum to max over turns.
 ```
 
-GRPO collapses generate-score-train into a single TRL `GRPOTrainer.train()` call. There are no intermediate `samples.jsonl`, `scores.jsonl`, or DPO pair files.
+Phase logs at boundaries A/B/C/D land in stdout (with `[step k task_id]` keys) so you can watch progress during long inner steps.
 
-### Choosing a trainer
+### Why the multi-turn protocol
 
-- **DPO** is simpler and more sample-efficient on tasks where the gap between best and worst is large. Easier to debug since the intermediate samples and pairs are visible on disk.
-- **GRPO** scales better to larger batches and avoids the explicit pair-building step. Recommended once you have a stable DPO baseline.
+The first turn is either a `main` scratchpad — arbitrary code that probes the env via stdout — or a draft `policy`. The tool returns either truncated stdout or the policy's scenario reward. The second turn must emit a `policy`, which gets scored and produces the trajectory's only scalar reward. This gives the model an explicit affordance for **system-identification probes** when hidden per-scenario parameters (e.g., the slosh-tank's actuator gain) are not in the state. Branched MC on turn-1 prefixes plus per-turn advantages is what lets the gradient distinguish "good probe, bad final policy" from "bad probe, lucky final policy".
+
+### Configuration restrictions for the loss decomposition
+
+The two-pass per-turn loss is exact under: token-summed normalizer (`loss_type ∈ {dapo, cispo}`), `beta = 0`, `num_iterations = 1`, token-level importance sampling. Per-row averaged variants (vanilla GRPO, BNPO, Dr.GRPO) don't decompose this way without different normalizer plumbing; the trainer asserts on entry.
 
 ## Prerequisites
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) (package manager)
-- A GPU. The default `configs/loop.yaml` profile (bf16, batch 4×4, max_length 4096) targets **L4 24 GB or larger**. For smaller GPUs:
-  - T4 16 GB → use `configs/loop_colab.yaml` (fp16, batch 1×16, max_length 2048)
-  - Apple Silicon (MPS) → use `configs/loop.yaml`; the trainer auto-detects MPS and falls back to fp16
-- Enough disk space for model weights (~6 GB for 3B base + LoRA adapters)
+- Python 3.11+ (project pins to 3.14 via `uv`)
+- [uv](https://docs.astral.sh/uv/)
+- A GPU. The production `configs/loop_grpo_branched_slosh.yaml` profile (`G_1=G_2=4`, `max_turn_tokens=400`, bf16) targets **22 GiB free** — comfortably an A100-40GB. L4 (24 GB) fits the smaller smoke config (`configs/smoke_test_slosh.yaml`, `G_1=G_2=2`, `max_turn_tokens=200`) with the older 3B base; whether Qwen3-4B fits on L4 even at smoke sizing is being characterized — see `docs/findings.tex`.
+- Disk: ~8 GB for the Qwen3-4B base + a few hundred MB per adapter.
 
 ## Setup
 
-Run the one-time setup script. It installs Python dependencies, downloads HF weights, creates the directory structure, and seeds `data/tasks/` with a CartPole train+eval task so a fresh checkout can run immediately:
-
 ```bash
 bash scripts/00_setup_env.sh
 ```
 
-If you already have your own task files in `data/tasks/`, the seed step skips them — your files are not overwritten.
+Installs deps, downloads the HF base model to `models/hf_base/iter_000/`, and creates the directory structure. Override the base model with `LORA4VR_BASE_MODEL=org/name` (default `Qwen/Qwen3-4B-Instruct-2507`).
 
 ## Quick start
 
-Smoke test first — runs a single short iteration to validate the setup:
+Smoke first — single outer iter, ~15-25 min on an A100:
 
 ```bash
-uv run python scripts/09_run_loop.py --config configs/smoke_test.yaml --run_name smoke
+uv run python scripts/09_run_loop.py \
+  --config configs/smoke_test_slosh.yaml \
+  --run_name smoke_001
 ```
 
-Then the full loop:
+Production slosh run — 23 outer iters, 2 inner steps each, end-of-iter eval:
 
 ```bash
-uv run python scripts/09_run_loop.py --config configs/loop.yaml
+uv run python scripts/09_run_loop.py \
+  --config configs/loop_grpo_branched_slosh.yaml \
+  --run_name slosh_grpo_run_1
 ```
-
-This is the main entry point. It runs all steps sequentially for each iteration and prints a progress table after each one. Switch trainers by pointing at a different config: `loop.yaml` (DPO, default), `loop_grpo.yaml` (GRPO), or `loop_colab.yaml` (DPO sized for T4).
 
 **Other runtimes:**
-- **Free Colab T4** — open `colab_launcher.ipynb` and follow the cells (uses `loop_colab.yaml`)
-- **GCP GPU VM** — see [Training on GCP](#training-on-gcp) below
+- **GCP GPU VM** — see [Training on GCP](#training-on-gcp). Fire-and-forget train via `gcp_find_gpu_and_train.sh` with auto-fetch and teardown.
 
 ## Scripts
 
-### Main entry points
+### Entry points
 
-#### `scripts/00_setup_env.sh` — One-time setup
+| Script | Purpose |
+|---|---|
+| `00_setup_env.sh` | One-time bootstrap: deps, HF base download, dir layout |
+| `09_run_loop.py` | Orchestrator: outer loop, train + eval per iter, W&B orchestrator run |
+| `05_train_grpo_branched.py` | Single outer iter's training subprocess (current trainer) |
+| `08_eval.py` | Single outer iter's eval subprocess (multi-turn rollouts) |
+| `eval_frozen_baseline.py` | Standalone N-turn eval against a frozen / merged-adapter checkpoint |
 
-Installs dependencies, downloads HF weights to `models/hf_base/iter_000/`, and creates the directory structure.
+The orchestrator handles all step chaining; you only invoke `09_run_loop.py` directly. The other scripts run as its subprocesses.
 
-```bash
-bash scripts/00_setup_env.sh
-```
-
-#### `scripts/09_run_loop.py` — Main orchestrator
-
-Runs the full training loop for the number of iterations specified in the config. This is the script you should use.
-
-```bash
-# Run with defaults (auto-generated run name, start from iteration 0)
-uv run python scripts/09_run_loop.py --config configs/loop.yaml
-
-# Name your experiment
-uv run python scripts/09_run_loop.py --config configs/loop.yaml --run_name my_experiment
-
-# Resume from a specific iteration
-uv run python scripts/09_run_loop.py --config configs/loop.yaml --run_name my_experiment --start_iter 3
-```
+#### `scripts/09_run_loop.py` flags
 
 | Flag | Description |
-|------|-------------|
-| `--config` | Path to YAML config (default: `configs/loop.yaml`) |
-| `--run_name` | Name for the run. Outputs go under `data/rollouts/<run_name>/`, `models/lora/<run_name>/`, etc. Auto-generated from timestamp if omitted. |
-| `--start_iter` | Iteration to resume from (default: `0`). Useful if a run was interrupted. |
+|---|---|
+| `--config` | YAML config path (required) |
+| `--run_name` | Run name. Outputs go under `models/lora/<run_name>/`, `data/progress/<run_name>/`, `data/rollouts/<run_name>/` |
+| `--start_iter` | Iteration to resume from (default `0`). Useful after a crash. |
 
----
+### Legacy scripts (DPO + single-turn GRPO)
 
-### Loop steps (called by the orchestrator)
-
-#### Step 1: `scripts/01_generate.py` — Generate code samples
-
-Loads the base HF model, merges all previous LoRA adapters in GPU memory, and generates N code candidates per task using `model.generate()`.
-
-```bash
-uv run python scripts/01_generate.py --iter 0 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required). At iter 0, uses the base model. At iter N, merges adapters 0..N-1. |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `data/rollouts/[<run_name>/]iter_000/samples.jsonl`
-
-#### Step 2: `scripts/02_score.py` — Score generated samples
-
-Executes each generated policy in the environment across all scenarios and records rewards. Each policy runs in a sandboxed subprocess with a timeout. Dangerous imports (os, subprocess, etc.) are blocked via static analysis.
-
-```bash
-uv run python scripts/02_score.py --iter 0 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required) |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `data/rollouts/[<run_name>/]iter_000/scores.jsonl`
-
-Also appends a row to the train progress CSV (`data/progress/<run_name>/train.csv`).
-
-#### Step 3: `scripts/03_build_dpo.py` — Build DPO preference pairs
-
-Takes the scored samples and builds (chosen, rejected) pairs for DPO training. For each task, the highest-reward sample is paired against the median and worst samples.
-
-```bash
-uv run python scripts/03_build_dpo.py --iter 0 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required) |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `data/dpo/[<run_name>/]iter_000_train.jsonl` (and `_eval.jsonl` if eval scores exist)
-
-#### Step 4: `scripts/04_train_dpo_lora.py` — Train LoRA adapter with DPO
-
-Loads the original base model, replays all previous LoRA adapters on top (merge-on-the-fly), then trains a new LoRA adapter using TRL's DPOTrainer. Automatically detects MPS (Apple Silicon) and adjusts settings.
-
-```bash
-uv run python scripts/04_train_dpo_lora.py --iter 0 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required) |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `models/lora/[<run_name>/]iter_000/` (adapter weights + tokenizer)
-
-#### Step 4 (alt): `scripts/04_train_grpo_lora.py` — Train LoRA adapter with GRPO
-
-Used when `loop.trainer: grpo`. Replaces steps 1–4 of the DPO path. Loads the base + previous adapters (same merge logic), then runs TRL's `GRPOTrainer`, which internally generates G completions per task, scores them via `src/reward.py` (which calls into the sandbox runner), and updates the policy in one combined step.
-
-```bash
-uv run python scripts/04_train_grpo_lora.py --iter 0 --config configs/loop_grpo.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required) |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `models/lora/[<run_name>/]iter_000/` (adapter weights + tokenizer)
-
-#### Step 5: `scripts/08_eval.py` — Evaluate on held-out tasks
-
-Loads the model with all adapters merged, generates a small number of samples (4 by default) on eval tasks, scores them, and writes a summary with per-task best and mean rewards.
-
-```bash
-uv run python scripts/08_eval.py --iter 1 --config configs/loop.yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--iter` | Iteration number (required). Merges adapters 0..iter-1. |
-| `--config` | YAML config path |
-| `--run_name` | Run name for output directory scoping |
-
-**Output:** `data/rollouts/[<run_name>/]iter_001/eval_summary.json`
-
-Also appends a row to the eval progress CSV (`data/progress/<run_name>/eval.csv`).
+`01_generate.py`, `02_score.py`, `03_build_dpo.py`, `04_train_dpo_lora.py`, `04_train_grpo_lora.py` are the older DPO and single-turn GRPO paths used for earlier experiments (puck environment, Qwen2.5-Coder-3B). They still work but the active path is `05_train_grpo_branched.py`. Configs `loop.yaml` / `loop_grpo.yaml` / `smoke_test*.yaml` correspond to those older pipelines.
 
 ## Project structure
 
 ```
 configs/
-  loop.yaml                  # DPO config, full size (L4/A100)
-  loop_colab.yaml            # DPO config, T4-sized
-  loop_grpo.yaml             # GRPO config
-  smoke_test.yaml            # 1-iteration validation config (DPO)
-  smoke_test_colab.yaml      # 1-iteration validation config (T4 DPO)
-  smoke_test_grpo.yaml       # 1-iteration validation config (GRPO)
-  prompt_template.txt        # Prompt template with placeholders
-colab_launcher.ipynb         # Colab notebook for running on a free T4
+  loop_grpo_branched_slosh.yaml   # production: slosh env, branched multi-turn GRPO
+  smoke_test_slosh.yaml           # smoke: 1 outer iter, G_1=G_2=2
+  loop_grpo_branched.yaml         # older: branched multi-turn GRPO on puck env
+  loop_grpo.yaml / loop.yaml      # legacy single-turn GRPO / DPO
+  smoke_test_grpo_branched.yaml   # legacy branched smoke (puck)
+  prompt_template.txt
 data/
-  tasks/
-    train.jsonl              # Training tasks (auto-seeded by 00_setup_env.sh)
-    eval.jsonl               # Held-out eval tasks (auto-seeded)
-  rollouts/                  # Generated samples + scores per iteration
-  dpo/                       # DPO preference pairs per iteration (DPO only)
-  progress/                  # CSV logs tracking reward over iterations
+  progress/<run>/                 # per-run CSVs and trainer_log_iter_*.json
+  rollouts/<run>/                 # rollout JSONs per outer iter
+docs/
+  paper.tex                       # method write-up
+  findings.tex                    # dated experiment log
+  methodology.tex
 models/
-  hf_base/iter_000/          # Original HF weights (downloaded during setup)
-  lora/                      # LoRA adapters per iteration
+  hf_base/iter_000/               # HF base weights (downloaded by 00_setup_env.sh)
+  lora/<run>/iter_NNN/            # LoRA adapter per outer iter
 scripts/
-  00_setup_env.sh            # One-time bootstrap (deps, model, dirs, seed tasks)
-  01..04_*.py, 08_eval.py    # Loop step scripts (see "Loop steps" above)
-  09_run_loop.py             # Orchestrator
-  gcp_startup.sh             # GCE VM startup script (see "Training on GCP")
-  gcp_launch_vm.sh           # One-shot: create VM, upload repo, run setup
-  gcp_fetch_artifacts.sh     # Pull a run's artifacts back to your Mac
-  gcp_destroy_vm.sh          # Delete VM (stop billing)
-  seed_tasks/                # CartPole seed train+eval tasks
+  00_setup_env.sh                 # bootstrap
+  05_train_grpo_branched.py       # current trainer subprocess
+  08_eval.py                      # current eval subprocess
+  09_run_loop.py                  # orchestrator
+  01..04_*.py                     # legacy DPO + single-turn GRPO
+  eval_frozen_baseline.py         # standalone N-turn eval
+  gcp_*.sh                        # VM lifecycle + train/eval wrappers (see below)
+  seed_tasks/
+    slosh_train.jsonl             # 24 per-(seed, κ) slosh training tasks
+    slosh_eval.jsonl              # 12 held-out slosh eval tasks
+    slosh_smoke_train.jsonl       # 2-row subset for smoke runs
+    slosh_tank_env.py             # slosh-tank env source
+    build_slosh_tasks.py          # regenerates the jsonls from the env
+    puck_*.jsonl, puck_tilted_plane_env.py    # earlier puck env (legacy)
 src/
-  config.py                  # Config schema validation (DPO + GRPO)
-  dataset.py                 # JSONL I/O, sample/score merging, DPO pair building
-  gcs_sync.py                # Optional GCS checkpoint sync (push/pull)
-  hf_generator.py            # HuggingFace model loading + generation
-  progress.py                # CSV progress tracking
-  prompts.py                 # Prompt template rendering + DPO formatting
-  reward.py                  # GRPO reward function (bridges sandbox runner to TRL)
-  runner.py                  # Sandboxed policy execution + scoring
+  branched_trainer.py             # current trainer (TRL 0.28 GRPOTrainer subclass)
+  multi_turn.py                   # rollout/turn execution + per-turn advantages
+  runner.py                       # sandboxed policy/main subprocess execution
+  prompts.py                      # multi-turn chat template rendering
+  diversity.py                    # DiversityCallback (W&B diagnostics)
+  dataset.py, config.py, progress.py, hf_generator.py, gcs_sync.py
+tests/                            # unit tests for trainer math, prompts, runner
 ```
 
 ## Configuration
 
-All settings live in `configs/loop.yaml`. Key options:
+Key knobs in `configs/loop_grpo_branched_slosh.yaml`:
 
 | Section | Key | Default | Description |
-|---------|-----|---------|-------------|
-| `loop` | `trainer` | `dpo` | Which trainer to use: `dpo` or `grpo` |
-| `loop` | `iterations` | 20 | Number of generate-train-evaluate cycles |
-| `generation` | `n_samples_per_task` | 16 | Code candidates per task per iteration (DPO only) |
-| `generation` | `temperature` | 0.8 | Sampling temperature (DPO only) |
-| `grpo` | `num_generations` | 16 | Completions per prompt G (GRPO only) |
-| `grpo` | `beta` | 0.0 | KL coefficient (GRPO only; 0.0 = no KL penalty) |
-| `lora` | `r` | 16 | LoRA rank |
-| `lora` | `target_modules` | q/k/v/o_proj | Attention layers to adapt |
-| `training` | `num_train_epochs` | 4 | Training epochs per iteration |
-| `training` | `beta` | 0.1 | DPO beta (preference strength; DPO only) |
-| `training` | `report_to` | `none` | `wandb` to enable W&B logging ([details](#optional-monitoring-with-weights--biases)) |
-| `paths` | `gcs_bucket` | _(unset)_ | Optional GCS bucket for checkpoint sync ([details](#optional-gcs-checkpoint-sync)) |
+|---|---|---|---|
+| `loop` | `iterations` | `23` | Outer cycles (train + eval per cycle) |
+| `loop` | `trainer` | `grpo_branched` | Selects `BranchedGRPOTrainer` via `09_run_loop.py` |
+| `branched` | `g1`, `g2` | `4`, `4` | Tree shape; `G_1 G_2` leaves per prompt |
+| `branched` | `max_turn_tokens` | `400` | Per-turn generation cap (trajectory ≈ `2·max_turn_tokens + tool_msg`) |
+| `grpo` | `loss_type` | `dapo` | Token-summed clipped surrogate; required for the two-pass decomposition |
+| `grpo` | `beta`, `num_iterations` | `0`, `1` | Required values for the two-pass decomposition |
+| `grpo` | `epsilon`, `epsilon_high` | `0.2`, `0.28` | Asymmetric DAPO clip |
+| `grpo` | `scale_rewards` | `batch` | Reward normalization on the assembled (B, T) tensor |
+| `training` | `per_device_train_batch_size` | `16` | = `g1 * g2` (one prompt's worth of trajectories per inner step) |
+| `training` | `num_train_epochs` | `1` | Passes over the train task set per outer iter |
+| `eval` | `n_turns` | `2` | Eval rollouts match the training protocol's turn count |
+| `lora` | `r`, `alpha` | `16`, `32` | LoRA rank + scaling on q/k/v/o_proj |
+| `training` | `report_to` | `wandb` | `wandb` or `none` ([W&B section](#optional-monitoring-with-weights--biases)) |
+| `paths` | `gcs_bucket` | _(unset)_ | Optional GCS checkpoint sync ([details](#optional-gcs-checkpoint-sync)) |
 
 ## Task format
 
-The repo ships with a small CartPole train+eval pair under `scripts/seed_tasks/`, which `00_setup_env.sh` copies into `data/tasks/` if you don't already have your own files there. To bring your own tasks, drop JSONL files into `data/tasks/` before running setup and the seeds won't overwrite them.
-
-Each line in `data/tasks/train.jsonl` is a JSON object:
+Tasks live in `scripts/seed_tasks/*.jsonl`. Each line is one task with one `scenarios` entry (per-(seed, κ) split — see [#49](https://github.com/nima-siboni/LoRA4VR/pull/49) — so the branched MC value estimator's invariant holds: all `G_2` continuations of a given turn-1 variant see byte-identical env state). Schema:
 
 ```json
 {
-  "task_id": "cartpole_001",
-  "env_class": "CartPoleEnv",
-  "env_code": "import math\n...",
-  "state_spec": "state is a dict with keys: ...",
-  "action_spec": "action is an int: 0 or 1",
-  "goal": "Keep the pole balanced...",
+  "task_id": "slosh_tank_train_s0_k0.65",
+  "env_class": "SloshTankEnv",
+  "env_code": "from dataclasses import dataclass\n...",
+  "state_spec": "state is a dict with keys: t, x, v, theta, omega, goal, steps_left",
+  "action_spec": "action is a float — commanded cart acceleration in m/s²",
+  "goal": "Move the cart to the goal position and settle the liquid...",
   "scenarios": [
-    {"scenario_id": "s0", "seed": 0},
-    {"scenario_id": "s1", "seed": 1}
+    {"scenario_id": "s0_k0.65", "seed": 0, "kappa": 0.65}
   ]
 }
 ```
 
-The environment code is included directly in the prompt so the model can read it and write a policy against it.
+The full env source is embedded in `env_code` so the prompt template can paste it into the model's context — the model must read the dynamics, not pattern-match an environment name.
+
+`build_slosh_tasks.py` regenerates the jsonls when the env source changes.
 
 ## Training on GCP
 
-End-to-end playbook for running a training loop on a Google Cloud GPU VM.
-Sized for a single NVIDIA L4 (24 GB) running the full `configs/loop.yaml`
-profile; swap the machine type for other GPUs.
+End-to-end playbook for running on a Google Cloud GPU VM.
 
 ### Quick automation (recommended)
 
-Three scripts wrap the full lifecycle. Override defaults with env vars
-(`LORA4VR_INSTANCE`, `LORA4VR_ZONE`, `LORA4VR_PROVISIONING=SPOT`, etc.).
+The whole lifecycle is wrapped by a small set of scripts. The shortest path is:
 
 ```bash
-bash scripts/gcp_launch_vm.sh                       # create VM, upload repo, run setup
-bash scripts/gcp_fetch_artifacts.sh <run_name>      # pull results back to ~/Downloads/
-bash scripts/gcp_destroy_vm.sh                      # delete VM, stop billing
+# Train: walk GPU zones until capacity is found, then chain into gcp_train.sh
+bash scripts/gcp_find_gpu_and_train.sh \
+  configs/loop_grpo_branched_slosh.yaml slosh_grpo_run_1 --wait
+
+# Eval against a specific run's iter_NNN adapter on a fresh L4
+bash scripts/gcp_find_gpu_and_eval.sh slosh_grpo_run_1 --wait -- --iter 22
+
+# Manual teardown if you didn't use --wait
+bash scripts/gcp_destroy_vm.sh --yes
 ```
 
-The launcher is idempotent: re-running it after a partial failure picks
-up where it left off (skips create if the VM exists, skips upload if the
-tarball is already there, etc.). Each step prints a `[N/6]` progress
-header so you can see where it is.
+**`gcp_find_gpu_and_train.sh`** walks a preset list of zones, attempting `gcloud compute instances create` in each until one has capacity (stockouts surface as `ZONE_RESOURCE_POOL_EXHAUSTED`). On the first successful zone it chains into `gcp_train.sh` which uploads the repo, runs `00_setup_env.sh`, starts the training in a detached tmux session, and (with `--wait`) blocks locally polling for a `/tmp/lora4vr-<run>.done` marker — then auto-fetches artifacts and destroys the VM. Non-stockout failures (e.g. quota errors) abort the search to avoid leaving partial VMs behind.
 
-The rest of this section explains the underlying `gcloud` commands
-those scripts run, in case you want to understand or customize them.
+`--accelerator` selects the GPU class:
+
+```
+l4         (default)  g2-standard-8     1× nvidia-l4              24 GiB
+a100-40gb              a2-highgpu-1g     1× nvidia-tesla-a100      40 GiB
+a100-80gb              a2-ultragpu-1g    1× nvidia-a100-80gb       80 GiB
+h100                   a3-highgpu-1g     1× nvidia-h100-80gb       80 GiB
+```
+
+Override the zone preset with `LORA4VR_ZONE_LIST="europe-west4-b europe-west1-c ..."`.
 
 ### Prerequisites
 
-1. **gcloud SDK** installed locally (`gcloud --version`) and authenticated
-   against the project you want to bill:
+1. **gcloud SDK** authenticated against the billing project:
    ```bash
    gcloud auth login
    gcloud config set project <your-project-id>
-   gcloud config set compute/region europe-west3
-   gcloud config set compute/zone europe-west3-a
    ```
-2. **Billing account** linked to the project, and **Compute Engine API**
-   enabled (`gcloud services enable compute.googleapis.com`).
-3. **GPU quota.** New personal projects have `GPUS_ALL_REGIONS = 0` by
-   default, which blocks all GPU VMs regardless of regional quotas.
-   Request at least `1` at
-   [Console → IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas)
-   (filter `GPUs (all regions)`). Approval can take minutes to a few days.
-4. **(Optional) Spot VMs.** To use preemptible pricing, also raise
-   `Preemptible CPUs` in your region to at least `8` — separate request.
+2. **Compute Engine API** enabled (`gcloud services enable compute.googleapis.com`).
+3. **GPU quota.** Fresh projects start with `GPUS_ALL_REGIONS = 0` (or 1 by default in some cases) and `NVIDIA_*_GPUS = 0` per region. Request at least `1` for the GPU class you intend to use at [Console → IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas). Approval can take hours to days; for new projects the standard denial reason is insufficient billing history.
+4. **`.env`** in the repo root with `WANDB_API_KEY=...` if you want W&B logging.
 
-### 1. Create the VM
+### The underlying steps
 
-One-shot create for 1×L4 on-demand in `europe-west3-a`, running the
-prep-only startup script from this repo:
+If you'd rather drive things by hand, the `gcp_*.sh` wrappers are individually scriptable:
 
-```bash
-gcloud compute instances create lora4vr-train-1 \
-  --zone=europe-west3-a \
-  --machine-type=g2-standard-8 \
-  --accelerator=type=nvidia-l4,count=1 \
-  --image-family=common-cu129-ubuntu-2204-nvidia-580 \
-  --image-project=deeplearning-platform-release \
-  --boot-disk-size=100GB \
-  --boot-disk-type=pd-balanced \
-  --maintenance-policy=TERMINATE \
-  --scopes=cloud-platform \
-  --metadata-from-file=startup-script=scripts/gcp_startup.sh
-```
+- `gcp_launch_vm.sh` — creates the VM, uploads the repo, runs `gcp_startup.sh` (which seeds the dir layout and downloads the HF base model).
+- `gcp_train.sh <config> <run_name> [--wait]` — kicks off training in a detached tmux session, captures the orchestrator's real exit code via `${PIPESTATUS[0]}`, and (with `--wait`) auto-fetches + destroys on completion.
+- `gcp_fetch_artifacts.sh <run_name>` — pulls `models/lora/<run>`, `data/progress/<run>`, `data/rollouts/<run>` from the VM to `~/Downloads/lora4vr_<run>/`.
+- `gcp_destroy_vm.sh [--yes]` — deletes the VM and its boot disk.
+- `gcp_eval.sh`, `gcp_find_gpu_and_eval.sh`, `gcp_fetch_eval.sh` — same pattern for eval-only runs.
 
-Notes:
-- `--maintenance-policy=TERMINATE` is **required** for any GPU VM.
-- `--scopes=cloud-platform` lets the VM talk to GCS for the optional
-  checkpoint sync (see below). Harmless if you don't use GCS.
-- For a private repo, override the clone URL via metadata:
-  `--metadata=LORA4VR_REPO_URL=https://...`, or skip cloning and
-  `gcloud compute scp` the working copy up manually after step 2.
-- For Spot (once `Preemptible CPUs` quota is raised), add:
-  `--provisioning-model=SPOT --instance-termination-action=STOP`
-
-### 2. Watch the bootstrap
-
-The startup script logs to the GCE serial console and to
-`/var/log/lora4vr-startup.log` on the VM. Tail the serial console from
-your workstation:
-
-```bash
-gcloud compute instances get-serial-port-output lora4vr-train-1 \
-  --zone=europe-west3-a | tail -50
-```
-
-Bootstrap is complete when you see `lora4vr startup script complete` or
-when `/var/run/lora4vr-ready` exists on the VM. Expect 3–8 minutes on a
-fresh VM (most of it is the 6 GB HF model download).
-
-### 3. SSH in and train
-
-```bash
-gcloud compute ssh lora4vr-train-1 --zone=europe-west3-a
-```
-
-On the VM:
-```bash
-cd /opt/lora4vr
-uv run python scripts/09_run_loop.py \
-  --config configs/loop.yaml \
-  --run_name my_run
-```
-
-Leave the SSH session open to watch the run, or detach with `tmux` /
-`nohup` if you want to disconnect.
+Default zone for VM lifecycle scripts is `europe-west3-a` (override via `LORA4VR_ZONE`). The find-gpu wrappers ignore this and walk their own preset list (`europe-west4`, `us-central1`, etc., depending on `--accelerator`).
 
 ### Optional: monitoring with Weights & Biases
 
-For a web UI showing GPU memory, GPU utilization, loss curves, and the
-per-iteration reward trajectory, enable the built-in W&B integration.
+Two W&B runs are created per training session:
+- The **inner trainer** logs per-inner-step metrics (loss, KL, rewards, branched diagnostics like `branched/V0`, `branched/v1_signal_ratio`, `branched/generate_calls`) if `training.report_to: wandb`.
+- The **orchestrator** opens `<run_name>-orchestrator` and replays each outer iter's CSV row (train success rate, mean/max reward, eval row) once that iter finishes — giving an outer-iter view alongside the inner-step view.
+
 One-time setup on the VM:
 
 ```bash
 uv run wandb login   # paste API key from https://wandb.ai/authorize
 ```
 
-Then add one key to your training config:
-
-```yaml
-training:
-  report_to: wandb
-  # wandb_project: lora4vr   # optional, defaults to "lora4vr"
-```
-
-When set, two things happen:
-- TRL's `DPOTrainer` / `GRPOTrainer` log per-step metrics (loss, LR, KL,
-  reward margins) plus **system metrics** (GPU mem, GPU util, CPU mem,
-  disk, network) to W&B automatically — no extra code.
-- The orchestrator opens a separate run named `<run_name>-orchestrator`
-  in the same W&B group and logs the per-iteration `train.csv` /
-  `eval.csv` rows (success rate, mean/max reward) so you can see the RL
-  improvement curve next to the training-step metrics.
-
-W&B's free Personal plan covers this use case at **$0/month** (unlimited
-metrics, 100 GB artifact storage that we don't touch). When `report_to`
-is unset or `"none"`, nothing is uploaded.
-
-### 4. Get artifacts back to your workstation
-
-When training finishes, copy the outputs down before deleting the VM:
-
-```bash
-gcloud compute scp --recurse --zone=europe-west3-a \
-  lora4vr-train-1:/opt/lora4vr/models/lora \
-  lora4vr-train-1:/opt/lora4vr/data/progress \
-  lora4vr-train-1:/opt/lora4vr/data/rollouts \
-  ~/Downloads/lora4vr_results/
-```
-
-Egress to your workstation is ~$0.12/GB, so a full ~1–2 GB run is
-roughly $0.15–0.25.
-
-### 5. Tear down
-
-**Delete the VM** — this stops all billing for compute, GPU, and the
-boot disk:
-
-```bash
-gcloud compute instances delete lora4vr-train-1 --zone=europe-west3-a
-```
-
-⚠️ `gcloud compute instances stop` halts the GPU/CPU charges but keeps
-the boot disk billing active (~€4/month for a 100 GB pd-balanced disk).
-For a one-shot run, always prefer `delete`.
+The `gcp_train.sh` wrapper picks up `WANDB_API_KEY` from your local `.env` and forwards it inline so it never lands on disk.
 
 ### Optional: GCS checkpoint sync
 
-For multi-hour runs, Spot/preemptible VMs, or anything you want to
-resume after a reboot, enable sync by adding one key to the config:
+For long runs on Spot VMs, set `paths.gcs_bucket` in the config to a bucket in the same region as the VM. `09_run_loop.py` then `gsutil rsync`'s `models/lora/<run>/`, `data/progress/<run>/`, and `data/rollouts/<run>/` to `gs://<bucket>/runs/<run>/` after each outer iter, and pulls them back down on `--start_iter > 0`.
 
 ```yaml
 paths:
   gcs_bucket: my-bucket-name
 ```
 
-When set, `09_run_loop.py` calls `gsutil rsync` after each iteration to
-push the per-run subtrees — `lora_dir`, `rollouts_dir`, `data/progress/`,
-plus `dpo_dir` when `loop.trainer` is `dpo` — to
-`gs://<bucket>/runs/<run>/`. On resume (`--start_iter > 0`), it pulls
-the same tree back down first. When the key is unset or empty, sync is
-a no-op and local runs are unaffected.
-
-Create the bucket **in the same region as the VM** so the rsync traffic
-is free (cross-region egress is $0.08/GB):
-
-```bash
-gsutil mb -l europe-west3 gs://<your-unique-bucket-name>/
-```
-
-Requires `gsutil` on PATH (preinstalled on Deep Learning VM images).
-
-### Resume an interrupted run
-
-If the VM was preempted / restarted mid-training, create a fresh VM the
-same way and resume from the last completed iteration:
-
-```bash
-# On the new VM
-cd /opt/lora4vr
-uv run python scripts/09_run_loop.py \
-  --config configs/loop.yaml \
-  --run_name my_run \
-  --start_iter 7          # whatever iteration was last pushed to GCS
-```
-
-Resume only works when `paths.gcs_bucket` is set in the config — the
-orchestrator pulls iters `0..start_iter-1` from GCS before starting.
+Same-region rsync is free; cross-region egress is $0.08/GB.
 
 ### Cost sanity-check
 
-| Item | Rate (europe-west3, on-demand) | Per full 20-iter run |
+| Item | Rate (europe-west4, on-demand) | Per 4-8 hr run |
 |---|---|---|
-| VM (`g2-standard-8` + 1×L4) | ~€0.70/hr | ~€3–6 for 4–8 hr |
-| Boot disk (100 GB pd-balanced) | ~€0.14/day | ~€0.05 while running |
-| GCS storage (Standard, ~2 GB) | ~€0.05/month | ~€0.01/month |
-| Egress GCS→workstation | $0.12/GB | ~€0.15–0.25 once |
+| L4 VM (`g2-standard-8` + 1×L4) | ~$0.70/hr | $3–6 |
+| A100-40GB VM (`a2-highgpu-1g`) | ~$3.67/hr | $15–30 |
+| Boot disk (100 GB pd-balanced) | ~$0.14/day | ~$0.05 |
+| Egress to workstation | $0.12/GB | $0.10–0.25 once |
 
-Spot brings the VM rate down ~70% (~€0.21/hr) — worth the extra quota
-request if you plan to run more than a few experiments.
+Spot variants drop the VM rate ~70% — worth the extra `Preemptible CPUs` quota request if you'll run many experiments.
 
 ## Tracking progress
 
-Each iteration appends to CSV files under `data/progress/<run_name>/`:
+Per-run files under `data/progress/<run_name>/`:
 
-- **train.csv** — success rate, mean/max reward from generation+scoring
-- **eval.csv** — eval task performance per iteration
+- `train.csv` — per-outer-iter train rollout stats
+- `eval.csv` — per-outer-iter eval rollout stats
+- `trainer_log_iter_NNN.json` — TRL's per-inner-step log history, replayed to the orchestrator W&B run at end-of-iter
 
-The loop prints a formatted table after each iteration. You can also print it manually:
+The orchestrator prints a formatted table after each outer iter. To print manually:
 
 ```python
 from src.progress import print_progress_table
 print_progress_table(run_name="my_experiment")
 ```
+
+## References
+
+- Paper: `docs/paper.tex`
+- Experiment log: `docs/findings.tex`
+- Methodology notes: `docs/methodology.tex`
