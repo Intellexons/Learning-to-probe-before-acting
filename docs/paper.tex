@@ -139,7 +139,7 @@ scratchpad turn between prompt and committed code.
 \label{sec:setup}
 
 The agent is a language model $\pi_\theta$ over chat-template
-trajectories. The base is \texttt{Qwen2.5-Coder-3B-Instruct} with
+trajectories. The base is \texttt{Qwen3-4B-Instruct-2507} with
 frozen weights $W$; $\theta$ parameterizes a LoRA adapter
 $W' = W + AB^\top$. A task $\mathcal{T}$ specifies environment source
 code, $S$ scenarios $\{\sigma_i\}$ that vary the seed and hidden
@@ -449,52 +449,62 @@ and similar two-line tasks are solved at iteration 0 by the base
 model, giving a flat learning curve. LunarLander, Pendulum,
 MountainCar, and other named environments are heavily represented in
 pretraining corpora, so any improvement is confounded with recall
-rather than learning. The task therefore requires source code that the model has to
-\emph{read} rather than recognize, with non-trivial dynamics and a
-clear ceiling above the base-model prior. The puck-on-tilted-plane
-environment below was designed to fit those constraints: a small
-custom dynamics file, hidden per-scenario parameters that defeat
-look-up strategies, and a tight thrust envelope that rules out the
-naive one-line policy.
+rather than learning. The task therefore requires source code that the
+model has to \emph{read} rather than recognize, with non-trivial
+dynamics and a clear ceiling above the base-model prior. The
+\emph{slosh-tank} environment used here was designed to fit those
+constraints: a small custom dynamics file (a cart carrying liquid
+modelled as a damped pendulum mode), hidden per-scenario parameters
+that defeat look-up strategies, and a four-condition success
+criterion that rules out policies that ram the cart to position
+without settling the liquid. The full env source and dimensionless
+analysis are in Appendix~\ref{app:slosh}.
 
 A second motivation, specific to the multi-turn protocol, is partial
-observability. The hidden tilt, drag, and thrust limit are not part
-of the state vector but they fully determine which control gains
-work; a policy that writes itself blind to those parameters is
-limited to whatever conservative gains succeed across the whole
-prior. The protocol gives the model an explicit affordance for
-\emph{system-identification probes} in the rehearsal turn: a
-\texttt{main} scratchpad that applies short thrust patterns,
-inspects the resulting velocities via stdout, and uses the readings
-to size the committed policy's gains. Whether the trained model
-actually exploits this affordance --- rather than collapsing to a
-robust prior --- is itself an empirical question the protocol makes
-testable.
+observability. The hidden actuator gain $\kappa$ (and, in future
+configurations, action delay $D$, deadband $b$, slosh length $L$,
+damping $c$) are not part of the state vector but they fully
+determine which control gains work; a policy that writes itself
+blind to those parameters is limited to whatever conservative gains
+succeed across the whole prior. The protocol gives the model an
+explicit affordance for \emph{system-identification probes} in the
+rehearsal turn: a \texttt{main} scratchpad that commands short
+acceleration pulses, reads the resulting velocity change via
+\texttt{stdout}, and uses the ratio $\Delta v / (a_\text{cmd}\,
+\Delta t)$ to estimate $\kappa$ before committing the final policy.
+Whether the trained model actually exploits this affordance --- rather
+than collapsing to a robust prior --- is itself an empirical
+question the protocol makes testable, and one that Arm~B
+(\S\ref{sec:eval}) shows the frozen base model fails: it opens the
+format gate but never writes the arithmetic.
 
-\paragraph{Environment.} A 2D puck-on-tilted-plane controller. The
-puck moves in $[-6, 6]^2$ under a constant hidden tilt $(t_x, t_y)$
-and linear drag $\mu$; the policy receives
-$\{p_x,p_y,v_x,v_y,g_x,g_y\}$ and must drive the puck to a goal
-within 120 steps. Hidden parameters --- tilt, drag, thrust limit
-$a_{\max}$, initial velocity --- vary per scenario and are not in the
-state. The thrust envelope is set to
-$a_{\max} = \|\text{tilt}\|_2 \times 1.05 + \epsilon$ so a naive
-straight-at-goal policy fails because it cannot cancel tilt drift.
-Per-step reward is $-\Delta t\cdot\text{dist}(p, g)$ with a $+50$
-bonus on reaching the goal; errored episodes hit the floor of
-\S\ref{sec:setup}.
+\paragraph{Environment summary.} A one-dimensional cart with a damped
+pendulum slosh mode. The policy receives
+$\{t, x, v, \theta, \omega, g, \text{steps\_left}\}$ and emits a
+commanded acceleration clipped to $[-1, 1]$\,m/s$^2$. Episode length
+is 105 steps ($\tau = 2.35$ in the dimensionless analysis of
+Appendix~\ref{app:slosh}); success requires
+$|x{-}g|<\epsilon_x$, $|v|<\epsilon_v$, $|\theta|<\epsilon_\theta$,
+$|\omega|<\epsilon_\omega$ simultaneously. The V1 configuration
+treats actuator gain $\kappa \in \{0.65, 0.80, 1.00\}$ as the only
+hidden unknown; per-step reward combines tracking and settling terms;
+errored episodes hit the floor of \S\ref{sec:setup}.
 
-\paragraph{Baseline gap.} Two hand-written policies fix the headroom:
-naive aim ($\approx 26\%$ goal rate over 200 seeds) and
-PD-with-tilt-feedforward ($\approx 73\%$). The gap is the room
-LoRA fine-tuning has to exploit. The analogous baseline gap on the
-slosh-tank environment (used for the experimental arms in
-\S\ref{sec:eval}) is established by a $\kappa$ sweep of nominal-PD
-vs.\ oracle-PD success rates in Appendix~\ref{app:slosh-sweep}.
+\paragraph{Baseline gap.} Hand-written reference controllers
+characterise the headroom RL fine-tuning has to exploit. Blind
+nominal PD goes from $0\%$ success at $\kappa=0.65$ to $100\%$ at
+$\kappa=0.90$ in a smooth S-curve, while an oracle that rescales the
+PD command by $1/\kappa$ stays at $100\%$ across the full
+$\kappa$ range. The full sweep is reported in
+Appendix~\ref{app:slosh-sweep}; at the chosen V1 levels
+$\kappa\in\{0.65, 0.80, 1.00\}$ the blind-vs-oracle gap is
+$100, 49.5, 0$\,pp respectively --- one stress level, one transitional
+level, and one nominal level.
 
-\paragraph{Model and compute.} \texttt{Qwen2.5-Coder-3B-Instruct},
-LoRA rank $r=16$ on attention and MLP projections, on a single
-24\,GB L4 GPU. bf16 weights, gradient checkpointing on. The setup uses
+\paragraph{Model and compute.} \texttt{Qwen3-4B-Instruct-2507}
+($\sim 4 \cdot 10^9$ parameters, 36 layers, $d=2560$, $|V|=151{,}936$),
+LoRA rank $r=16$ on attention projections, on a single 24\,GB L4 GPU.
+bf16 weights, gradient checkpointing on. The setup uses
 $G_1 = G_2 = 4$ (16 leaves per prompt) and a per-turn token cap of
 $400$.
 
@@ -550,16 +560,21 @@ F --- Branched, hierarchical (ours) & $G_1{\times}G_2$ tree, trained & $A^{(1)}_
 they see the same number of scored trajectories per step. D uses
 $2G$ \texttt{generate} calls per prompt; F uses $1+G_1$. Report both
 equal-rollouts and equal-wall-clock comparisons. Frozen arms (A, B)
-use the same Qwen2.5-Coder-3B-Instruct base with no gradient updates,
-and serve as training-free references analogous to Voyager- or
-FunSearch-style frozen-LLM uses of the code-policy interface.}
+use \texttt{Qwen3-4B-Instruct-2507} (\S\ref{sec:setup}) with no
+gradient updates, and serve as training-free references analogous to
+Voyager- or FunSearch-style frozen-LLM uses of the code-policy
+interface. (Table~\ref{tab:arm_a}'s Qwen2.5-Coder-3B numbers are
+preserved as the historical Arm~A record from the prior base model;
+the current 1-turn re-run on Qwen3-4B is in Table~\ref{tab:arm_b}'s
+third column.)}
 \label{tab:ablation}
 \end{table}
 
-\paragraph{Primary metric.} Held-out goal rate on a stress
-distribution (more extreme tilts/drag than train) at the best
-checkpoint, reported as median and IQR over $\geq 3$ seeds per arm,
-plotted against gradient steps and against wall-clock. Statistical
+\paragraph{Primary metric.} Held-out four-condition success rate on
+a stress distribution (more extreme actuator-gain values than train,
+i.e.\ $\kappa$ further from $1$) at the best checkpoint, reported as
+median and IQR over $\geq 3$ seeds per arm, plotted against gradient
+steps and against wall-clock. Statistical
 test: paired Wilcoxon over per-seed best-checkpoint goal rates;
 report effect size, not just $p$. The minimum convincing comparison
 is F $>$ D at matched leaves.
@@ -803,10 +818,10 @@ because the asymmetry between them is what motivates the
 decomposition: \emph{parameter weights}, \emph{per-position activations
 saved for backward}, and \emph{per-position output of the LM head}.
 
-\emph{Transformer body.} A stack of $L \approx 36$ blocks (attention
-$+$ MLP), holding the bulk of the $3{\cdot}10^9$ parameters. Each
-block produces per-position activations of width $O(d)$ with
-$d \approx 2048$. Without optimization the body's saved activations
+\emph{Transformer body.} A stack of $L = 36$ blocks (attention
+$+$ MLP), holding the bulk of the ${\sim}4{\cdot}10^9$ parameters.
+Each block produces per-position activations of width $O(d)$ with
+$d = 2560$. Without optimization the body's saved activations
 for backward are $O(L \cdot d)$ per position. We use gradient
 checkpointing, which recomputes intermediate block activations during
 backward instead of storing them, leaving only $O(d)$ per position
@@ -814,17 +829,18 @@ saved at checkpoint boundaries. So in our setup the body holds many
 parameters but small per-position activations.
 
 \emph{LM head.} A single linear layer of shape $(d, |V|)$:
-${\sim}3{\cdot}10^8$ parameters --- modest --- but its per-position
-\emph{output} is the full logit vector of width $|V| \approx
-152{,}000$. The head sits at the end of the graph, so checkpointing
-it would buy nothing (there is nothing upstream to recompute through
-the loss): its full $(B, T, |V|)$ output is held until backward, with
-an equal-sized autograd buffer for the gradient.
+${\sim}3.9{\cdot}10^8$ parameters --- modest --- but its per-position
+\emph{output} is the full logit vector of width
+$|V| = 151{,}936 \approx 152{,}000$. The head sits at the end of the
+graph, so checkpointing it would buy nothing (there is nothing
+upstream to recompute through the loss): its full $(B, T, |V|)$
+output is held until backward, with an equal-sized autograd buffer
+for the gradient.
 
 \emph{The asymmetry.} Once gradient checkpointing is on, the body
-keeps roughly $d \approx 2{,}000$ floats of activation per position,
-while the LM head keeps roughly $|V| \approx 152{,}000$. The head's
-per-position activation is ${\sim}75\times$ the body's, and unlike
+keeps $d \approx 2{,}500$ floats of activation per position, while
+the LM head keeps $|V| \approx 152{,}000$. The head's
+per-position activation is ${\sim}60\times$ the body's, and unlike
 the body it cannot be checkpointed away. Body parameter weights are
 larger in absolute terms but they are loaded once and shared across
 all positions in the batch; the head's $(B, T, |V|)$ output scales
@@ -944,11 +960,11 @@ $\texttt{logits\_to\_keep} = T_2$ behaves as expected.
 \section{Slosh-tank environment: design and dimensionless parameter analysis}
 \label{app:slosh}
 
-This appendix introduces the slosh-tank environment and derives the
-dimensionless groups that govern whether a hidden unknown can actually
-be exploited by a probe-and-adapt two-turn policy. The analysis applies
-to any custom mechanics environment designed for this protocol; the
-puck env of \S\ref{sec:setup} is the prior case.
+This appendix introduces the slosh-tank environment of \S\ref{sec:eval}
+and derives the dimensionless groups that govern whether a hidden
+unknown can actually be exploited by a probe-and-adapt two-turn policy.
+The dimensionless analysis applies to any custom mechanics environment
+designed for this protocol.
 
 \subsection*{Environment}
 
