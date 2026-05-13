@@ -18,30 +18,29 @@ For each outer iteration k:
   2. Evaluate      — load base + merge adapters 0..k, score on held-out tasks
 ```
 
-Inside the trainer, one inner step does:
+Inside the trainer, one inner step does the following for each prompt $s$ in the batch:
 
-```
-For each prompt s in the batch:
-  Phase A — sample G_1 turn-1 variants y^(1)_i ~ π(.|s)          (one generate call)
-  Phase B — execute each y^(1)_i in the sandbox -> tool message m_i
-  Phase C — for each i, sample G_2 continuations y^(2)_{i,j} ~ π(.|s, y^(1)_i, m_i)
-            (G_1 generate calls); score each leaf -> R_{i,j}
-  Phase D — empirical values
-              V_0       = mean over G_1 G_2 leaves
-              V_1^(i)   = mean over G_2 continuations of variant i
-            per-turn advantages, broadcast to that turn's tokens:
-              A^(1)_i   = V_1^(i) - V_0          on y^(1)_i
-              A^(2)_{i,j} = R_{i,j} - V_1^(i)    on y^(2)_{i,j}
-  Loss    — two passes with shared global token normalizer:
-              pass 1: forward [s | y^(1)] and backward L_turn1
-              pass 2: forward [s | y^(1) | m | y^(2)], logits_to_keep=T_turn2,
-                      and backward L_turn2
-            L_turn1 + L_turn2 equals the single-pass DAPO loss exactly
-            (token-summed normalizer + disjoint subsets). Peak LM-head
-            saved-activation memory drops from sum to max over turns.
-```
+- **Phase A — turn-1 fan-out.** Sample $G_1$ turn-1 variants $y^{(1)}_i \sim \pi(\cdot \mid s)$ in one `model.generate` call.
+- **Phase B — turn-1 sandbox.** Execute each $y^{(1)}_i$ in the sandbox; the tool returns a message $m_i$ (truncated stdout for `main`, or the policy's scenario reward for `policy`).
+- **Phase C — turn-2 fan-out and score.** For each $i$, sample $G_2$ continuations $y^{(2)}_{i,j} \sim \pi(\cdot \mid s, y^{(1)}_i, m_i)$ in one `model.generate` call ($G_1$ such calls total). Score each leaf to obtain $R_{i,j}$.
+- **Phase D — empirical values and per-turn advantages.** Compute the conditional means
 
-Phase logs at boundaries A/B/C/D land in stdout (with `[step k task_id]` keys) so you can watch progress during long inner steps.
+$$\widehat V_0 = \frac{1}{G_1 G_2}\sum_{i,j} R_{i,j}, \qquad \widehat V_1^{(i)} = \frac{1}{G_2}\sum_{j} R_{i,j},$$
+
+and broadcast each to the tokens of its turn:
+
+$$A^{(1)}_i = \widehat V_1^{(i)} - \widehat V_0 \quad \text{on } y^{(1)}_i, \qquad A^{(2)}_{i,j} = R_{i,j} - \widehat V_1^{(i)} \quad \text{on } y^{(2)}_{i,j}.$$
+
+The turn-2 advantage uses the conditional mean given the turn-1 prefix, so a poor turn-2 sample drawn from a strong turn-1 is recognized as poor instead of inheriting its prefix's above-average outcome.
+
+The loss runs in **two passes** with a shared global token normalizer $N_{\text{tok}}$:
+
+- Pass 1: forward $[s \mid y^{(1)}]$, backward $\mathcal{L}_{\text{turn1}}$.
+- Pass 2: forward $[s \mid y^{(1)} \mid m \mid y^{(2)}]$ with `logits_to_keep = T_{\text{turn2}}`, backward $\mathcal{L}_{\text{turn2}}$.
+
+Because the DAPO surrogate is token-summed (not per-row averaged), $\mathcal{L}_{\text{turn1}} + \mathcal{L}_{\text{turn2}}$ equals the single-pass loss *exactly*. Peak LM-head saved-activation memory drops from $O(\sum_n T_n)$ to $O(\max_n T_n)$ — the trick that lets $N=2$ branched fit on a 24 GiB GPU at $G_1 = G_2 = 4$, $T = 400$.
+
+Phase-boundary timings are logged to stdout (keyed by `[step k task_id]`) so you can watch progress during long inner steps. See `docs/paper.tex` §3 for the derivation.
 
 ### Why the multi-turn protocol
 
