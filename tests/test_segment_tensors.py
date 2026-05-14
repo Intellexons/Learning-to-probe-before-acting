@@ -12,7 +12,12 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.branched_trainer import _Trajectory, build_segment_tensors  # noqa: E402
+from src.branched_trainer import (  # noqa: E402
+    _Trajectory,
+    _row_chunks,
+    _slice_row_dim,
+    build_segment_tensors,
+)
 
 
 def _close(actual: torch.Tensor, expected: list) -> None:
@@ -154,6 +159,99 @@ def test_advantage_broadcasts_per_row():
     _close(out["turn1_advantages"], [[2.0, 2.0, 0.0], [-2.0, -2.0, -2.0]])
     # Turn2 mirrors structure.
     _close(out["turn2_advantages"], [[3.0, 3.0, 0.0], [-3.0, -3.0, -3.0]])
+
+
+def test_row_chunks_none_returns_single_full_chunk():
+    """`micro_batch_size=None` keeps pre-change behaviour: one [0, B) chunk."""
+    assert _row_chunks(16, None) == [(0, 16)]
+    assert _row_chunks(1, None) == [(0, 1)]
+
+
+def test_row_chunks_size_at_or_above_rows_returns_single_chunk():
+    """When mb >= rows, the bound caps to rows — equivalent to mb=None."""
+    assert _row_chunks(4, 4) == [(0, 4)]
+    assert _row_chunks(4, 100) == [(0, 4)]
+
+
+def test_row_chunks_evenly_divisible():
+    """Even split into equal-sized chunks."""
+    assert _row_chunks(16, 4) == [(0, 4), (4, 8), (8, 12), (12, 16)]
+    assert _row_chunks(8, 2) == [(0, 2), (2, 4), (4, 6), (6, 8)]
+
+
+def test_row_chunks_uneven_last_chunk():
+    """Last chunk is shorter when rows is not divisible by mb."""
+    assert _row_chunks(10, 4) == [(0, 4), (4, 8), (8, 10)]
+    assert _row_chunks(5, 2) == [(0, 2), (2, 4), (4, 5)]
+
+
+def test_row_chunks_size_one():
+    """`mb=1` yields one chunk per row — maximal split."""
+    assert _row_chunks(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
+
+
+def test_row_chunks_zero_rows():
+    """Empty input yields no chunks — defensive."""
+    assert _row_chunks(0, None) == []
+    assert _row_chunks(0, 4) == []
+
+
+def test_row_chunks_covers_every_row_exactly_once():
+    """Property check: across all chunks, indices cover [0, B) with no gaps
+    or overlaps. The micro-batched gradient identity relies on this."""
+    for rows in [1, 4, 5, 7, 16]:
+        for mb in [None, 1, 2, 3, 4, rows, rows + 5]:
+            chunks = _row_chunks(rows, mb)
+            covered = [i for s, e in chunks for i in range(s, e)]
+            assert covered == list(range(rows)), (
+                f"rows={rows}, mb={mb} → {chunks} covers {covered}"
+            )
+
+
+def test_slice_row_dim_slices_batched_tensors():
+    """`_slice_row_dim` slices every batched tensor along dim 0."""
+    seg = {
+        "prompt_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]]),
+        "completion_ids": torch.tensor([[10], [20], [30], [40]]),
+        "advantages": torch.tensor([[1.0], [2.0], [3.0], [4.0]]),
+    }
+    out = _slice_row_dim(seg, 1, 3)
+
+    assert out["prompt_ids"].tolist() == [[3, 4], [5, 6]]
+    assert out["completion_ids"].tolist() == [[20], [30]]
+    assert out["advantages"].tolist() == [[2.0], [3.0]]
+
+
+def test_slice_row_dim_preserves_scalar_normalizer():
+    """0-dim tensors (e.g. num_items_in_batch) must pass through unchanged.
+
+    This is the invariant that makes micro-batched losses sum to the
+    single-pass loss: every chunk divides by the same global token count.
+    """
+    seg = {
+        "completion_ids": torch.tensor([[10], [20], [30]]),
+        "num_items_in_batch": torch.tensor(42),
+        "scalar_float": torch.tensor(3.14),
+    }
+    out = _slice_row_dim(seg, 0, 2)
+
+    assert out["completion_ids"].tolist() == [[10], [20]]
+    assert out["num_items_in_batch"].item() == 42
+    assert out["scalar_float"].item() == torch.tensor(3.14).item()
+
+
+def test_slice_row_dim_passes_through_non_tensors():
+    """Non-tensor values (None, ints, etc.) pass through unchanged."""
+    seg = {
+        "completion_ids": torch.tensor([[10], [20]]),
+        "old_per_token_logps": None,
+        "some_int": 7,
+    }
+    out = _slice_row_dim(seg, 0, 1)
+
+    assert out["completion_ids"].tolist() == [[10]]
+    assert out["old_per_token_logps"] is None
+    assert out["some_int"] == 7
 
 
 def test_dtypes_and_devices():

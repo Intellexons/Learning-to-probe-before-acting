@@ -152,14 +152,33 @@ class BranchedGRPOTrainer(GRPOTrainer):
         max_turn_tokens: int = 400,
         scoring_timeout: int = 30,
         scoring_max_steps: int = 500,
+        loss_micro_batch_size: int | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         if g1 < 1 or g2 < 1:
             raise ValueError(f"Need g1>=1 and g2>=1, got {g1=}, {g2=}")
+        if loss_micro_batch_size is not None and loss_micro_batch_size < 1:
+            raise ValueError(
+                f"loss_micro_batch_size must be >= 1 or None, "
+                f"got {loss_micro_batch_size}"
+            )
         self.g1 = g1
         self.g2 = g2
         self.task_map = task_map
+        # Inner micro-batch along the row dim within each per-turn pass.
+        # `None` keeps the original behaviour (one forward+backward per turn
+        # over all rows). Setting e.g. 4 splits the 16-row segment into 4
+        # micro-batches of 4 rows each, calling super()._compute_loss four
+        # times and backwarding each; gradients accumulate into the same
+        # params. Because num_items_in_batch is the global token count
+        # (passed unchanged), the per-micro-batch loss values still divide
+        # by the right denominator and sum to the single-pass loss exactly
+        # (modulo dropout-induced stochastic ordering, which the existing
+        # per-turn split already accepts). The motivation is to shrink the
+        # `(B, K, |V|)` LM-head gradient tensor — the dominant backward
+        # term per Appendix A of the paper — by reducing B.
+        self.loss_micro_batch_size = loss_micro_batch_size
         # Per-task pre-rendered turn-2 prompt body. The eval pipeline
         # (`scripts/eval_frozen_baseline.py:198-203`) re-renders the turn-2
         # prompt and prepends it to the tool-result message; training matches
@@ -634,6 +653,13 @@ class BranchedGRPOTrainer(GRPOTrainer):
         Backward is run inside this method, not by the outer `training_step`.
         See `training_step` below — we override it to skip the duplicate
         outer `accelerator.backward(loss)`.
+
+        When `loss_micro_batch_size` is set, each per-turn pass is further
+        split along the row (B) dim into sub-batches; the LM-head gradient
+        peak shrinks linearly with sub-batch size. The denominator
+        (`num_items_in_batch`) is the global model-token count and is
+        passed unchanged to every sub-call, so the sum of sub-batch losses
+        equals the single-pass loss exactly.
         """
         if return_outputs:
             raise ValueError(
@@ -655,19 +681,13 @@ class BranchedGRPOTrainer(GRPOTrainer):
         if mem_log:
             torch.cuda.reset_peak_memory_stats()
 
-        loss1 = super()._compute_loss(model, self._segment_inputs(inputs, "turn1"))
-        self.accelerator.backward(loss1 * scale)
-        loss1_value = loss1.detach()
-        del loss1
+        loss1_value = self._run_segment_pass(model, inputs, "turn1", scale)
         if mem_log:
             peak1 = torch.cuda.max_memory_allocated() / 1024**3
             self._metrics["train"]["mem/peak_turn1_gib"].append(peak1)
             torch.cuda.reset_peak_memory_stats()
 
-        loss2 = super()._compute_loss(model, self._segment_inputs(inputs, "turn2"))
-        self.accelerator.backward(loss2 * scale)
-        loss2_value = loss2.detach()
-        del loss2
+        loss2_value = self._run_segment_pass(model, inputs, "turn2", scale)
         if mem_log:
             peak2 = torch.cuda.max_memory_allocated() / 1024**3
             self._metrics["train"]["mem/peak_turn2_gib"].append(peak2)
@@ -677,6 +697,43 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # logs the returned loss as the step's training loss) sees the same
         # value it would have for a single-pass run.
         return (loss1_value + loss2_value) * scale
+
+    def _run_segment_pass(
+        self,
+        model,
+        inputs: dict[str, Any],
+        segment: str,
+        scale: float,
+    ) -> torch.Tensor:
+        """Compute and backward one per-turn pass, optionally micro-batched.
+
+        Returns the unscaled accumulated loss as a detached scalar.
+
+        Logging caveat: super()._compute_loss appends to `self._metrics`
+        (entropy, clip_ratio/*, kl) once per call. With micro-batching, those
+        lists get one entry per chunk instead of one per turn, and TRL's
+        `log()` averages them with equal *chunk* weight rather than equal
+        *token* weight. For roughly equal-length rows the bias is small; if
+        precise per-token-weighted metrics matter, derive them from raw
+        completions instead of `self._metrics`.
+        """
+        seg_inputs = self._segment_inputs(inputs, segment)
+        rows = seg_inputs["completion_ids"].size(0)
+
+        accumulated: torch.Tensor | None = None
+        for start, end in _row_chunks(rows, self.loss_micro_batch_size):
+            chunk = _slice_row_dim(seg_inputs, start, end)
+            chunk_loss = super()._compute_loss(model, chunk)
+            self.accelerator.backward(chunk_loss * scale)
+            detached = chunk_loss.detach()
+            del chunk_loss
+            accumulated = detached if accumulated is None else accumulated + detached
+
+        # `accumulated` is None only when rows == 0, which would mean the
+        # rollout produced no trajectories — impossible given the
+        # _generate_and_score_completions contract, so an assert is fine.
+        assert accumulated is not None
+        return accumulated
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """Two-pass training step — backward already done inside `compute_loss`.
@@ -801,6 +858,40 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """
         task = self.task_map[inputs[0]["task_id"]]
         return ERROR_PENALTY_PER_SCENARIO * len(task.get("scenarios", [1]))
+
+
+def _row_chunks(
+    num_rows: int, micro_batch_size: int | None,
+) -> list[tuple[int, int]]:
+    """Yield (start, end) row-index pairs covering [0, num_rows) in chunks.
+
+    `micro_batch_size=None` (or any value >= num_rows) returns a single
+    [0, num_rows) chunk — i.e. the no-op pre-change behaviour. A value of
+    1 returns one chunk per row (maximally low memory, highest launch
+    overhead). The last chunk may be shorter when num_rows is not divisible.
+    """
+    if num_rows <= 0:
+        return []
+    mb = micro_batch_size or num_rows
+    mb = max(1, min(mb, num_rows))
+    return [(start, min(start + mb, num_rows)) for start in range(0, num_rows, mb)]
+
+
+def _slice_row_dim(seg_inputs: dict[str, Any], start: int, end: int) -> dict[str, Any]:
+    """Slice every batched tensor in a segment-inputs dict along dim 0.
+
+    Scalar (0-dim) tensors like `num_items_in_batch` are passed through
+    unchanged — that scalar is the *global* model-token count and must
+    stay constant across micro-batches so the per-micro-batch losses sum
+    to the single-pass loss.
+    """
+    sliced: dict[str, Any] = {}
+    for key, value in seg_inputs.items():
+        if isinstance(value, torch.Tensor) and value.dim() > 0:
+            sliced[key] = value[start:end]
+        else:
+            sliced[key] = value
+    return sliced
 
 
 def build_segment_tensors(
