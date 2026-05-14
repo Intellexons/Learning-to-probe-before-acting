@@ -409,17 +409,26 @@ class BranchedGRPOTrainer(GRPOTrainer):
 
         device = self.accelerator.device
         mode = "train" if self.model.training else "eval"
-        prompts = [x["prompt"] for x in inputs]
 
         # Reset the generate-call counter so its post-step value reflects
         # only this rollout. Logged below as `branched/generate_calls`.
         self._generate_call_count = 0
 
-        # Branched rollout per prompt — produces g1*g2 trajectories per prompt.
+        # TRL's RepeatSampler replicates each unique prompt `num_generations`
+        # times so flat GRPO can sample `num_generations` independent
+        # completions per prompt. Our branched rollout already produces
+        # `g1*g2` trajectories from one call, so the replicas are redundant:
+        # without this dedup we'd run `num_generations` full branched trees
+        # per unique prompt (16x at production sizing) and pay the same
+        # multiplier in backward memory and wall-clock. The paper's
+        # Appendix A B=16 budget assumes one tree per step.
+        unique_inputs = _unique_by_task_id(inputs)
+
+        # Branched rollout per unique prompt — produces g1*g2 trajectories.
         all_trajectories: list[_Trajectory] = []
-        for inp, prompt_messages in zip(inputs, prompts):
+        for inp in unique_inputs:
             task = self.task_map[inp["task_id"]]
-            traj_list, v0, diag = self._branched_rollout_one_prompt(prompt_messages, task)
+            traj_list, v0, diag = self._branched_rollout_one_prompt(inp["prompt"], task)
             all_trajectories.extend(traj_list)
             self._metrics[mode]["branched/V0"].append(v0)
             for key, value in diag.items():
@@ -466,7 +475,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
 
         self._update_logging_buffers(
             prompt_ids, completion_ids, advantages, rewards,
-            mode=mode, inputs=inputs,
+            mode=mode, inputs=unique_inputs,
         )
 
         # Compute count for the amortization-vs-flat sanity check. Flat
@@ -858,6 +867,32 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """
         task = self.task_map[inputs[0]["task_id"]]
         return ERROR_PENALTY_PER_SCENARIO * len(task.get("scenarios", [1]))
+
+
+def _unique_by_task_id(inputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate rows from TRL's RepeatSampler expansion.
+
+    TRL's `RepeatSampler` replicates each unique prompt
+    `num_generations = g1*g2` times in `inputs` so that flat GRPO can sample
+    `num_generations` independent completions per prompt. The branched
+    rollout produces `g1*g2` trajectories from one call to
+    `_branched_rollout_one_prompt`, so the replicas are redundant — without
+    dedup, each step would do `num_generations` full branched trees of the
+    same prompt (16x at production sizing).
+
+    Preserves order. Two inputs sharing a `task_id` are assumed to have the
+    same `prompt` field, which holds by construction in
+    `scripts/05_train_grpo_branched.py:91-105` (one dataset row per task_id).
+    """
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for inp in inputs:
+        tid = inp["task_id"]
+        if tid in seen:
+            continue
+        seen.add(tid)
+        unique.append(inp)
+    return unique
 
 
 def _row_chunks(

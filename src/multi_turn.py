@@ -187,8 +187,10 @@ def compute_branched_advantages(
       A_turn1: G_1 × G_2 list of floats — V1[i] - V0   (broadcast to all j)
       A_turn2: G_1 × G_2 list of floats — rewards[i][j] - V1[i]
 
-    No std-normalization here — the trainer applies any DAPO-style scaling
-    on the final assembled (B, T) tensor if `scale_rewards` is configured.
+    No std-normalization applied. TRL's `scale_rewards` only takes effect
+    inside the stock `_generate_and_score_completions`, which the branched
+    trainer overrides — so for branched runs, advantages reach the loss in
+    the form returned here.
     """
     if not rewards or not rewards[0]:
         raise ValueError("Empty reward grid")

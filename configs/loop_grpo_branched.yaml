@@ -26,7 +26,6 @@ grpo:
   epsilon_high: 0.28
   beta: 0.0
   loss_type: "dapo"
-  scale_rewards: "batch"
   temperature: 0.8
   top_p: 0.95
   mask_truncated_completions: true
