@@ -8,20 +8,21 @@
 # Sizing vs configs/loop_grpo_branched_slosh.yaml:
 #   loop.iterations         23  ->  1   (one full outer cycle is enough)
 #   branched.g1,g2           4  ->  2   (16 trajectories/step -> 4)
-#   branched.max_turn_tokens 400 -> 100 (quartered generation budget)
+#   branched.max_turn_tokens 400 -> 400 (matched to prod since PR #63)
 #   train tasks              24 ->  2   (κ extremes, same seed; see jsonl)
 #   per_device_train_batch   16 ->  4   (= g1 * g2)
 #
 # Net: max_steps/outer = 2, total = 2 inner steps + 1 eval pass.
 #
-# Why max_turn_tokens=100 specifically: at smoke sizing TRL's RepeatSampler
-# puts g1*g2 = 4 replicated rows in `generate_and_score`, expanding to
-# 16 trajectories in the backward pass (the trainer's branched fan-out per
-# row). The dominant memory term is the LM-head cross-entropy gradient
-# tensor at turn-2's backward, ≈ 16 × T × |V| × 4B ≈ 0.97 GiB at T=100
-# (vs 1.95 GiB at T=200, which OOMed on L4 with Qwen3-4B). 100 tokens is
-# enough for a minimal probe + a short PD policy; tighten to 80 if even
-# that doesn't fit, or raise toward 200 on A100-40GB+.
+# Why max_turn_tokens=400: matches the production config so the smoke
+# exercises realistic generation lengths. T<<400 leaves the model
+# hitting EOS-by-truncation mid-statement, and with
+# `mask_truncated_completions: true` those rollouts get masked out of
+# the loss — so we'd be testing pipeline plumbing without any learning
+# signal. Memory at smoke sizing: B=pdtbs=4 (one branched tree per step
+# after PR #63's dedup), so the LM-head gradient tensor is
+# ≈ 4 × 400 × |V| × 4B ≈ 0.97 GiB — same memory budget as the
+# pre-dedup T=100 setting consumed when B was inflated to 16.
 
 base_model:
   # Documentation only — the actual model id is read by 00_setup_env.sh
@@ -42,7 +43,7 @@ loop:
 branched:
   g1: 2
   g2: 2
-  max_turn_tokens: 100
+  max_turn_tokens: 400
 
 grpo:
   num_iterations: 1
