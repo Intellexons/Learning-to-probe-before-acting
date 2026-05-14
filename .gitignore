@@ -9,3 +9,11 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# LaTeX build artifacts — regenerable from docs/paper.tex via latexmk.
+docs/paper.aux
+docs/paper.fdb_latexmk
+docs/paper.fls
+docs/paper.log
+docs/paper.out
+docs/paper.synctex.gz
