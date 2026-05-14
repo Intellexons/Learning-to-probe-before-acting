@@ -16,6 +16,7 @@ from src.branched_trainer import (  # noqa: E402
     _Trajectory,
     _row_chunks,
     _slice_row_dim,
+    _unique_by_task_id,
     build_segment_tensors,
 )
 
@@ -159,6 +160,50 @@ def test_advantage_broadcasts_per_row():
     _close(out["turn1_advantages"], [[2.0, 2.0, 0.0], [-2.0, -2.0, -2.0]])
     # Turn2 mirrors structure.
     _close(out["turn2_advantages"], [[3.0, 3.0, 0.0], [-3.0, -3.0, -3.0]])
+
+
+def test_unique_by_task_id_repeated_sampler_pattern():
+    """RepeatSampler at num_generations=16 hands us 16 copies of one prompt;
+    dedup must collapse that to one row."""
+    inputs = [{"task_id": "t0", "prompt": [{"role": "user", "content": "p0"}]}] * 16
+    out = _unique_by_task_id(inputs)
+    assert len(out) == 1
+    assert out[0]["task_id"] == "t0"
+
+
+def test_unique_by_task_id_multi_prompt_step():
+    """If pdtbs > num_generations, inputs contains several distinct prompts;
+    dedup preserves one per task_id."""
+    inputs = (
+        [{"task_id": "t0", "prompt": "p0"}] * 4
+        + [{"task_id": "t1", "prompt": "p1"}] * 4
+        + [{"task_id": "t2", "prompt": "p2"}] * 4
+    )
+    out = _unique_by_task_id(inputs)
+    assert [row["task_id"] for row in out] == ["t0", "t1", "t2"]
+
+
+def test_unique_by_task_id_preserves_first_occurrence_order():
+    """Order of unique task_ids matches their first appearance, not sort order.
+    Matters when downstream metric logging assumes input order."""
+    inputs = [
+        {"task_id": "z", "prompt": "p_z"},
+        {"task_id": "a", "prompt": "p_a"},
+        {"task_id": "z", "prompt": "p_z"},
+        {"task_id": "m", "prompt": "p_m"},
+        {"task_id": "a", "prompt": "p_a"},
+    ]
+    out = _unique_by_task_id(inputs)
+    assert [row["task_id"] for row in out] == ["z", "a", "m"]
+
+
+def test_unique_by_task_id_single_row():
+    inputs = [{"task_id": "t0", "prompt": "p0"}]
+    assert _unique_by_task_id(inputs) == inputs
+
+
+def test_unique_by_task_id_empty():
+    assert _unique_by_task_id([]) == []
 
 
 def test_row_chunks_none_returns_single_full_chunk():

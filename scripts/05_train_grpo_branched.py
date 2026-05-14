@@ -141,7 +141,13 @@ def main():
         epsilon_high=grpo_cfg.get("epsilon_high"),
         beta=grpo_cfg.get("beta", 0.0),
         loss_type=grpo_cfg.get("loss_type", "dapo"),
-        scale_rewards=grpo_cfg.get("scale_rewards", "batch"),
+        # NB: TRL's `scale_rewards` only takes effect inside the stock
+        # `_generate_and_score_completions`, which BranchedGRPOTrainer
+        # overrides — we compute advantages directly from the (G_1, G_2)
+        # reward grid via `compute_branched_advantages` and never run TRL's
+        # batch/group reward normalizer. Don't surface it here; if you need
+        # advantage scaling for the branched path, implement it in
+        # `compute_branched_advantages` or in the trainer override.
         max_completion_length=2 * max_turn_tokens + COMPLETION_LENGTH_SLACK,
         # Default matches the eval pipeline (`scripts/eval_frozen_baseline.py`,
         # `--temperature` default = 0.8). Production YAMLs override this
