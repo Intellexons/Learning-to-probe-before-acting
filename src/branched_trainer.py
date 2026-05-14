@@ -708,15 +708,20 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """Compute and backward one per-turn pass, optionally micro-batched.
 
         Returns the unscaled accumulated loss as a detached scalar.
+
+        Logging caveat: super()._compute_loss appends to `self._metrics`
+        (entropy, clip_ratio/*, kl) once per call. With micro-batching, those
+        lists get one entry per chunk instead of one per turn, and TRL's
+        `log()` averages them with equal *chunk* weight rather than equal
+        *token* weight. For roughly equal-length rows the bias is small; if
+        precise per-token-weighted metrics matter, derive them from raw
+        completions instead of `self._metrics`.
         """
         seg_inputs = self._segment_inputs(inputs, segment)
         rows = seg_inputs["completion_ids"].size(0)
-        mb = self.loss_micro_batch_size or rows
-        mb = max(1, min(mb, rows))
 
         accumulated: torch.Tensor | None = None
-        for start in range(0, rows, mb):
-            end = min(start + mb, rows)
+        for start, end in _row_chunks(rows, self.loss_micro_batch_size):
             chunk = _slice_row_dim(seg_inputs, start, end)
             chunk_loss = super()._compute_loss(model, chunk)
             self.accelerator.backward(chunk_loss * scale)
@@ -853,6 +858,23 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """
         task = self.task_map[inputs[0]["task_id"]]
         return ERROR_PENALTY_PER_SCENARIO * len(task.get("scenarios", [1]))
+
+
+def _row_chunks(
+    num_rows: int, micro_batch_size: int | None,
+) -> list[tuple[int, int]]:
+    """Yield (start, end) row-index pairs covering [0, num_rows) in chunks.
+
+    `micro_batch_size=None` (or any value >= num_rows) returns a single
+    [0, num_rows) chunk — i.e. the no-op pre-change behaviour. A value of
+    1 returns one chunk per row (maximally low memory, highest launch
+    overhead). The last chunk may be shorter when num_rows is not divisible.
+    """
+    if num_rows <= 0:
+        return []
+    mb = micro_batch_size or num_rows
+    mb = max(1, min(mb, num_rows))
+    return [(start, min(start + mb, num_rows)) for start in range(0, num_rows, mb)]
 
 
 def _slice_row_dim(seg_inputs: dict[str, Any], start: int, end: int) -> dict[str, Any]:

@@ -14,6 +14,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.branched_trainer import (  # noqa: E402
     _Trajectory,
+    _row_chunks,
     _slice_row_dim,
     build_segment_tensors,
 )
@@ -158,6 +159,53 @@ def test_advantage_broadcasts_per_row():
     _close(out["turn1_advantages"], [[2.0, 2.0, 0.0], [-2.0, -2.0, -2.0]])
     # Turn2 mirrors structure.
     _close(out["turn2_advantages"], [[3.0, 3.0, 0.0], [-3.0, -3.0, -3.0]])
+
+
+def test_row_chunks_none_returns_single_full_chunk():
+    """`micro_batch_size=None` keeps pre-change behaviour: one [0, B) chunk."""
+    assert _row_chunks(16, None) == [(0, 16)]
+    assert _row_chunks(1, None) == [(0, 1)]
+
+
+def test_row_chunks_size_at_or_above_rows_returns_single_chunk():
+    """When mb >= rows, the bound caps to rows — equivalent to mb=None."""
+    assert _row_chunks(4, 4) == [(0, 4)]
+    assert _row_chunks(4, 100) == [(0, 4)]
+
+
+def test_row_chunks_evenly_divisible():
+    """Even split into equal-sized chunks."""
+    assert _row_chunks(16, 4) == [(0, 4), (4, 8), (8, 12), (12, 16)]
+    assert _row_chunks(8, 2) == [(0, 2), (2, 4), (4, 6), (6, 8)]
+
+
+def test_row_chunks_uneven_last_chunk():
+    """Last chunk is shorter when rows is not divisible by mb."""
+    assert _row_chunks(10, 4) == [(0, 4), (4, 8), (8, 10)]
+    assert _row_chunks(5, 2) == [(0, 2), (2, 4), (4, 5)]
+
+
+def test_row_chunks_size_one():
+    """`mb=1` yields one chunk per row — maximal split."""
+    assert _row_chunks(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
+
+
+def test_row_chunks_zero_rows():
+    """Empty input yields no chunks — defensive."""
+    assert _row_chunks(0, None) == []
+    assert _row_chunks(0, 4) == []
+
+
+def test_row_chunks_covers_every_row_exactly_once():
+    """Property check: across all chunks, indices cover [0, B) with no gaps
+    or overlaps. The micro-batched gradient identity relies on this."""
+    for rows in [1, 4, 5, 7, 16]:
+        for mb in [None, 1, 2, 3, 4, rows, rows + 5]:
+            chunks = _row_chunks(rows, mb)
+            covered = [i for s, e in chunks for i in range(s, e)]
+            assert covered == list(range(rows)), (
+                f"rows={rows}, mb={mb} → {chunks} covers {covered}"
+            )
 
 
 def test_slice_row_dim_slices_batched_tensors():
