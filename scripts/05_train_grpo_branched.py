@@ -176,6 +176,13 @@ def main():
         model = PeftModel.from_pretrained(model, prev_lora)
         model = model.merge_and_unload()
 
+    loss_micro_batch_size = branched_cfg.get("loss_micro_batch_size")
+    if loss_micro_batch_size:
+        logger.info(
+            f"Loss micro-batching: {loss_micro_batch_size} rows per inner "
+            f"forward/backward (segment B={g1 * g2})"
+        )
+
     trainer = BranchedGRPOTrainer(
         model=model,
         reward_funcs=_placeholder_reward_fn,
@@ -190,6 +197,7 @@ def main():
         max_turn_tokens=max_turn_tokens,
         scoring_timeout=scoring_cfg["timeout_seconds"],
         scoring_max_steps=scoring_cfg["max_steps"],
+        loss_micro_batch_size=loss_micro_batch_size,
     )
 
     diversity_cb = DiversityCallback()

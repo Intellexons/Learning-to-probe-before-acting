@@ -12,7 +12,11 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.branched_trainer import _Trajectory, build_segment_tensors  # noqa: E402
+from src.branched_trainer import (  # noqa: E402
+    _Trajectory,
+    _slice_row_dim,
+    build_segment_tensors,
+)
 
 
 def _close(actual: torch.Tensor, expected: list) -> None:
@@ -154,6 +158,52 @@ def test_advantage_broadcasts_per_row():
     _close(out["turn1_advantages"], [[2.0, 2.0, 0.0], [-2.0, -2.0, -2.0]])
     # Turn2 mirrors structure.
     _close(out["turn2_advantages"], [[3.0, 3.0, 0.0], [-3.0, -3.0, -3.0]])
+
+
+def test_slice_row_dim_slices_batched_tensors():
+    """`_slice_row_dim` slices every batched tensor along dim 0."""
+    seg = {
+        "prompt_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]]),
+        "completion_ids": torch.tensor([[10], [20], [30], [40]]),
+        "advantages": torch.tensor([[1.0], [2.0], [3.0], [4.0]]),
+    }
+    out = _slice_row_dim(seg, 1, 3)
+
+    assert out["prompt_ids"].tolist() == [[3, 4], [5, 6]]
+    assert out["completion_ids"].tolist() == [[20], [30]]
+    assert out["advantages"].tolist() == [[2.0], [3.0]]
+
+
+def test_slice_row_dim_preserves_scalar_normalizer():
+    """0-dim tensors (e.g. num_items_in_batch) must pass through unchanged.
+
+    This is the invariant that makes micro-batched losses sum to the
+    single-pass loss: every chunk divides by the same global token count.
+    """
+    seg = {
+        "completion_ids": torch.tensor([[10], [20], [30]]),
+        "num_items_in_batch": torch.tensor(42),
+        "scalar_float": torch.tensor(3.14),
+    }
+    out = _slice_row_dim(seg, 0, 2)
+
+    assert out["completion_ids"].tolist() == [[10], [20]]
+    assert out["num_items_in_batch"].item() == 42
+    assert out["scalar_float"].item() == torch.tensor(3.14).item()
+
+
+def test_slice_row_dim_passes_through_non_tensors():
+    """Non-tensor values (None, ints, etc.) pass through unchanged."""
+    seg = {
+        "completion_ids": torch.tensor([[10], [20]]),
+        "old_per_token_logps": None,
+        "some_int": 7,
+    }
+    out = _slice_row_dim(seg, 0, 1)
+
+    assert out["completion_ids"].tolist() == [[10]]
+    assert out["old_per_token_logps"] is None
+    assert out["some_int"] == 7
 
 
 def test_dtypes_and_devices():

@@ -22,6 +22,12 @@ branched:
   g1: 4
   g2: 4
   max_turn_tokens: 400
+  # Optional: split each per-turn forward+backward along the row dim. Shrinks
+  # the (B, K, |V|) LM-head gradient peak linearly with this value. The sum
+  # of micro-batch losses equals the single-pass loss exactly because
+  # num_items_in_batch (the global token count) is shared. Leave unset on
+  # A100; set to e.g. 4 or 8 on a 24 GB L4 if the per-turn pass OOMs.
+  # loss_micro_batch_size: 4
 
 grpo:
   num_iterations: 1
