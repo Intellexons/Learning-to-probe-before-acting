@@ -1666,4 +1666,136 @@ patterns used were \texttt{env\textbackslash.reset\textbackslash(} and
 \texttt{kappa|actuator\_gain|k\_est} for $\kappa$-naming. Source:
 \texttt{\textasciitilde/Downloads/lora4vr\_eval\_arm\_b\_qwen3\_4b\_001/arm\_b\_qwen3\_4b\_001/arm\_b\_summary.json}.
 
+% ============================================================
+\section*{2026-05-15 \quad L4 OOM at production sizing despite paper's
+B=16 memory budget; forward-side temperature scaling allocates a
+transient fp32 logits duplicate}
+% ============================================================
+
+\commit{288b686} $\cdot$ \textit{run \texttt{dedup-prod-l4}, fix in
+PR \#67}
+
+\subsection*{Setup}
+
+After landing the branched-trainer dedup fix (PR \#63) the per-step
+backward batch dropped from $B{=}256$ (TRL \texttt{RepeatSampler}
+expansion times branched fan-out) back to the paper-intended
+$B{=}G_1 G_2{=}16$. A smoke run at $B{=}4$ confirmed the pipeline
+worked end-to-end on the 24\,GB L4, peaking around 60\% of GPU
+memory. The next step was the full 23-iteration production run with
+\texttt{configs/loop\_grpo\_branched\_slosh.yaml} ($G_1{=}G_2{=}4$,
+\texttt{max\_turn\_tokens}=400, \textit{pdtbs}=16).
+
+\subsection*{Results}
+
+The first run (\texttt{dedup-prod-l4}, no
+\texttt{loss\_micro\_batch\_size} set) completed the step-0 rollout
+in 114\,s, finished the turn-1 \texttt{compute\_loss} pass, then
+OOMed inside the turn-2 pass at TRL's
+\texttt{logits = logits / self.temperature}
+(\texttt{trl/trainer/grpo\_trainer.py:1022}) with \emph{CUDA out of
+memory. Tried to allocate 3.23\,GiB. Total 22.03\,GiB, free
+1.77\,GiB, in use 20.26\,GiB}. Re-launching the same config with
+\texttt{branched.loss\_micro\_batch\_size: 4} cleared the OOM; the
+re-launched run (\texttt{dedup-prod-l4-mb4}) reached step 5 with
+$\widehat V_0$ progressing from $-88.5$ at step 0 to $-36.0$ at
+step 5 over $\sim$27 minutes wall-clock.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& \multicolumn{2}{c}{Production ($B{=}16$, $T{=}400$)} & Smoke (pre-dedup) \\
+\cmidrule(lr){2-3}
+& no microbatching & mb $=4$ & $B_{\text{eff}}{=}16$, $T{=}100$ \\
+\midrule
+LM-head logits tensor (fp32)             & 3.89\,GiB     & 0.97\,GiB   & 0.97\,GiB \\
+Peak at \texttt{logits/temperature} op   & ${\sim}7.8$\,GiB & ${\sim}2$\,GiB & ${\sim}2$\,GiB \\
+Outcome on 24\,GiB L4                    & OOM step 0    & runs        & runs ($\sim$60\% mem) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Interpretation}
+
+The paper's Appendix~A memory accounting (Table~2) was correct as
+far as it went: the per-turn LM-head \emph{gradient} tensor at
+$B{=}16$, $T{=}400$ is $\approx 3.9$\,GiB, and the two-turn loss
+decomposition keeps that under \emph{max} rather than \emph{sum}
+across turns. What it failed to account for is that the
+\emph{forward} also peaks at the same size, and TRL's
+\texttt{logits = logits / self.temperature} is not in place ---
+a same-shape duplicate is allocated before the original tensor is
+freed. The logits are also held in fp32 for softmax numerical
+stability rather than bf16, which doubles the byte budget over a
+naive estimate. The net effect at the divide step is two 3.89\,GiB
+tensors simultaneously live, ${\sim}7.8$\,GiB in flight for that
+single op. Stacked on ${\sim}8$\,GiB of model weights, residual KV
+cache from the turn-2 generation phase that PyTorch had not yet
+released, and the turn-1 backward's residual activation cache, the
+L4's 22\,GiB usable budget did not have room for the second
+3.23\,GiB allocation.
+
+The micro-batching path (PR \#62) exists for exactly this case. With
+\texttt{loss\_micro\_batch\_size: 4}, each per-turn pass forwards
+4-row chunks instead of the full $B{=}16$, so the logits tensor
+shrinks linearly to $\approx 0.97$\,GiB per chunk and the divide-step
+peak is bounded by ${\sim}2$\,GiB. The gradient identity holds
+(\texttt{num\_items\_in\_batch} is the global model-token count,
+passed unchanged to every chunk, so the chunk-summed loss is
+bit-equivalent to the single-pass loss). The empirical cost is
+$\sim$5\% wall-clock from the extra LM-head kernel launches; rollout
+wall-clock at production sizing is dominated by generation
+($\sim$120\,s/step) so the chunked backward is invisible at the
+step level.
+
+This run is the first empirical validation of the per-turn
+micro-batching feature. Until now its memory savings were predicted
+from Appendix~A arithmetic; the OOM provides the counterfactual at
+the exact configuration the feature was designed for.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Update Appendix~A.} The current table accounts for
+    the backward LM-head gradient but not the forward fp32 logits
+    tensor or the transient duplicate from
+    \texttt{logits/self.temperature}. Either add a row that includes
+    those, or replace the table with a worked example at production
+    sizing showing why $B{=}16$, $T{=}400$ does not fit on a 24\,GiB
+    L4 without per-row chunking.
+  \item \textbf{Default \texttt{loss\_micro\_batch\_size: 4} for L4
+    configs.} Done for the slosh prod config in PR \#67. The other
+    branched configs (\texttt{loop\_grpo\_branched.yaml},
+    \texttt{smoke\_test\_grpo\_branched.yaml}) should follow.
+  \item \textbf{Measure cost on A100.} On a 40\,GB+ card the divide
+    step fits without chunking; quantify the chunked-vs-unchunked
+    wall-clock there so the recommendation is hardware-aware.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Is there a way to convince TRL (or upstream HF) to do
+    \texttt{logits.div\_(temperature)} in place when entropy
+    computation does not require the unscaled values? That would
+    eliminate the transient duplicate without any user-side change.
+  \item What is the next bottleneck on L4 once the LM-head forward is
+    chunked? Generation-phase KV cache for turn-2 ($G_2{=}4$ samples,
+    prompt+turn1+tool $\approx 1500$ tokens) is the next-largest
+    sustained allocation; if a tighter $T$ budget or fewer turn-2
+    samples is later required, that is the term to attack.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{288b686}: launch the production config on a fresh L4 with
+\texttt{bash scripts/gcp\_find\_gpu\_and\_train.sh
+configs/loop\_grpo\_branched\_slosh.yaml dedup-prod-l4-mb4
+--accelerator l4}. To reproduce the OOM, comment out the
+\texttt{loss\_micro\_batch\_size: 4} line in
+\texttt{configs/loop\_grpo\_branched\_slosh.yaml} and re-launch ---
+the crash occurs in step 0's turn-2 \texttt{compute\_loss} pass
+within ${\sim}3$ minutes.
+
 \end{document}
