@@ -597,6 +597,11 @@ Two turn-wise passes & $400$ per pass, freed between & $\approx 3.9$\,GB \\
 
 The decomposition is not a new \texttt{logits\_to\_keep} trick; all regimes use the same primitive. The non-trivial point is that token-summed normalization makes the per-turn gradients sum exactly to the full-trajectory gradient. Per-row-averaged variants would require either a different normalizer or an approximation.
 
+\paragraph{Forward-side temporaries change the binding constraint.}
+Table~\ref{tab:memory} accounts for the LM-head logits tensor as it appears in the saved-for-backward computation graph. On a 24\,GB L4 we observed empirically that the binding allocation is not the gradient at backward, but the forward itself. The softmax-stability convention in TRL holds logits in fp32 rather than bf16, doubling the byte budget over a naive estimate. Worse, the temperature scaling \texttt{logits = logits / self.temperature} is not in place: a same-shape fresh tensor is allocated before the original is freed. At the divide step \emph{two} $(B, T, |V|)$ fp32 tensors are simultaneously live, $\approx 7.8$\,GiB at our production sizing. Stacked on model weights, the just-emitted turn-$n$ KV cache from generation that has not yet been reclaimed by the allocator, and the previous turn's backward residue, this allocation crosses the 22\,GiB usable budget and OOMs at step~0.
+
+The per-turn loss decomposition addresses peak \emph{gradient} memory but does not shrink the forward logits tensor. The remedy is row-wise chunking of the per-turn pass: split the $B$ trajectories into sub-batches of size $b\!\ll\!B$, forward each sub-batch separately, backpropagate, and accumulate. Because the token-summed loss \eqref{eq:loss} is additive over disjoint row subsets sharing the same global normalizer $N_{\rm tok}$, the chunked gradient is bit-equivalent to the single-pass gradient. The forward-time logits tensor shrinks linearly from $(B, T_n, |V|)$ to $(b, T_n, |V|)$, and the divide-step peak scales correspondingly. At $b=4$, $B=16$, $T=400$ the divide-step peak drops from $\approx 7.8$\,GiB to $\approx 2$\,GiB; the cost is $B/b$ additional LM-head kernel launches per turn (single-digit-percent wall-clock at our generation-dominated sizing). We use $b=4$ on 24\,GB L4 and run un-chunked on $\geq 40$\,GB cards.
+
 \section{Slosh-tank environment}
 \label{app:slosh}
 
