@@ -83,6 +83,14 @@ def _log_iteration_metrics(wandb_run, run_name: str, k: int, step: int):
             "eval/mean_reward": float(eval_row["mean_reward"]),
             "eval/mean_best_reward": float(eval_row["mean_best_reward"]),
         })
+        # `n_settled` / `settle_rate` are new in PR #69; old rows from
+        # prior runs won't have them. Skip silently rather than failing.
+        if eval_row.get("n_settled") not in (None, ""):
+            payload["eval/n_settled"] = int(eval_row["n_settled"])
+        if eval_row.get("settle_rate") not in (None, ""):
+            payload["eval/settle_rate"] = (
+                float(eval_row["settle_rate"].rstrip("%")) / 100
+            )
     if payload:
         wandb_run.log(payload, step=step)
 
