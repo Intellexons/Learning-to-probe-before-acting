@@ -176,13 +176,24 @@ def run_episode(seed, max_steps):
         try:
             action = policy(state)
         except Exception as e:
-            return {{"reward": total_reward, "steps": steps, "error": f"policy() error: {{e}}"}}
+            return {{"reward": total_reward, "steps": steps, "settled": None, "error": f"policy() error: {{e}}"}}
         state, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         steps += 1
         if terminated:
             break
-    return {{"reward": total_reward, "steps": steps, "error": None}}
+    # Task-outcome success — distinct from "code ran without crashing".
+    # Envs that define `is_success()` (e.g. SloshTankEnv's 4-condition
+    # settle check) get a real bool; envs without it report None and the
+    # caller treats it as "unknown" rather than "failed".
+    if hasattr(env, "is_success"):
+        try:
+            settled = bool(env.is_success())
+        except Exception:
+            settled = None
+    else:
+        settled = None
+    return {{"reward": total_reward, "steps": steps, "settled": settled, "error": None}}
 
 seed = {seed}
 max_steps = {max_steps}
@@ -269,16 +280,18 @@ def run_policy_in_subprocess(
     outcome = _run_script_in_subprocess(script, timeout=timeout)
 
     if outcome.timed_out:
-        return {"reward": 0.0, "steps": 0, "error": "Timeout"}
+        return {"reward": 0.0, "steps": 0, "settled": None, "error": "Timeout"}
     if outcome.returncode != 0:
         return {
-            "reward": 0.0, "steps": 0,
+            "reward": 0.0, "steps": 0, "settled": None,
             "error": f"Process error: {outcome.stderr_tail()}",
         }
     try:
-        return json.loads(outcome.stdout.strip())
+        result = json.loads(outcome.stdout.strip())
+        result.setdefault("settled", None)  # tolerate old in-flight subprocesses
+        return result
     except (json.JSONDecodeError, ValueError) as e:
-        return {"reward": 0.0, "steps": 0, "error": f"Output parse error: {e}"}
+        return {"reward": 0.0, "steps": 0, "settled": None, "error": f"Output parse error: {e}"}
 
 
 def run_main_in_subprocess(
@@ -344,11 +357,14 @@ def score_sample(
             "reward_per_scenario": {
                 s["scenario_id"]: ERROR_PENALTY_PER_SCENARIO for s in scenarios
             },
+            "settled_per_scenario": {s["scenario_id"]: False for s in scenarios},
+            "n_scenarios_settled": 0,
             "errors": [error_msg],
             "ran_successfully": False,
         }
 
     reward_per_scenario: dict = {}
+    settled_per_scenario: dict = {}
     errors: list[str] = []
     ran_any = False
     env_class = task.get("env_class", DEFAULT_ENV_CLASS)
@@ -362,14 +378,23 @@ def score_sample(
         )
         if result["error"]:
             reward_per_scenario[sid] = ERROR_PENALTY_PER_SCENARIO
+            settled_per_scenario[sid] = False  # didn't even run cleanly
             errors.append(f"{sid}: {result['error']}")
         else:
             reward_per_scenario[sid] = result["reward"]
+            # `settled` is the env's task-outcome check (e.g. SloshTankEnv's
+            # 4-condition |x-g|, |v|, |theta|, |omega| within tolerance).
+            # None if the env doesn't define is_success(); treat as False
+            # for aggregation since the aggregate metric is "did the task
+            # succeed", and unknown counts as not-yet-known-success.
+            settled_per_scenario[sid] = bool(result.get("settled") or False)
             ran_any = True
 
     return {
         "reward_total": sum(reward_per_scenario.values()),
         "reward_per_scenario": reward_per_scenario,
+        "settled_per_scenario": settled_per_scenario,
+        "n_scenarios_settled": sum(settled_per_scenario.values()),
         "errors": errors,
         "ran_successfully": ran_any,
     }

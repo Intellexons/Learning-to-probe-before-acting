@@ -319,12 +319,15 @@ def main():
                 # metric tracks the same scoring convention training does.
                 n_scenarios = max(len(task.get("scenarios", [])), 1)
                 reward = ERROR_PENALTY_PER_SCENARIO * n_scenarios
+                scenarios = task.get("scenarios", [])
                 score_result = {
                     "reward_total": reward,
                     "reward_per_scenario": {
                         s["scenario_id"]: ERROR_PENALTY_PER_SCENARIO
-                        for s in task.get("scenarios", [])
+                        for s in scenarios
                     },
+                    "settled_per_scenario": {s["scenario_id"]: False for s in scenarios},
+                    "n_scenarios_settled": 0,
                     "ran_successfully": False,
                     "errors": [sample.get("error") or "no valid final policy"],
                 }
@@ -378,6 +381,15 @@ def main():
         1 for s in all_scores if s.get("ran_successfully", False)
     )
     all_rewards = [s["reward_total"] for s in all_scores]
+    # Task-outcome success: sum of per-scenario settle bools across all
+    # (sample × scenario) pairs. The denominator is the total number of
+    # scenario attempts (samples × scenarios per task summed over tasks),
+    # not the number of samples — distinguishes from `n_success` which
+    # is rollout-level.
+    n_settled = sum(s.get("n_scenarios_settled", 0) for s in all_scores)
+    n_settle_attempts = sum(
+        len(s.get("settled_per_scenario", {})) for s in all_scores
+    )
     from src.progress import append_eval_progress
     append_eval_progress(
         iter_num=iter_num,
@@ -386,7 +398,15 @@ def main():
         n_success=n_success,
         mean_reward=sum(all_rewards) / len(all_rewards) if all_rewards else 0.0,
         mean_best_reward=summary["mean_best_reward"],
+        n_settled=n_settled,
+        n_settle_attempts=n_settle_attempts,
         run_name=args.run_name,
+    )
+    logger.info(
+        f"Eval summary: settle rate = {n_settled}/{n_settle_attempts} "
+        f"({100 * n_settled / max(n_settle_attempts, 1):.1f}%) "
+        f"| ran-without-crash = {n_success}/{len(all_scores)} "
+        f"({100 * n_success / max(len(all_scores), 1):.1f}%)"
     )
 
 
