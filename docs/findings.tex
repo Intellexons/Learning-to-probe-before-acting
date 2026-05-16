@@ -1798,4 +1798,158 @@ configs/loop\_grpo\_branched\_slosh.yaml dedup-prod-l4-mb4
 the crash occurs in step 0's turn-2 \texttt{compute\_loss} pass
 within ${\sim}3$ minutes.
 
+% ============================================================
+\section*{2026-05-16 \quad First eval success on
+\texttt{dedup-prod-l4-mb4}; but turn-1 probe modality has collapsed
+to zero usage --- the credit-assignment mechanism is not learning
+what the paper claims}
+% ============================================================
+
+\commit{a172dd9} $\cdot$ \textit{run \texttt{dedup-prod-l4-mb4},
+6 outer iterations completed before VM teardown}
+
+\subsection*{Setup}
+
+The first production-sized branched-GRPO run on the slosh task
+($G_1{=}G_2{=}4$, $T{=}400$, \texttt{loss\_micro\_batch\_size: 4} on
+24\,GB L4) ran for 6 outer iterations before being stopped. Each
+iteration is 24 training steps over the 24 train tasks, followed by
+12-task eval producing 4 samples per task ($N{=}48$ samples per eval).
+Goal was to see whether the per-turn baseline of paper \S3.5 would
+teach the model to emit informative \texttt{\# MODE: main} probes in
+turn 1 whose stdout the turn-2 policy could read.
+
+\subsection*{Results}
+
+\begin{center}
+\small
+\begin{tabular}{@{}cccrr@{}}
+\toprule
+eval iter & \texttt{\# MODE: main} & settled ($R{>}0$) & max $R$ & mean $R$ \\
+\midrule
+1 & 0/48 & 0/48 & $-10.8$ & $-47.6$ \\
+2 & 0/48 & 0/48 & $-9.6$  & $-32.0$ \\
+3 & 0/48 & 0/48 & $-9.5$  & $-26.2$ \\
+4 & 0/48 & 0/48 & $-9.5$  & $-15.0$ \\
+5 & 0/48 & 0/48 & $-10.7$ & $-17.3$ \\
+6 & 0/48 & 1/48 & $+110.0$ & $-13.7$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The single $+110$ success was sample 3 on
+\texttt{slosh\_tank\_eval\_s10001\_k0.80}. Its turn-2 policy is a
+PD controller with success-state early-exit; turn~1 is essentially
+the same controller with slightly different gains. No
+$\kappa$-estimation, no \texttt{env.reset()}, no \texttt{env.step()},
+no \texttt{print()} of a velocity delta. $\kappa{=}0.80$ is the
+intermediate-difficulty case where blind PD already has a
+$\approx 50\%$ margin per Appendix~B's sweep, so this is consistent
+with ``one sample landed on PD gains that work at this seed and
+$\kappa$,'' not with probe-and-adapt.
+
+\subsection*{Interpretation}
+
+Across all $48 \times 6 = 288$ eval samples, exactly zero used the
+\texttt{\# MODE: main} probe modality. Every turn~1 emitted a
+\texttt{\# MODE: policy} block. Compare to the 2026-05-10 Arm~B
+frozen-baseline entry: 60/60 frozen samples used
+\texttt{\# MODE: main}. So one iteration of GRPO collapsed the model
+from 100\% probe-mode usage to 0\%, and the collapse persisted
+through every subsequent iteration.
+
+The mechanism is the same one the Arm~B entry warned about. The
+trainer rewards trajectories whose final policy scores high. Probes
+only contribute reward through information they pass to turn~2.
+Since the base model writes probes that don't compute $\kappa$, the
+probe content is noise and the resulting per-prefix mean
+$\widehat V_1^{(i)}$ is no better than the root $\widehat V_0$.
+Meanwhile, trajectories where turn~1 is itself a policy give turn~2
+a working draft to refine, and those land higher reward more often.
+The advantage $\widehat V_1^{(i)} - \widehat V_0$ on policy-mode
+prefixes is positive on average; on probe-mode prefixes it is
+roughly zero. The policy gradient drives the model away from probe
+mode in iteration~1, and no exploration pressure brings it back.
+
+The branched per-turn baseline was supposed to fix this exact failure
+mode. The mechanism the paper describes for crediting turn-1 tokens
+(``trained according to the downstream contexts they create'') only
+fires when the sampled distribution includes turn-1 variants whose
+contexts produce visibly different turn-2 reward. When the
+distribution collapses to a single mode, the conditional means
+$\widehat V_1^{(i)}$ across variants $i$ all equal $\widehat V_0$ to
+within sampling noise, and the turn-1 gradient signal vanishes.
+The $+110$ datapoint is therefore a control-reasoning win,
+not a credit-assignment win.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+  \item \textbf{$\beta > 0$ KL penalty to the frozen prior.} Currently
+    \texttt{beta=0} in the branched config, and the trainer's
+    two-pass loss decomposition asserts \texttt{beta == 0} (see
+    \texttt{BranchedGRPOTrainer.\_assert\_supported\_config}). The
+    frozen prior puts 100\% of its mass on probe-mode turn~1s; a KL
+    pull would prevent the immediate collapse to policy-only. Cost:
+    relaxing the assertion requires plumbing per-segment reference
+    log-probabilities through the two-pass loss --- a real code
+    change, but the paper already flags it as a deferred
+    implementation requirement (\S3.6 ``restrictions''). This is the
+    cleanest fix and is paper-consistent.
+  \item \textbf{Reward shaping for turn-1 probe content.} Add a small
+    bonus when turn~1 is \texttt{\# MODE: main} and its printed
+    stdout contains a $\kappa$-shaped number (e.g.\ a float in
+    $[0.4, 1.6]$ near a printed $\Delta v / (a_{\rm cmd}\,\Delta t)$
+    expression). Gameable, and pollutes the paper's
+    ``sparse-final-reward'' framing. Keep in the back pocket only.
+  \item \textbf{Curriculum on $\kappa{=}0.65$.} Train only on the
+    hardest $\kappa$ where the blind-PD ceiling is $\approx -10$
+    (Appendix~B). A blind policy cannot collect the $+120$ success
+    bonus there, so the only way to score above the floor is to
+    estimate and use $\kappa$. Risk: the model gives up rather than
+    discovers $\kappa$-estimation.
+  \item \textbf{Validate the mode-collapse mechanism directly.} Log
+    turn-1-mode-frequency as a per-step training metric. The current
+    trainer's diagnostics (\texttt{v1\_between\_std},
+    \texttt{v1\_signal\_ratio}) measure whether first-turn variants
+    discriminate reward, but not whether the variants span both
+    modes. A new metric \texttt{train/branched/turn1\_main\_rate}
+    would have caught the collapse at training step~1 instead of
+    after 6 hours of compute.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+\begin{itemize}[nosep]
+  \item Does the collapse happen at the very first optimiser update,
+    or gradually over iter~0's 24 steps? Settling this disambiguates
+    ``the per-turn advantage is wrong'' from ``the per-turn advantage
+    is right and probe mode is genuinely worse without the
+    arithmetic.''
+  \item Would a stronger base model that already knows how to compute
+    $\kappa{=}\Delta v / (a\,\Delta t)$ at $\theta{\approx}\omega{\approx}0$
+    survive the collapse? The 2026-05-10 Arm~B entry observed that
+    no Qwen3-4B sample wrote the $\kappa$-estimation arithmetic even
+    when all of $a_{\rm cmd}$, $\Delta v$, $\Delta t$ were on screen.
+    A larger model might.
+  \item Is the failure dataset-specific? The slosh task hides
+    $\kappa$ behind a single scalar; tasks where the hidden parameter
+    is multi-dimensional might force the model into the probe modality
+    by making blind policies strictly worse.
+\end{itemize}
+
+\subsection*{Reproduce}
+
+At \commit{a172dd9}: download the run artifacts with \texttt{bash
+scripts/gcp\_fetch\_artifacts.sh dedup-prod-l4-mb4} (assumes the
+training VM is still up; otherwise the artifacts live under
+\texttt{models/lora/dedup-prod-l4-mb4/} and
+\texttt{data/rollouts/dedup-prod-l4-mb4/} on the VM at
+\texttt{/opt/lora4vr/}). Then run
+\texttt{python docs/reproducibility/16f43b0\_mode\_collapse.py
+{\textasciitilde}/Downloads/lora4vr\_dedup-prod-l4-mb4/dedup-prod-l4-mb4}
+to regenerate the table above. The script counts
+\texttt{\# MODE: main} occurrences in the first assistant message of
+each eval transcript across all six \texttt{iter\_NNN/} subdirectories.
+
 \end{document}
