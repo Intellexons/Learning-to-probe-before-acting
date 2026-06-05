@@ -1,9 +1,14 @@
 # Compute application — abstract
 
-A self-contained, conceptual abstract for compute-grant applications.
-Under 350 words.
+## Short version (under 350 characters)
 
----
+For pasting into compute-application forms with tight character caps.
+
+> Training inherently curious LLM agents — they probe a problem before committing — via RL, with no hand-designed curiosity bonus. Each turn is credited by branching at turn boundaries and reading the spread of final scores, no learned critic. The trainer is built; we need compute for the training runs themselves.
+
+## Long version (under 350 words)
+
+The fuller writeup. Same four-part structure (*what it is / what is new / what is done / what needs to be done*) suitable for application forms that allow a longer abstract.
 
 **What it is.** A research project on training language-model agents to be *inherently curious* — to probe a problem before committing to an answer. Unlike LLM agents that answer immediately or follow scripted tool-use, the curiosity here is learned through reinforcement learning, with no human-labeled rationale or hand-designed curiosity reward. The agent gets one or more free turns to probe or run scratchpad code, then a committing turn whose final program is scored. Standard RL treats every generated word as equally responsible for the score, which gives the wrong signal when an early turn's job is to gather information: a useful probe and a working program look the same as a useless probe and a lucky guess.
 
