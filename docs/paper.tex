@@ -555,7 +555,11 @@ A natural memory/variance extension is token subsampling within a turn. Since ea
 
 \section{Conclusion}
 
-We present a critic-free approach to turn-level credit assignment in sparse-reward multi-turn RL. The method branches rollouts at chat-turn boundaries and uses the resulting Monte Carlo conditional means as per-turn baselines. We apply it to code-policy generation, where the first turn can gather information and the final turn emits the executable policy that receives reward. The token-summed objective also gives an exact turn-wise implementation, but the main goal is credit assignment: giving useful early turns a learning signal when only the final artifact is scored.
+We present a critic-free, turn-level credit-assignment scheme for sparse-reward multi-turn RL. The method branches rollouts at chat-turn boundaries, uses the resulting Monte Carlo conditional means as per-turn baselines, and pairs with a per-turn loss decomposition that recovers the exact full-trajectory gradient one turn at a time.
+
+At this stage, frozen one- and two-turn baselines on a probe-and-adapt code-policy task establish a large reproducible gap to oracle reference policies and a more specific failure mode: prompted alone, the model writes the probe-then-adapt protocol syntactically but never transfers the probe's information into the final policy. The gap is therefore not a gap in format compliance --- it is a gap in \emph{value transfer between turns}, the exact channel that a per-turn credit signal is meant to address.
+
+The training-arm comparisons that test this directly --- flat trajectory-level optimization versus branched optimization, with and without hierarchical per-turn baselines --- are in progress. The estimator extends naturally to more turns and to stochastic rewards (Section~\ref{sec:limitations}); whether the per-turn signal closes the observed value-transfer gap is the headline empirical claim under test.
 
 \appendix
 
