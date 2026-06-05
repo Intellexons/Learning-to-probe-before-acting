@@ -31,6 +31,12 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
 
 ## The idea, in plain language
 
+<p align="center">
+  <img src="docs/assets/branched_rollout.gif" alt="Branched rollout credit-assignment scheme: G_1 first-turn variants, G_2 continuations each, with per-prefix and root Monte Carlo baselines and the per-turn advantage equation." width="640">
+  <br>
+  <em>Branched rollouts with per-turn advantages (animated counterpart of paper Figure 1(c)).</em>
+</p>
+
 Standard outcome-reward RL for LLMs samples one completion, scores it, and
 hands that scalar back to every token it generated. That's a workable
 approximation when the trajectory is just "one block of text". It's a worse
