@@ -1,61 +1,78 @@
-# Branched Multi-Turn GRPO for Code-Policy Generation
+# Learning to probe before acting: a multi-turn RL approach
 
-Iterative post-training loop that teaches an LLM to write better Python control policies on a single 24 GB GPU. The model emits a `def policy(state)` body over two chat turns — a rehearsal turn (probe the env or draft a policy) and a committed-policy turn — and gets gradient-based credit from a branched Monte Carlo rollout with per-turn advantages and a per-turn loss decomposition.
+A small research codebase for teaching a 4B-parameter LLM to write Python
+control policies, on a single 24 GB GPU.
 
-See `docs/paper.tex` for the full method write-up and `docs/findings.tex` for the dated experiment log.
+The model doesn't just emit code in one shot. It interacts with a task over
+two chat turns: a first turn it can use to probe the environment or sketch a
+draft, and a final turn that must commit a `def policy(state)` body. Only the
+final policy is executed and scored. Training has to figure out, from that
+single scalar reward, whether the *probe* was useful or whether the final
+policy happened to work for unrelated reasons. That credit-assignment problem
+is what this project exists to study.
 
-**Base model:** `Qwen/Qwen3-4B-Instruct-2507` (overridable via `LORA4VR_BASE_MODEL`).
-**Trainer:** `BranchedGRPOTrainer` (`src/branched_trainer.py`) — TRL 0.28 `GRPOTrainer` subclass with two overrides: branched rollout in `_generate_and_score_completions` and a two-pass turn-decomposed loss in `compute_loss` / `training_step`.
+The accompanying paper is in `docs/paper.tex` ("Learning to Probe Before
+Acting"). The dated experiment log is in `docs/findings.tex`.
 
-## How it works
+## What it's training
 
-Each outer iteration runs one training subprocess (`scripts/05_train_grpo_branched.py`) and one eval pass (`scripts/08_eval.py`):
+- **Base model:** `Qwen/Qwen3-4B-Instruct-2507` (override with
+  `LORA4VR_BASE_MODEL`). Weights are frozen; only a LoRA adapter is trained.
+- **Task family:** a custom slosh-tank control problem. A cart carries
+  liquid (modelled as one damped pendulum mode) and the policy has to drive
+  it to a goal *and* settle the slosh. A per-task hidden actuator gain
+  $\kappa$ makes a blind controller fail at some levels and succeed at
+  others — the gap that information-gathering turn 1 is meant to close. The
+  environment source ships inside each prompt, so the model has to read the
+  dynamics rather than recognize a name.
+- **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
+  top of the merged previous adapters, then runs an eval pass on held-out
+  scenarios.
 
-```
-For each outer iteration k:
-  1. Train         — load base + merge adapters 0..k-1, fresh LoRA on top,
-                     run max_steps inner GRPO updates; save adapter k
-  2. Evaluate      — load base + merge adapters 0..k, score on held-out tasks
-```
+## The idea, in plain language
 
-Inside the trainer, one inner step does the following for each prompt $s$ in the batch:
+Standard outcome-reward RL for LLMs samples one completion, scores it, and
+hands that scalar back to every token it generated. That's a workable
+approximation when the trajectory is just "one block of text". It's a worse
+approximation here, where turn 1 (a probe) and turn 2 (the committed policy)
+play different roles and only turn 2 is what gets executed.
 
-- **Phase A — turn-1 fan-out.** Sample $G_1$ turn-1 variants $y^{(1)}_i \sim \pi(\cdot \mid s)$ in one `model.generate` call.
-- **Phase B — turn-1 sandbox.** Execute each $y^{(1)}_i$ in the sandbox; the tool returns a message $m_i$ (truncated stdout for `main`, or the policy's scenario reward for `policy`).
-- **Phase C — turn-2 fan-out and score.** For each $i$, sample $G_2$ continuations $y^{(2)}_{i,j} \sim \pi(\cdot \mid s, y^{(1)}_i, m_i)$ in one `model.generate` call ($G_1$ such calls total). Score each leaf to obtain $R_{i,j}$.
-- **Phase D — empirical values and per-turn advantages.** Compute the conditional means
+Two ideas address this:
 
-$$\widehat V_0 = \frac{1}{G_1 G_2}\sum_{i,j} R_{i,j}, \qquad \widehat V_1^{(i)} = \frac{1}{G_2}\sum_{j} R_{i,j},$$
+1. **Branched rollouts.** For each prompt we sample $G_1$ first-turn
+   variants, and under each one we sample $G_2$ second-turn continuations.
+   That gives a small tree per prompt. Averaging rewards across continuations
+   from the *same* first-turn variant tells us how good that variant was;
+   averaging across the whole tree gives the prompt's baseline. Per-turn
+   advantages fall out of those two averages — turn-1 tokens are scored
+   against the prompt baseline, turn-2 tokens against their own prefix's
+   baseline. A bad final policy from a strong probe gets recognized as bad
+   rather than inheriting the probe's reputation.
+2. **Per-turn loss decomposition.** Because the underlying objective (DAPO's
+   token-summed clipped surrogate) is additive over disjoint token subsets,
+   we can run a separate forward + backward for each turn and still get the
+   exact full-trajectory gradient. The point is memory: the LM head's
+   activation tensor is what would otherwise OOM on a 24 GB card, and
+   splitting it per turn roughly halves the peak.
 
-and broadcast each to the tokens of its turn:
+Both pieces are in `src/branched_trainer.py`, a `BranchedGRPOTrainer` that
+subclasses TRL 0.28's `GRPOTrainer` with two overrides — the branched
+rollout and the two-pass loss.
 
-$$A^{(1)}_i = \widehat V_1^{(i)} - \widehat V_0 \quad \text{on } y^{(1)}_i, \qquad A^{(2)}_{i,j} = R_{i,j} - \widehat V_1^{(i)} \quad \text{on } y^{(2)}_{i,j}.$$
-
-The turn-2 advantage uses the conditional mean given the turn-1 prefix, so a poor turn-2 sample drawn from a strong turn-1 is recognized as poor instead of inheriting its prefix's above-average outcome.
-
-The loss runs in **two passes** with a shared global token normalizer $N_{\text{tok}}$:
-
-- Pass 1: forward $[s \mid y^{(1)}]$, backward $\mathcal{L}_{\text{turn1}}$.
-- Pass 2: forward $[s \mid y^{(1)} \mid m \mid y^{(2)}]$ with `logits_to_keep = T_{\text{turn2}}`, backward $\mathcal{L}_{\text{turn2}}$.
-
-Because the DAPO surrogate is token-summed (not per-row averaged), $\mathcal{L}_{\text{turn1}} + \mathcal{L}_{\text{turn2}}$ equals the single-pass loss *exactly*. Peak LM-head saved-activation memory drops from $O(\sum_n T_n)$ to $O(\max_n T_n)$ — the trick that lets $N=2$ branched fit on a 24 GiB GPU at $G_1 = G_2 = 4$, $T = 400$.
-
-Phase-boundary timings are logged to stdout (keyed by `[step k task_id]`) so you can watch progress during long inner steps. See `docs/paper.tex` §3 for the derivation.
-
-### Why the multi-turn protocol
-
-The first turn is either a `main` scratchpad — arbitrary code that probes the env via stdout — or a draft `policy`. The tool returns either truncated stdout or the policy's scenario reward. The second turn must emit a `policy`, which gets scored and produces the trajectory's only scalar reward. This gives the model an explicit affordance for **system-identification probes** when hidden per-scenario parameters (e.g., the slosh-tank's actuator gain) are not in the state. Branched MC on turn-1 prefixes plus per-turn advantages is what lets the gradient distinguish "good probe, bad final policy" from "bad probe, lucky final policy".
-
-### Configuration restrictions for the loss decomposition
-
-The two-pass per-turn loss is exact under: token-summed normalizer (`loss_type ∈ {dapo, cispo}`), `beta = 0`, `num_iterations = 1`, token-level importance sampling. Per-row averaged variants (vanilla GRPO, BNPO, Dr.GRPO) don't decompose this way without different normalizer plumbing; the trainer asserts on entry.
+For the full derivation, ablation arms, and slosh-tank specifics, see the
+paper.
 
 ## Prerequisites
 
-- Python 3.11+ (project pins to 3.14 via `uv`)
+- Python 3.11+ (the project pins 3.14 via `uv`)
 - [uv](https://docs.astral.sh/uv/)
-- A GPU. The production `configs/loop_grpo_branched_slosh.yaml` profile (`G_1=G_2=4`, `max_turn_tokens=400`, bf16) targets **22 GiB free** — comfortably an A100-40GB. L4 (24 GB) fits the smaller smoke config (`configs/smoke_test_slosh.yaml`, `G_1=G_2=2`, `max_turn_tokens=200`) with the older 3B base; whether Qwen3-4B fits on L4 even at smoke sizing is being characterized — see `docs/findings.tex`.
-- Disk: ~8 GB for the Qwen3-4B base + a few hundred MB per adapter.
+- A GPU. The production config (`configs/loop_grpo_branched_slosh.yaml`,
+  $G_1 = G_2 = 4$, 400 tokens per turn, bf16) targets ~22 GiB free —
+  comfortably an A100-40GB. The smoke config (`configs/smoke_test_slosh.yaml`,
+  $G_1 = G_2 = 2$, 200 tokens per turn) is sized for an L4 24 GB. Whether
+  the production config also fits on L4 is being characterized in
+  `docs/findings.tex`.
+- About 8 GB of disk for the base model, plus a few hundred MB per adapter.
 
 ## Setup
 
@@ -63,11 +80,13 @@ The two-pass per-turn loss is exact under: token-summed normalizer (`loss_type �
 bash scripts/00_setup_env.sh
 ```
 
-Installs deps, downloads the HF base model to `models/hf_base/iter_000/`, and creates the directory structure. Override the base model with `LORA4VR_BASE_MODEL=org/name` (default `Qwen/Qwen3-4B-Instruct-2507`).
+Installs dependencies, downloads the HF base model to
+`models/hf_base/iter_000/`, and creates the directory layout. Override the
+base model with `LORA4VR_BASE_MODEL=org/name`.
 
 ## Quick start
 
-Smoke first — single outer iter, ~15-25 min on an A100:
+Smoke run first — one outer iteration, roughly 15–25 minutes on an A100:
 
 ```bash
 uv run python scripts/09_run_loop.py \
@@ -75,7 +94,8 @@ uv run python scripts/09_run_loop.py \
   --run_name smoke_001
 ```
 
-Production slosh run — 23 outer iters, 2 inner steps each, end-of-iter eval:
+Production slosh run — 23 outer iterations, two inner steps each, eval at
+the end of every iteration:
 
 ```bash
 uv run python scripts/09_run_loop.py \
@@ -83,34 +103,37 @@ uv run python scripts/09_run_loop.py \
   --run_name slosh_grpo_run_1
 ```
 
-**Other runtimes:**
-- **GCP GPU VM** — see [Training on GCP](#training-on-gcp). Fire-and-forget train via `gcp_find_gpu_and_train.sh` with auto-fetch and teardown.
+For running on a Google Cloud GPU VM with auto-fetch and auto-teardown, see
+[Training on GCP](#training-on-gcp).
 
 ## Scripts
 
-### Entry points
+The orchestrator (`09_run_loop.py`) is the only entry point you invoke
+directly. It chains training and eval subprocesses for each outer iteration.
 
 | Script | Purpose |
 |---|---|
-| `00_setup_env.sh` | One-time bootstrap: deps, HF base download, dir layout |
-| `09_run_loop.py` | Orchestrator: outer loop, train + eval per iter, W&B orchestrator run |
-| `05_train_grpo_branched.py` | Single outer iter's training subprocess (current trainer) |
-| `08_eval.py` | Single outer iter's eval subprocess (multi-turn rollouts) |
-| `eval_frozen_baseline.py` | Standalone N-turn eval against a frozen / merged-adapter checkpoint |
+| `00_setup_env.sh` | One-time bootstrap: dependencies, base model, directory layout |
+| `09_run_loop.py` | Outer loop, train + eval per iteration, orchestrator W&B run |
+| `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
+| `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
+| `eval_frozen_baseline.py` | Standalone N-turn eval against a frozen or merged-adapter checkpoint |
 
-The orchestrator handles all step chaining; you only invoke `09_run_loop.py` directly. The other scripts run as its subprocesses.
-
-#### `scripts/09_run_loop.py` flags
+`09_run_loop.py` flags:
 
 | Flag | Description |
 |---|---|
 | `--config` | YAML config path (required) |
-| `--run_name` | Run name. Outputs go under `models/lora/<run_name>/`, `data/progress/<run_name>/`, `data/rollouts/<run_name>/` |
-| `--start_iter` | Iteration to resume from (default `0`). Useful after a crash. |
+| `--run_name` | Output prefix under `models/lora/`, `data/progress/`, `data/rollouts/` |
+| `--start_iter` | Iteration to resume from (default `0`); useful after a crash |
 
-### Legacy scripts (DPO + single-turn GRPO)
+### Legacy scripts
 
-`01_generate.py`, `02_score.py`, `03_build_dpo.py`, `04_train_dpo_lora.py`, `04_train_grpo_lora.py` are the older DPO and single-turn GRPO paths used for earlier experiments (puck environment, Qwen2.5-Coder-3B). They still work but the active path is `05_train_grpo_branched.py`. Configs `loop.yaml` / `loop_grpo.yaml` / `smoke_test*.yaml` correspond to those older pipelines.
+`01_generate.py`, `02_score.py`, `03_build_dpo.py`, `04_train_dpo_lora.py`,
+and `04_train_grpo_lora.py` are the older DPO and single-turn GRPO pipelines
+from the puck-environment era. They still run, but the active path goes
+through `05_train_grpo_branched.py`. The matching old configs are `loop.yaml`,
+`loop_grpo.yaml`, and `smoke_test*.yaml`.
 
 ## Project structure
 
@@ -118,20 +141,20 @@ The orchestrator handles all step chaining; you only invoke `09_run_loop.py` dir
 configs/
   loop_grpo_branched_slosh.yaml   # production: slosh env, branched multi-turn GRPO
   smoke_test_slosh.yaml           # smoke: 1 outer iter, G_1=G_2=2
-  loop_grpo_branched.yaml         # older: branched multi-turn GRPO on puck env
+  loop_grpo_branched.yaml         # older: branched multi-turn GRPO on the puck env
   loop_grpo.yaml / loop.yaml      # legacy single-turn GRPO / DPO
   smoke_test_grpo_branched.yaml   # legacy branched smoke (puck)
   prompt_template.txt
 data/
   progress/<run>/                 # per-run CSVs and trainer_log_iter_*.json
-  rollouts/<run>/                 # rollout JSONs per outer iter
+  rollouts/<run>/                 # rollout JSONs per outer iteration
 docs/
   paper.tex                       # method write-up
   findings.tex                    # dated experiment log
   methodology.tex
 models/
-  hf_base/iter_000/               # HF base weights (downloaded by 00_setup_env.sh)
-  lora/<run>/iter_NNN/            # LoRA adapter per outer iter
+  hf_base/iter_000/               # base weights downloaded by 00_setup_env.sh
+  lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
 scripts/
   00_setup_env.sh                 # bootstrap
   05_train_grpo_branched.py       # current trainer subprocess
@@ -139,9 +162,9 @@ scripts/
   09_run_loop.py                  # orchestrator
   01..04_*.py                     # legacy DPO + single-turn GRPO
   eval_frozen_baseline.py         # standalone N-turn eval
-  gcp_*.sh                        # VM lifecycle + train/eval wrappers (see below)
+  gcp_*.sh                        # VM lifecycle + train/eval wrappers
   seed_tasks/
-    slosh_train.jsonl             # 24 per-(seed, κ) slosh training tasks
+    slosh_train.jsonl             # 24 per-(seed, kappa) slosh training tasks
     slosh_eval.jsonl              # 12 held-out slosh eval tasks
     slosh_smoke_train.jsonl       # 2-row subset for smoke runs
     slosh_tank_env.py             # slosh-tank env source
@@ -149,7 +172,7 @@ scripts/
     puck_*.jsonl, puck_tilted_plane_env.py    # earlier puck env (legacy)
 src/
   branched_trainer.py             # current trainer (TRL 0.28 GRPOTrainer subclass)
-  multi_turn.py                   # rollout/turn execution + per-turn advantages
+  multi_turn.py                   # rollout + per-turn advantages
   runner.py                       # sandboxed policy/main subprocess execution
   prompts.py                      # multi-turn chat template rendering
   diversity.py                    # DiversityCallback (W&B diagnostics)
@@ -159,28 +182,38 @@ tests/                            # unit tests for trainer math, prompts, runner
 
 ## Configuration
 
-Key knobs in `configs/loop_grpo_branched_slosh.yaml`:
+The main config is `configs/loop_grpo_branched_slosh.yaml`. The knobs you're
+most likely to touch:
 
 | Section | Key | Default | Description |
 |---|---|---|---|
 | `loop` | `iterations` | `23` | Outer cycles (train + eval per cycle) |
-| `loop` | `trainer` | `grpo_branched` | Selects `BranchedGRPOTrainer` via `09_run_loop.py` |
-| `branched` | `g1`, `g2` | `4`, `4` | Tree shape; `G_1 G_2` leaves per prompt |
-| `branched` | `max_turn_tokens` | `400` | Per-turn generation cap (trajectory ≈ `2·max_turn_tokens + tool_msg`) |
-| `grpo` | `loss_type` | `dapo` | Token-summed clipped surrogate; required for the two-pass decomposition |
-| `grpo` | `beta`, `num_iterations` | `0`, `1` | Required values for the two-pass decomposition |
+| `loop` | `trainer` | `grpo_branched` | Selects `BranchedGRPOTrainer` |
+| `branched` | `g1`, `g2` | `4`, `4` | Tree shape; `g1 * g2` leaves per prompt |
+| `branched` | `max_turn_tokens` | `400` | Per-turn generation cap |
+| `grpo` | `loss_type` | `dapo` | Token-summed surrogate; required for the per-turn decomposition |
+| `grpo` | `beta`, `num_iterations` | `0`, `1` | Required for the per-turn decomposition |
 | `grpo` | `epsilon`, `epsilon_high` | `0.2`, `0.28` | Asymmetric DAPO clip |
-| `grpo` | `scale_rewards` | `batch` | Reward normalization on the assembled (B, T) tensor |
-| `training` | `per_device_train_batch_size` | `16` | = `g1 * g2` (one prompt's worth of trajectories per inner step) |
+| `grpo` | `scale_rewards` | `batch` | Reward normalization |
+| `training` | `per_device_train_batch_size` | `16` | = `g1 * g2`, one prompt's trajectories per inner step |
 | `training` | `num_train_epochs` | `1` | Passes over the train task set per outer iter |
-| `eval` | `n_turns` | `2` | Eval rollouts match the training protocol's turn count |
-| `lora` | `r`, `alpha` | `16`, `32` | LoRA rank + scaling on q/k/v/o_proj |
-| `training` | `report_to` | `wandb` | `wandb` or `none` ([W&B section](#optional-monitoring-with-weights--biases)) |
-| `paths` | `gcs_bucket` | _(unset)_ | Optional GCS checkpoint sync ([details](#optional-gcs-checkpoint-sync)) |
+| `eval` | `n_turns` | `2` | Eval rollouts match the training protocol |
+| `lora` | `r`, `alpha` | `16`, `32` | LoRA rank and scaling on q/k/v/o_proj |
+| `training` | `report_to` | `wandb` | `wandb` or `none` |
+| `paths` | `gcs_bucket` | _(unset)_ | Optional GCS checkpoint sync |
 
-## Task format
+The per-turn loss decomposition is only exact under specific GRPO settings
+(token-summed loss, `beta = 0`, `num_iterations = 1`); the trainer asserts
+on entry rather than silently producing a different gradient. The paper's
+§3 covers why.
 
-Tasks live in `scripts/seed_tasks/*.jsonl`. Each line is one task with one `scenarios` entry (per-(seed, κ) split — see [#49](https://github.com/nima-siboni/LoRA4VR/pull/49) — so the branched MC value estimator's invariant holds: all `G_2` continuations of a given turn-1 variant see byte-identical env state). Schema:
+## Tasks
+
+Tasks live in `scripts/seed_tasks/*.jsonl`. One line per task, one scenario
+per task — the per-(seed, kappa) split (see
+[#49](https://github.com/nima-siboni/LoRA4VR/pull/49)) is what lets the
+branched estimator's invariant hold: all $G_2$ continuations of a given
+first-turn variant see byte-identical environment state.
 
 ```json
 {
@@ -188,7 +221,7 @@ Tasks live in `scripts/seed_tasks/*.jsonl`. Each line is one task with one `scen
   "env_class": "SloshTankEnv",
   "env_code": "from dataclasses import dataclass\n...",
   "state_spec": "state is a dict with keys: t, x, v, theta, omega, goal, steps_left",
-  "action_spec": "action is a float — commanded cart acceleration in m/s²",
+  "action_spec": "action is a float — commanded cart acceleration in m/s^2",
   "goal": "Move the cart to the goal position and settle the liquid...",
   "scenarios": [
     {"scenario_id": "s0_k0.65", "seed": 0, "kappa": 0.65}
@@ -196,33 +229,36 @@ Tasks live in `scripts/seed_tasks/*.jsonl`. Each line is one task with one `scen
 }
 ```
 
-The full env source is embedded in `env_code` so the prompt template can paste it into the model's context — the model must read the dynamics, not pattern-match an environment name.
-
-`build_slosh_tasks.py` regenerates the jsonls when the env source changes.
+The full env source is embedded in `env_code` so the prompt template can
+paste it into the model's context. `build_slosh_tasks.py` regenerates the
+jsonls when the env source changes.
 
 ## Training on GCP
 
-End-to-end playbook for running on a Google Cloud GPU VM.
-
-### Quick automation (recommended)
-
-The whole lifecycle is wrapped by a small set of scripts. The shortest path is:
+The whole VM lifecycle is wrapped by a few scripts. The shortest path:
 
 ```bash
-# Train: walk GPU zones until capacity is found, then chain into gcp_train.sh
+# Train: walk GPU zones until one has capacity, then run training there
 bash scripts/gcp_find_gpu_and_train.sh \
   configs/loop_grpo_branched_slosh.yaml slosh_grpo_run_1 --wait
 
-# Eval against a specific run's iter_NNN adapter on a fresh L4
+# Eval against a specific iteration's adapter
 bash scripts/gcp_find_gpu_and_eval.sh slosh_grpo_run_1 --wait -- --iter 22
 
-# Manual teardown if you didn't use --wait
+# Manual teardown if you skipped --wait
 bash scripts/gcp_destroy_vm.sh --yes
 ```
 
-**`gcp_find_gpu_and_train.sh`** walks a preset list of zones, attempting `gcloud compute instances create` in each until one has capacity (stockouts surface as `ZONE_RESOURCE_POOL_EXHAUSTED`). On the first successful zone it chains into `gcp_train.sh` which uploads the repo, runs `00_setup_env.sh`, starts the training in a detached tmux session, and (with `--wait`) blocks locally polling for a `/tmp/lora4vr-<run>.done` marker — then auto-fetches artifacts and destroys the VM. Non-stockout failures (e.g. quota errors) abort the search to avoid leaving partial VMs behind.
+`gcp_find_gpu_and_train.sh` walks a preset zone list and tries
+`gcloud compute instances create` in each one until something accepts. On
+the first successful zone it chains into `gcp_train.sh`, which uploads the
+repo, runs `00_setup_env.sh`, starts training in a detached tmux session,
+and — with `--wait` — polls locally for a `/tmp/lora4vr-<run>.done` marker
+before auto-fetching artifacts and destroying the VM. Non-stockout
+failures (quota errors, for instance) abort the search rather than
+leaving partial VMs behind.
 
-`--accelerator` selects the GPU class:
+`--accelerator` picks the GPU class:
 
 ```
 l4         (default)  g2-standard-8     1× nvidia-l4              24 GiB
@@ -231,7 +267,7 @@ a100-80gb              a2-ultragpu-1g    1× nvidia-a100-80gb       80 GiB
 h100                   a3-highgpu-1g     1× nvidia-h100-80gb       80 GiB
 ```
 
-Override the zone preset with `LORA4VR_ZONE_LIST="europe-west4-b europe-west1-c ..."`.
+Override the zone preset with `LORA4VR_ZONE_LIST="europe-west4-b ..."`.
 
 ### Prerequisites
 
@@ -240,27 +276,49 @@ Override the zone preset with `LORA4VR_ZONE_LIST="europe-west4-b europe-west1-c 
    gcloud auth login
    gcloud config set project <your-project-id>
    ```
-2. **Compute Engine API** enabled (`gcloud services enable compute.googleapis.com`).
-3. **GPU quota.** Fresh projects start with `GPUS_ALL_REGIONS = 0` (or 1 by default in some cases) and `NVIDIA_*_GPUS = 0` per region. Request at least `1` for the GPU class you intend to use at [Console → IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas). Approval can take hours to days; for new projects the standard denial reason is insufficient billing history.
-4. **`.env`** in the repo root with `WANDB_API_KEY=...` if you want W&B logging.
+2. **Compute Engine API** enabled
+   (`gcloud services enable compute.googleapis.com`).
+3. **GPU quota.** Fresh projects start with no GPU allowance per region.
+   Request at least 1 GPU of the class you want at [Console → IAM & Admin
+   → Quotas](https://console.cloud.google.com/iam-admin/quotas). Approval
+   can take anywhere from hours to days.
+4. **`.env`** in the repo root with `WANDB_API_KEY=...` if you want W&B
+   logging.
 
-### The underlying steps
+### Driving the steps by hand
 
-If you'd rather drive things by hand, the `gcp_*.sh` wrappers are individually scriptable:
+The wrappers are individually scriptable:
 
-- `gcp_launch_vm.sh` — creates the VM, uploads the repo, runs `gcp_startup.sh` (which seeds the dir layout and downloads the HF base model).
-- `gcp_train.sh <config> <run_name> [--wait]` — kicks off training in a detached tmux session, captures the orchestrator's real exit code via `${PIPESTATUS[0]}`, and (with `--wait`) auto-fetches + destroys on completion.
-- `gcp_fetch_artifacts.sh <run_name>` — pulls `models/lora/<run>`, `data/progress/<run>`, `data/rollouts/<run>` from the VM to `~/Downloads/lora4vr_<run>/`.
+- `gcp_launch_vm.sh` — creates the VM, uploads the repo, runs
+  `gcp_startup.sh` to seed the directory layout and download the base
+  model.
+- `gcp_train.sh <config> <run_name> [--wait]` — kicks off training in a
+  detached tmux session, captures the real exit code via
+  `${PIPESTATUS[0]}`, and (with `--wait`) auto-fetches plus destroys on
+  completion.
+- `gcp_fetch_artifacts.sh <run_name>` — pulls `models/lora/<run>`,
+  `data/progress/<run>`, and `data/rollouts/<run>` from the VM to
+  `~/Downloads/lora4vr_<run>/`.
 - `gcp_destroy_vm.sh [--yes]` — deletes the VM and its boot disk.
-- `gcp_eval.sh`, `gcp_find_gpu_and_eval.sh`, `gcp_fetch_eval.sh` — same pattern for eval-only runs.
+- `gcp_eval.sh`, `gcp_find_gpu_and_eval.sh`, `gcp_fetch_eval.sh` — same
+  pattern for eval-only runs.
 
-Default zone for VM lifecycle scripts is `europe-west3-a` (override via `LORA4VR_ZONE`). The find-gpu wrappers ignore this and walk their own preset list (`europe-west4`, `us-central1`, etc., depending on `--accelerator`).
+The default zone for VM-lifecycle scripts is `europe-west3-a` (override
+with `LORA4VR_ZONE`). The find-gpu wrappers ignore this and walk their
+own preset list (`europe-west4`, `us-central1`, etc., depending on
+`--accelerator`).
 
 ### Optional: monitoring with Weights & Biases
 
 Two W&B runs are created per training session:
-- The **inner trainer** logs per-inner-step metrics (loss, KL, rewards, branched diagnostics like `branched/V0`, `branched/v1_signal_ratio`, `branched/generate_calls`) if `training.report_to: wandb`.
-- The **orchestrator** opens `<run_name>-orchestrator` and replays each outer iter's CSV row (train success rate, mean/max reward, eval row) once that iter finishes — giving an outer-iter view alongside the inner-step view.
+
+- The **inner trainer** logs per-inner-step metrics (loss, KL, rewards,
+  and branched diagnostics like `branched/V0` and
+  `branched/v1_signal_ratio`) when `training.report_to: wandb`.
+- The **orchestrator** opens `<run_name>-orchestrator` and replays each
+  outer iteration's CSV row (train success rate, mean and max reward,
+  eval row) once that iteration finishes — giving an outer-iter view
+  alongside the inner-step view.
 
 One-time setup on the VM:
 
@@ -268,11 +326,16 @@ One-time setup on the VM:
 uv run wandb login   # paste API key from https://wandb.ai/authorize
 ```
 
-The `gcp_train.sh` wrapper picks up `WANDB_API_KEY` from your local `.env` and forwards it inline so it never lands on disk.
+`gcp_train.sh` picks up `WANDB_API_KEY` from your local `.env` and
+forwards it inline so it never lands on disk.
 
 ### Optional: GCS checkpoint sync
 
-For long runs on Spot VMs, set `paths.gcs_bucket` in the config to a bucket in the same region as the VM. `09_run_loop.py` then `gsutil rsync`'s `models/lora/<run>/`, `data/progress/<run>/`, and `data/rollouts/<run>/` to `gs://<bucket>/runs/<run>/` after each outer iter, and pulls them back down on `--start_iter > 0`.
+For long runs on Spot VMs, set `paths.gcs_bucket` in the config to a
+bucket in the same region as the VM. After each outer iteration,
+`09_run_loop.py` rsyncs `models/lora/<run>/`, `data/progress/<run>/`,
+and `data/rollouts/<run>/` to `gs://<bucket>/runs/<run>/`, and pulls
+them back down on `--start_iter > 0`.
 
 ```yaml
 paths:
@@ -281,16 +344,17 @@ paths:
 
 Same-region rsync is free; cross-region egress is $0.08/GB.
 
-### Cost sanity-check
+### Cost sanity check
 
-| Item | Rate (europe-west4, on-demand) | Per 4-8 hr run |
+| Item | Rate (europe-west4, on-demand) | Per 4–8 hr run |
 |---|---|---|
 | L4 VM (`g2-standard-8` + 1×L4) | ~$0.70/hr | $3–6 |
 | A100-40GB VM (`a2-highgpu-1g`) | ~$3.67/hr | $15–30 |
 | Boot disk (100 GB pd-balanced) | ~$0.14/day | ~$0.05 |
 | Egress to workstation | $0.12/GB | $0.10–0.25 once |
 
-Spot variants drop the VM rate ~70% — worth the extra `Preemptible CPUs` quota request if you'll run many experiments.
+Spot variants drop the VM rate by about 70% — worth a `Preemptible CPUs`
+quota request if you're running many experiments.
 
 ## Tracking progress
 
@@ -298,9 +362,11 @@ Per-run files under `data/progress/<run_name>/`:
 
 - `train.csv` — per-outer-iter train rollout stats
 - `eval.csv` — per-outer-iter eval rollout stats
-- `trainer_log_iter_NNN.json` — TRL's per-inner-step log history, replayed to the orchestrator W&B run at end-of-iter
+- `trainer_log_iter_NNN.json` — TRL's per-inner-step log history,
+  replayed to the orchestrator W&B run at end-of-iteration
 
-The orchestrator prints a formatted table after each outer iter. To print manually:
+The orchestrator prints a formatted table after each outer iteration. To
+print it manually:
 
 ```python
 from src.progress import print_progress_table
