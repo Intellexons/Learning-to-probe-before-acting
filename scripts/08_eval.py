@@ -1,6 +1,6 @@
 """Evaluate current model on held-out eval tasks.
 
-Usage: python scripts/08_eval.py --iter 1 --config configs/loop.yaml
+Usage: python scripts/08_eval.py --iter 1 --config configs/loop_grpo_branched_slosh.yaml
 
 Supports two modes via `cfg["eval"]["n_turns"]` (default 1):
   - n_turns=1: single-turn rollout (legacy DPO-loop behaviour).
@@ -215,7 +215,7 @@ def run_n_turn_rollout(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iter", type=int, required=True)
-    parser.add_argument("--config", default="configs/loop.yaml")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--run_name", default=None, help="Run name for output directories")
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
 """Orchestrate the full training loop (DPO or GRPO).
 
-Usage: uv run python scripts/09_run_loop.py --config configs/loop.yaml
-       uv run python scripts/09_run_loop.py --config configs/loop.yaml --run_name my_experiment
+Usage: uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_slosh.yaml
+       uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_slosh.yaml --run_name my_experiment
 """
 import argparse
 import csv
@@ -130,7 +130,7 @@ def _forward_trainer_log_history(wandb_run, run_name: str, k: int, step_offset: 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/loop.yaml")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--start_iter", type=int, default=0)
     parser.add_argument(
         "--run_name", default=None,

@@ -1,6 +1,6 @@
 """Train LoRA adapter with DPO on preference pairs.
 
-Usage: python scripts/04_train_dpo_lora.py --iter 0 --config configs/loop.yaml
+Usage: python scripts/04_train_dpo_lora.py --iter 0 --config <config.yaml>
 """
 import argparse
 import logging
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iter", type=int, required=True)
-    parser.add_argument("--config", default="configs/loop.yaml")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--run_name", default=None, help="Run name for output directories")
     args = parser.parse_args()
 
