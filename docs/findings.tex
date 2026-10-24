@@ -314,4 +314,127 @@ alone; G3 with the \texttt{two-turn} subcommand and the same flags. Raw
 output in \texttt{docs/rung0/}: \texttt{search\_dead\_fixed\_2026-10-24.log}
 and \texttt{search\_dead\_early\_control\_2026-10-24.log}.
 
+
+% ============================================================
+\section*{2026-10-24 \quad New environment: a seeded cooling crystallizer
+with a hidden metastable limit passes the Rung 0 gate}
+% ============================================================
+
+\commit{038e6d7} $\cdot$ \textit{hand-written controllers only, CPU; no model
+was run}
+
+\subsection*{Setup / motivation}
+
+The slosh tank was dropped after the two previous entries. Its hidden numbers
+were dynamics parameters, visible in the first steps of the final run, and the
+only variant that passed the gate did so by removing sensors. The rule that
+replaced it: the probe run is the same env with the same actions and the same
+readings as the final run, so the hidden quantity must be one that a probe run
+can reveal through the failure flag, the end-of-episode outcome or free
+repetition, and that a single scored episode cannot. A limit that is only found
+by crossing it is the cleanest case, because crossing it in the final run is
+the failure. The seeded batch cooling crystallizer
+(\texttt{scripts/seed\_tasks/crystallizer\_env.py}) implements it. A saturated
+solution carrying seed crystals is cooled from about 60 to about 20\,$^\circ$C;
+the cooling rate (jacket limit 1.5\,$^\circ$C/min, 20\,s steps, 200\,min
+horizon) is the only control; the supersaturation $\sigma = c/c^*(T) - 1$
+drives seed growth ($G = k_g\sigma^{1.5}$) and is consumed by it; above the
+hidden metastable limit $\sigma_{\max}\sim U[0.08, 0.25]$ a shower of new
+nuclei ends the batch. The observation is $(t, T, c, L, T_{\text{target}},
+\text{steps\_left})$; $\sigma_{\max}$ appears nowhere except in the shower
+test, and two batches with limits 0.10 and 0.25 gave identical observations
+under identical actions until one showered. Success is reaching the target
+temperature equilibrated ($\sigma\le 0.02$); reward $-0.1$ per step, $+120$ on
+success, $-80$ on a shower. The fastest safe schedule rides just below the
+limit and accelerates as the crystals grow (the classical programmed-cooling
+result), so the final run needs both the limit and a real controller. The
+protocol was that of the previous entries: five controller families
+(one-step-lookahead supersaturation tracking, linear cooling, power-law
+cooling, piecewise-linear profile, power-law profile with a supersaturation
+cap), 300 random samples plus 120 hill-climbing steps from the top six, 48
+search seeds, 200 fresh seeds, both sides maximizing mean env reward. Scores:
+success; fast success, i.e.\ finishing within $1.25\times$ the time of the
+oracle that rides exactly at $\sigma_{\max}$; and normalized time (oracle
+steps over own steps, 0 on failure). Gates fixed in advance: G1 informed fast
+success $\ge 90\%$ at every anchor value; G2 blind fast success at least
+40\,pp below; G3 hand-written probe run plus final run $\ge 95\%$.
+
+\subsection*{Results}
+
+\begin{center}\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrl}
+\toprule
+hidden $\sigma_{\max}$ & time wt & blind fast (\%) & blind norm.\ time & blind reward & inf.\ fast (\%) & inf.\ norm.\ time & inf.\ reward & G1 / G2 (gap) \\
+\midrule
+$U[0.08,0.25]$, anchors 0.08 / 0.165 / 0.25 & 0.1 & 7.5 (100 / 0 / 0) & 0.50 & 91 & 100 & 1.00 & 91 / 108 / 110 & pass / pass ($+92$) \\
+$\{0.08, 0.12, 0.18, 0.25\}$                & 0.1 & 25 (100 / 0 / 0 / 0) & 0.58 & 91 & 100 & 1.00 & 91 / 103 / 109 / 110 & pass / pass ($+75$) \\
+$U[0.08,0.25]$ (sensitivity)                & 0.3 & 11 (0 / 0 / 0)   & 0.52 & 38 & 100 & 1.00 & 33 / 83 / 91 & pass / pass ($+89$) \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+In both configurations the blind winner was the tracking family riding at
+$\sigma_t\approx 0.08$, the lowest limit in the range, which never showers and
+needs about 100 minutes for every batch; the informed side finished in 33 to
+98 minutes depending on the limit. The open-loop families could not reach fast
+success even when informed ($\le 10\%$), so feedback on the concentration is
+needed to ride the limit. G3 passed at 100\% fast success at every anchor in
+both configurations: the probe run cooled at the jacket limit until the shower,
+then in two more batches crept up in eighths of the remaining bracket, and
+recovered the limit to within 0.0002 (0.004 at the top of the range); the final
+run rode at 98\% of the recovered value.
+
+\subsection*{Interpretation}
+
+The gap comes from physics and not from a narrow controller family or a
+withheld sensor. A limit cannot be learned without crossing it, crossing it in
+the final run is the failure, and feedback on every reading is allowed. Under
+the env reward the blind side's best policy is caution, so the probe run buys
+time rather than success: two to three times faster on the easy batches, which
+is 12 to 19 reward points out of 120 at a time weight of 0.1. Tripling the time
+weight raises that to about 32 points over the range but the blind side then
+starts to gamble ($\sigma_t\approx 0.084$, showering the 4\% of batches whose
+limit lies below it). Compared with the slosh tank, nothing was hidden from the
+final run that a plant would have, and the probe's information channel, the
+failure flag, is one both runs share.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Runner: the scenario carries a \texttt{hidden} dict and the templates
+  build the hidden parameters from it; the probe-run env is wrapped so that
+  reset, step, observe, the success and safety tests and the config are
+  reachable but the hidden parameters are not; the probe-run seed differs
+  from the scoring seed (same limit, different batch); a task builder with
+  the prompt text; tests.
+\item Rung 0b: the hand-written probe run and final run through the real
+  \texttt{execute\_turn} path at $\ge 95\%$.
+\item Fix the time weight (0.1 or 0.3) before any training run; it sets how
+  much of the reward the probe is worth against how much the blind side is
+  tempted to gamble.
+\item Rungs 1--2 as planned. The probe is a few lines; a frozen model may
+  already write it, and the ladder will say so.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether 600 steps per episode is acceptable for the branched-rollout cost.
+Whether the growth constant $k_g$ should also vary by batch; it is identifiable
+from the readings of the final run, which would show the contrast between a
+quantity that needs the probe run and one that does not inside a single env.
+Whether to add a jacket lag, which would make riding the limit harder and force
+a margin.
+
+\subsection*{Reproduce}
+
+\commit{038e6d7}, \texttt{scripts/rung0\_gate\_crystal.py}: the
+\texttt{search} subcommand over the two configurations
+\texttt{range:0.08-0.25} and \texttt{set:0.08,0.12,0.18,0.25} with the
+default budget (300 random, top 6, 120 climbing steps); the sensitivity row
+with the time weight set to 0.3 on the command line; G3 with the
+\texttt{two-turn} subcommand. Raw output in \texttt{docs/rung0/}, files
+\texttt{crystal\_search}, \texttt{crystal\_two\_turn} and
+\texttt{crystal\_search\_timeweight03}, all dated 2026-10-24.
+
 \end{document}
