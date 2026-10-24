@@ -108,6 +108,7 @@ then controller) $\geq 95\%$ on fresh seeds. Twelve configurations were run
 \subsection*{Results}
 
 \begin{center}\small
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{llrrrrr}
 \toprule
 $L$ set (m) & steps & blind per $L$ (\%) & blind mean & informed per $L$ (\%) & informed mean & gap (pp) \\
@@ -123,7 +124,7 @@ $U[2,4]$          & 90  & 100 / 100 / 100 & 100 & 100 / 100 / 100 & 100 & $0$ \\
 $U[3,5]$          & 105 & 100 / 100 / 82  & 94  & 100 / 100 / 100 & 100 & $+6$ \\
 $U[3,5]$          & 120 & 96 / 100 / 100  & 99  & 100 / 100 / 100 & 100 & $+1$ \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{center}
 
 G1 passed everywhere. G2 failed in every configuration. The blind winner was
@@ -231,6 +232,7 @@ cores).
 \subsection*{Results}
 
 \begin{center}\small
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{lllrrrl}
 \toprule
 hidden & steps & success rule & blind mean (\%) & informed mean (\%) & gap (pp) & G1 / G2 \\
@@ -245,7 +247,7 @@ $\kappa\sim U[0.6,1]$, $L\sim U[2,4]$    & 105 & final step & 33 (range 24) & 10
 $\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 105 & first success (control) & 71 & 99 & $+28$ & pass / FAIL \\
 $\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 135 & first success (control) & 100 & 100 & $0$ & pass / FAIL \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{center}
 
 Under the final-step rule the blind winner succeeded for exactly one gain
@@ -303,12 +305,13 @@ framing. Whether $L$ should stay hidden or be fixed and known.
 
 \subsection*{Reproduce}
 
-\commit{3dc6581}, \texttt{scripts/rung0\_gate.py}: \texttt{--obs dead
---fixed-horizon search --configs "k=0.65,0.8,1.0;L=0.7@105" ...} (six
-configurations as in the table, \texttt{--n-random 800 --topk 8 --n-climb
-150}); the control with \texttt{--obs dead} and no \texttt{--fixed-horizon};
-G3 with \texttt{--obs dead --fixed-horizon two-turn --config ...}. Raw
-output: \texttt{docs/rung0/search\_dead\_fixed\_2026-10-24.log} and
-\texttt{docs/rung0/search\_dead\_early\_control\_2026-10-24.log}.
+\commit{3dc6581}, \texttt{scripts/rung0\_gate.py} with the flags
+\texttt{--obs dead} and \texttt{--fixed-horizon}: the \texttt{search}
+subcommand over the six configurations in the table, written as in
+\texttt{"k=0.65,0.8,1.0;L=0.7@105"}, with the budget \texttt{--n-random 800},
+\texttt{--topk 8}, \texttt{--n-climb 150}; the control with \texttt{--obs dead}
+alone; G3 with the \texttt{two-turn} subcommand and the same flags. Raw
+output in \texttt{docs/rung0/}: \texttt{search\_dead\_fixed\_2026-10-24.log}
+and \texttt{search\_dead\_early\_control\_2026-10-24.log}.
 
 \end{document}
