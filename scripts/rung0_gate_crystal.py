@@ -353,6 +353,57 @@ for npass in range(3):
 print(f"SIGMA_MAX_LOW={lo:.5f} SIGMA_MAX_HIGH={hi:.5f}")
 '''
 
+PROBE_ONE_PASS_SOURCE = """
+# MODE: main
+# Probe run, one batch: cool at the jacket limit until the shower; the last safe level is the estimate.
+cfg = env.config
+s, _ = env.reset()
+lo, hi = 0.0, 0.40
+while True:
+    c_prev = s["c"]
+    s, r, done, _, _ = env.step(-1.0)
+    sig_pre = c_prev / solubility(s["T"], cfg) - 1.0
+    if done:
+        if not env.is_success():
+            hi = sig_pre
+        break
+    lo = max(lo, sig_pre)
+print(f"SIGMA_MAX_LOW={lo:.5f} SIGMA_MAX_HIGH={hi:.5f}")
+"""
+
+PROBE_CREEP_TEMPLATE = """
+# MODE: main
+# Probe run, one batch: raise the supersaturation target by STEP every step until the shower.
+STEP = {step}
+cfg = env.config
+s, _ = env.reset()
+lo, hi, target = 0.0, 0.40, STEP
+while True:
+    c_prev = s["c"]
+    T_des = max(saturation_temperature(c_prev / (1.0 + target), cfg), s["T_target"])
+    a = max(-1.0, min(1.0, (T_des - s["T"]) / (cfg.max_rate * cfg.dt / 60.0)))
+    s, r, done, _, _ = env.step(a)
+    sig_pre = c_prev / solubility(s["T"], cfg) - 1.0
+    if done:
+        if not env.is_success():
+            hi = sig_pre
+        break
+    lo = max(lo, sig_pre)
+    target += STEP
+print(f"SIGMA_MAX_LOW={{lo:.5f}} SIGMA_MAX_HIGH={{hi:.5f}}")
+"""
+
+
+def probe_source(variant: str, creep_step: float) -> str:
+    if variant == "three-pass":
+        return PROBE_SOURCE
+    if variant == "one-pass":
+        return PROBE_ONE_PASS_SOURCE
+    if variant == "creep":
+        return PROBE_CREEP_TEMPLATE.format(step=creep_step)
+    raise ValueError(variant)
+
+
 FINAL_TEMPLATE = '''
 # MODE: policy
 SIGMA_HAT = {sigma_hat:.5f}
@@ -366,8 +417,8 @@ def policy(state):
 '''
 
 
-def run_probe(seed: int, sigma_max: float) -> tuple[float, float]:
-    """Execute PROBE_SOURCE against a fresh env exactly as the runner would (same namespace)."""
+def run_probe(seed: int, sigma_max: float, source: str = None) -> tuple[float, float]:
+    """Execute a probe-run source against a fresh env exactly as the runner would (same namespace)."""
     env = CrystallizerEnv(seed=seed, hidden=HiddenParams(sigma_max=sigma_max), config=EnvConfig(**ENV_KW))
     ns = {"env": env, "solubility": solubility, "saturation_temperature": saturation_temperature,
           "EnvConfig": EnvConfig}
@@ -375,7 +426,7 @@ def run_probe(seed: int, sigma_max: float) -> tuple[float, float]:
     import contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        exec(PROBE_SOURCE, ns)
+        exec(source if source is not None else PROBE_SOURCE, ns)
     out = buf.getvalue()
     lo = float(out.split("SIGMA_MAX_LOW=")[1].split()[0])
     hi = float(out.split("SIGMA_MAX_HIGH=")[1].split()[0])
@@ -389,8 +440,8 @@ def final_policy_from_source(sigma_hat: float):
 
 
 def _two_turn_job(args):
-    seed, smax = args
-    lo, hi = run_probe(seed, smax)
+    seed, smax, variant, creep_step = args
+    lo, hi = run_probe(seed, smax, probe_source(variant, creep_step))
     pol = final_policy_from_source(lo)
     res = run_episode(pol, seed, smax)
     o = oracle_steps(seed, smax)
@@ -401,7 +452,7 @@ def _two_turn_job(args):
 
 def cmd_two_turn(args):
     if args.show_source:
-        print(PROBE_SOURCE)
+        print(probe_source(args.probe, args.creep_step))
         print(FINAL_TEMPLATE)
     ctx = get_context("spawn")
     if args.time_weight is not None:
@@ -409,11 +460,13 @@ def cmd_two_turn(args):
     with ctx.Pool(args.workers, initializer=_init_worker, initargs=(dict(ENV_KW),)) as pool:
         for spec in args.configs:
             cfg = parse_config(spec)
-            print(f"\n=== two-turn, config {spec}  env overrides {ENV_KW or 'none'} ===")
+            print(f"\n=== two-turn, config {spec}  probe {args.probe}"
+                  f"{' step ' + str(args.creep_step) if args.probe == 'creep' else ''}"
+                  f"  env overrides {ENV_KW or 'none'} ===")
             all_ok = True
             for a in cfg["anchors"] + ["range"]:
                 pairs = range_pairs(cfg, EVAL_SEEDS) if a == "range" else anchor_pairs(cfg, a, EVAL_SEEDS)
-                rows = pool.map(_two_turn_job, pairs, chunksize=4)
+                rows = pool.map(_two_turn_job, [(sd, sm, args.probe, args.creep_step) for sd, sm in pairs], chunksize=4)
                 n = len(rows)
                 fast = sum(r["fast"] for r in rows) / n
                 succ = sum(r["success"] for r in rows) / n
@@ -445,6 +498,10 @@ def main():
     t.add_argument("--configs", nargs="+", default=["range:0.08-0.25"])
     t.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     t.add_argument("--show-source", action="store_true")
+    t.add_argument("--probe", choices=["three-pass", "one-pass", "creep"], default="three-pass",
+                   help="probe-run budget: three batches (default), one batch at the jacket limit, "
+                        "or one batch creeping the supersaturation target up by --creep-step per step")
+    t.add_argument("--creep-step", type=float, default=0.005)
     t.add_argument("--time-weight", type=float, default=None, help="override EnvConfig.time_weight (sensitivity check)")
     t.set_defaults(func=cmd_two_turn)
     args = ap.parse_args()
