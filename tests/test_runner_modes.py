@@ -160,7 +160,7 @@ def test_score_main_rejects_invalid_syntax():
 def test_score_main_does_not_expose_env_class():
     """Per the 2026-04-25 decision, main() runs without the env class
     in its namespace. Trying to reference one should raise NameError."""
-    code = "PuckTiltedPlaneEnv()\n"
+    code = "SloshTankEnv()\n"
     result = score_main_turn(code, timeout=5)
     # The subprocess will have raised NameError; we get an error back.
     assert result["error"] is not None or "NameError" in result["stdout"]

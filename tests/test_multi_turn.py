@@ -112,21 +112,30 @@ def test_error_floor_reward_scales_with_scenarios():
     assert error_floor_reward(8) == ERROR_PENALTY_PER_SCENARIO * 8
 
 
-def _puck_task_one_scenario():
-    """Minimal puck task — one scenario — for execute_turn integration tests."""
+def _tiny_task_one_scenario():
+    """Minimal task — one scenario — for execute_turn integration tests.
+
+    Mirrors the runner's env contract: `Env(seed, hidden=HiddenParams(...))`,
+    `reset() -> (state, info)`, `step() -> 5-tuple`."""
     env_code = '''
 import math, random
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class HiddenParams:
+    actuator_gain: float = 1.0
+
 class TinyEnv:
-    def __init__(self, seed=0):
+    def __init__(self, seed=0, hidden=None, config=None):
         rng = random.Random(seed)
         self.gx = rng.uniform(-1, 1)
         self.steps = 0
-    def reset(self):
-        return {"px": 0.0, "gx": self.gx}
+    def reset(self, seed=None):
+        return {"px": 0.0, "gx": self.gx}, {}
     def step(self, action):
         self.steps += 1
         done = self.steps >= 5
-        return {"px": float(action[0]) * 0.1, "gx": self.gx}, -1.0, done
+        return {"px": float(action[0]) * 0.1, "gx": self.gx}, -1.0, done, False, {}
 '''
     return {
         "task_id": "tiny",
@@ -137,7 +146,7 @@ class TinyEnv:
 
 
 def test_execute_turn_policy_last_turn_returns_real_reward():
-    task = _puck_task_one_scenario()
+    task = _tiny_task_one_scenario()
     completion = """Here goes:
 ```policy
 def policy(state):
@@ -148,11 +157,11 @@ def policy(state):
     assert tr.mode == "policy"
     # Reward integrates -1.0 over 5 steps = -5.0 (no goal in tiny env)
     assert tr.reward == pytest.approx(-5.0, abs=0.01)
-    assert "[tool] policy" in tr.text
+    assert "total_reward" in tr.text
 
 
 def test_execute_turn_main_on_last_turn_is_rejected():
-    task = _puck_task_one_scenario()
+    task = _tiny_task_one_scenario()
     completion = """```main
 print('thinking')
 ```"""
@@ -163,7 +172,7 @@ print('thinking')
 
 
 def test_execute_turn_invalid_last_turn_is_rejected_at_floor():
-    task = _puck_task_one_scenario()
+    task = _tiny_task_one_scenario()
     tr = execute_turn(
         "no fenced block here, just text",
         task,
@@ -176,7 +185,7 @@ def test_execute_turn_invalid_last_turn_is_rejected_at_floor():
 
 
 def test_execute_turn_main_on_intermediate_turn_returns_stdout_no_reward():
-    task = _puck_task_one_scenario()
+    task = _tiny_task_one_scenario()
     completion = """```main
 import math
 print('answer:', math.sqrt(16))
@@ -192,7 +201,7 @@ print('answer:', math.sqrt(16))
 def test_execute_turn_invalid_intermediate_turn_is_floor():
     """Even mid-trajectory, an invalid turn carries a floor penalty so the
     branched-rollout V̂_1 estimate reflects the bad turn-1."""
-    task = _puck_task_one_scenario()
+    task = _tiny_task_one_scenario()
     tr = execute_turn(
         "junk text",
         task,

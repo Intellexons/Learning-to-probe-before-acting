@@ -1,4 +1,4 @@
-"""Arm A/B — frozen Qwen2.5-Coder-3B baseline on slosh task.
+"""Frozen-model baseline on the slosh task: one-turn or two-turn, no training.
 
 Arm A (--turns 1): generates N one-turn policy completions, evaluates at
 κ ∈ {0.65, 0.80, 1.00} over EVAL_SEEDS. Compares to oracle and blind curves.

@@ -180,7 +180,7 @@ def format_dpo_example(
     """Build a single DPO training example in TRL conversational format.
 
     TRL DPOTrainer with conversational format will apply the chat template
-    (ChatML for Qwen2.5) automatically via tokenizer.apply_chat_template().
+    (ChatML for Qwen) automatically via tokenizer.apply_chat_template().
     """
     return {
         "prompt": [{"role": "user", "content": prompt_text}],

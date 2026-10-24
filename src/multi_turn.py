@@ -300,7 +300,7 @@ def assemble_tool_mask(
 def format_tool_message(text: str) -> dict:
     """Wrap a tool-result text into a chat message.
 
-    We use role="user" (not "tool") because Qwen2.5's chat template doesn't
+    We use role="user" (not "tool") because Qwen's chat template doesn't
     have a dedicated tool-role pathway and we don't want to register an
     actual tool-calling schema. The `[tool]` static prefix on the content
     (added by `execute_turn` already) gives the model a stylistic marker

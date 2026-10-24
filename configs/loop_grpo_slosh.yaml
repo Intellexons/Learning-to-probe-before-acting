@@ -1,0 +1,70 @@
+# Flat single-turn GRPO on the slosh tank (stock TRL GRPOTrainer via
+# scripts/04_train_grpo_lora.py). This is the one-turn RL reference arm:
+# the model writes `policy(state)` in a single turn with no probe.
+#
+# Sizing mirrors configs/loop_grpo_branched_slosh.yaml so the two trainers
+# see the same number of scored trajectories per step (16) and the same
+# per-turn token budget (400).
+
+base_model:
+  # Documentation only — the actual model id is read by 00_setup_env.sh
+  # from the LORA4VR_BASE_MODEL env var (default Qwen/Qwen3-4B-Instruct-2507).
+  hf: "Qwen/Qwen3-4B-Instruct-2507"
+
+paths:
+  hf_base_dir: "models/hf_base"
+  lora_dir: "models/lora"
+  rollouts_dir: "data/rollouts"
+  tasks_train: "scripts/seed_tasks/slosh_train.jsonl"
+  tasks_eval: "scripts/seed_tasks/slosh_eval.jsonl"
+
+loop:
+  iterations: 23
+  trainer: "grpo"
+
+grpo:
+  num_generations: 16        # G — matches g1 * g2 of the branched config
+  max_completion_length: 400 # one turn's worth; branched caps each turn at 400
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  beta: 0.0
+  loss_type: "dapo"
+  scale_rewards: "batch"
+  temperature: 0.8
+  top_p: 0.95
+  mask_truncated_completions: true
+  log_completions: true
+
+generation:
+  n_samples_per_task: 8
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 600
+
+scoring:
+  timeout_seconds: 30
+  max_steps: 500
+
+training:
+  learning_rate: 1.0e-4
+  per_device_train_batch_size: 16   # = num_generations
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  warmup_ratio: 0.1
+  bf16: true
+  gradient_checkpointing: true
+  logging_steps: 1
+  report_to: "wandb"
+  wandb_project: "lora4vr"
+
+lora:
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  task_type: "CAUSAL_LM"
