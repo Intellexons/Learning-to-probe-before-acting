@@ -1,0 +1,22 @@
+obs=dead fixed_horizon=False classes=['bang', 'free', 'multistop']
+24 search jobs on 11 workers
+  20/24 done, 54s
+  24/24 done, 56s
+search + eval done in 56s
+
+| hidden set | steps | blind per value | blind mean | informed per value | informed mean | gap | G1 | G2 | blind winner |
+|---|---|---|---|---|---|---|---|---|---|
+| k=0.65,0.8,1.0;L=0.7 | 105 |  13 / 100 / 100 | 71 |  98 /  99 / 100 | 99 | +28 | pass | FAIL | multistop: khat=0.95 A=0.97 shaper=ZV Td1=1.60 Td2=1.39 stops=3 r2=1.26 r3=1.45 dwell=0 |
+| k=0.65,0.8,1.0;L=0.7 | 135 | 100 / 100 /  99 | 100 |  98 / 100 / 100 | 100 | -0 | pass | FAIL | multistop: khat=0.93 A=1.00 shaper=ZV Td1=1.46 Td2=1.10 stops=3 r2=1.23 r3=1.41 dwell=0 |
+
+value order per row: {'k=0.65,0.8,1.0;L=0.7@105': ['k=0.65', 'k=0.8', 'k=1'], 'k=0.65,0.8,1.0;L=0.7@135': ['k=0.65', 'k=0.8', 'k=1']}
+
+Informed winners:
+  k=0.65,0.8,1.0;L=0.7@105 k=0.65: multistop: khat=0.50 A=0.97 shaper=ZV Td1=1.38 Td2=5.70 stops=1 r2=1.27 r3=1.02 dwell=1
+  k=0.65,0.8,1.0;L=0.7@105 k=0.8: multistop: khat=0.54 A=1.00 shaper=ZV Td1=1.00 Td2=3.08 stops=2 r2=1.07 r3=1.13 dwell=0
+  k=0.65,0.8,1.0;L=0.7@105 k=1: free: khat=0.97 beta=1.17 c=[+0.99,+0.91,+0.83,+0.94,+0.85,+0.32,+0.65,+0.81] shaper=none Td1=1.09 Td2=1.62 kp=0.40 kd=0.50 apd=0.20
+  k=0.65,0.8,1.0;L=0.7@135 k=0.65: multistop: khat=0.50 A=0.97 shaper=ZV Td1=1.37 Td2=3.15 stops=3 r2=1.16 r3=1.00 dwell=2
+  k=0.65,0.8,1.0;L=0.7@135 k=0.8: multistop: khat=0.54 A=1.00 shaper=ZV Td1=1.00 Td2=1.75 stops=2 r2=1.51 r3=1.54 dwell=10
+  k=0.65,0.8,1.0;L=0.7@135 k=1: free: khat=0.99 beta=1.17 c=[+0.74,+0.75,+0.63,+0.92,+0.74,+0.66,+0.28,+0.23] shaper=none Td1=1.47 Td2=1.08 kp=0.62 kd=1.29 apd=0.29
+
+wrote data/rung0/search_dead_early.json
