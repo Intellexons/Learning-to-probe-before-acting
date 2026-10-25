@@ -222,7 +222,7 @@ most likely to touch:
 | `training` | `per_device_train_batch_size` | `16` | = `g1 * g2`, one prompt's trajectories per inner step |
 | `training` | `num_train_epochs` | `1` | Passes over the train task set per outer iter |
 | `eval` | `n_turns` | `2` | Eval rollouts match the training protocol |
-| `prompt` | `example` | `full` | What the multi-turn format example shows: `full` (reset + print the state), `format` (fences and directives only, nothing to copy), `none` |
+| `prompt` | `example` | `format` | What the multi-turn format example shows: `format` (fences and directives only, nothing to copy; the default since the Stage 2 ablation of 2026-10-26), `full` (reset + print the state; the frozen model copied it in 80 to 83 of 96 probe runs), `none` (the frozen model then never takes the probe turn and drops the fences) |
 | `lora` | `r`, `alpha` | `16`, `32` | LoRA rank and scaling on q/k/v/o_proj |
 | `training` | `report_to` | `wandb` | `wandb` or `none` |
 | `paths` | `gcs_bucket` | _(unset)_ | Optional GCS checkpoint sync |

@@ -91,3 +91,10 @@ lora:
   alpha: 16
   dropout: 0.05
   task_type: "CAUSAL_LM"
+
+# Multi-turn prompt. The format example shows fences and mode directives only
+# ("format"). With the original example ("full": reset and print the state) the
+# frozen model copied it in 80-83 of 96 probe runs; with no example ("none") it
+# never took the probe turn and dropped the fences (Stage 2 ablation, 2026-10-26).
+prompt:
+  example: format
