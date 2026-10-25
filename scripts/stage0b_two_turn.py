@@ -1,6 +1,6 @@
 """Stage 0b: the hand-written probe run and final run through the real execution path.
 
-Stage 0 (scripts/rung0_gate_crystal.py) ran the hand-written probe source
+Stage 0 (scripts/stage0_gate_crystal.py) ran the hand-written probe source
 in-process. Here the same probe source goes through `execute_turn`, i.e. the
 sandbox subprocess with the probe-run env (hidden limit masked, probe batch
 different from the scoring batch), and the final policy it produces is scored
@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "scripts" / "seed_tasks"))
 from src.dataset import load_jsonl  # noqa: E402
 from src.multi_turn import execute_turn  # noqa: E402
 from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR, extract_code_with_mode, score_sample  # noqa: E402
-from rung0_gate_crystal import FINAL_TEMPLATE, GATE_TWO_TURN_MIN, PROBE_SOURCE  # noqa: E402
+from stage0_gate_crystal import FINAL_TEMPLATE, GATE_TWO_TURN_MIN, PROBE_SOURCE  # noqa: E402
 from build_crystallizer_tasks import task_entry  # noqa: E402
 from crystallizer_env import HiddenParams  # noqa: E402
 from crystallizer_utils import cautious_policy, run_episode  # noqa: E402

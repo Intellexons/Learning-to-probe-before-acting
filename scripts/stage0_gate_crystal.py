@@ -1,4 +1,4 @@
-"""Rung 0 validity gate for the seeded cooling crystallizer.
+"""Stage 0 validity gate for the seeded cooling crystallizer.
 
 Question: does knowing the hidden metastable limit (sigma_max) buy anything that a
 controller without it cannot get from the final run's own readings?
@@ -26,8 +26,8 @@ Hidden-value configs:  "range:0.08-0.25"  (continuous; anchors low / mid / high 
                        "set:0.08,0.12,0.18,0.25"  (discrete)
 
 Usage:
-  python scripts/rung0_gate_crystal.py search --configs range:0.08-0.25 set:0.08,0.12,0.18,0.25 --out data/rung0/crystal.json
-  python scripts/rung0_gate_crystal.py two-turn --configs range:0.08-0.25 [--show-source]
+  python scripts/stage0_gate_crystal.py search --configs range:0.08-0.25 set:0.08,0.12,0.18,0.25 --out data/stage0/crystal.json
+  python scripts/stage0_gate_crystal.py two-turn --configs range:0.08-0.25 [--show-source]
 """
 from __future__ import annotations
 

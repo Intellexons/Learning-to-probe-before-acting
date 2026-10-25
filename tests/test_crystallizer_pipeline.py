@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "seed_tasks"))
 
 from src.multi_turn import execute_turn  # noqa: E402
 from src.runner import extract_code_with_mode, score_main_turn, score_sample  # noqa: E402
-from rung0_gate_crystal import FINAL_TEMPLATE, PROBE_SOURCE  # noqa: E402
+from stage0_gate_crystal import FINAL_TEMPLATE, PROBE_SOURCE  # noqa: E402
 from crystallizer_env import HiddenParams  # noqa: E402
 from crystallizer_utils import cautious_policy, run_episode  # noqa: E402
 
