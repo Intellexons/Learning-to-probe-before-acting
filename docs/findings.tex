@@ -437,4 +437,122 @@ with the time weight set to 0.3 on the command line; G3 with the
 \texttt{crystal\_search}, \texttt{crystal\_two\_turn} and
 \texttt{crystal\_search\_timeweight03}, all dated 2026-10-24.
 
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-10-25 \quad The crystallizer replaces the slosh tank throughout
+the pipeline; Stage 0b passes through the runner}
+% ============================================================
+
+\commit{d849b0f} $\cdot$ \textit{hand-written probe run and final run only, CPU;
+no model was run}
+
+\subsection*{Setup / motivation}
+
+The previous entry left the crystallizer as a standalone module next to a
+pipeline still wired to the slosh tank: the runner built every env with a
+hard-coded actuator gain, and the task files, configs, eval metric and tests
+were the slosh ones, so the slosh env was still needed although it had been
+dropped. This entry records the rewiring and the removal. A task's scenario
+now carries the batch seed of the final run, a different batch seed for the
+probe run, the hidden parameters as a dict that the runner splats into the
+env's \texttt{HiddenParams}, and the number of steps the time-optimal
+controller needs on the scoring batch. The probe run sees the env through a
+wrapper that forwards every public method and reading but not the hidden
+parameters, cannot read its own script, and runs on the probe batch. The eval
+metric changed from the slosh settle test to the env's own success test plus
+fast success (success within $1.25\times$ the oracle time) and normalised
+time (oracle steps over own steps, zero on failure); fast success is the
+headline, since a cautious blind policy succeeds on every batch by being
+slow. The frozen-model script for Stages 1 and 2 was rewritten for the new
+task files and keeps the turn-1 mode and code per sample. The slosh env, its
+task files, configs, gate script, gain sweep and difficulty plan were
+deleted; the Stage~0 logs under \texttt{docs/rung0/} remain as the record
+behind the earlier entries. One inconsistency surfaced on the way: the runner
+calls \texttt{reset()} once after constructing the env, which under the env's
+seeded stream is the second batch for that seed, while the in-process helper
+used the first. The helper now mirrors the runner, so the stored oracle times
+refer to the batch the final run is scored on; the Stage~0 numbers of the
+previous entry were computed with the earlier helper and reproduce at their
+cited commit.
+
+Stage~0b asks whether the hand-written solution survives the real execution
+path: the three-batch probe source from the Stage~0 gate pushed through
+\texttt{execute\_turn} (sandbox subprocess, probe-run wrapper, probe batch),
+its printed bracket pasted into the final-run template, and the final policy
+scored with \texttt{score\_sample} exactly as the trainer scores it.
+Pre-registered bar: fast success $\ge 95\%$. Tasks: the 24 training and 12
+held-out batches plus 200 fresh batches whose limits follow the task
+builder's rule, 236 in all.
+
+\subsection*{Results}
+
+\begin{center}\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrlrrrrrrrrr}
+\toprule
+ & & & \multicolumn{6}{c}{hand-written probe run + final run} & \multicolumn{3}{c}{blind cautious, same batches} \\
+\cmidrule(lr){4-9} \cmidrule(lr){10-12}
+$\sigma_{\max}$ third & $n$ & range & success & fast & norm.\ time & min & reward & probe err. & fast & norm.\ time & reward \\
+\midrule
+low    & 78  & 0.080--0.136 & 100\% & 100\% & 0.974 & 0.968 & 99.0  & 0.0002 & 23.1\% & 0.674 & 89.7 \\
+middle & 78  & 0.138--0.192 & 100\% & 100\% & 0.983 & 0.975 & 107.3 & 0.0002 & 0.0\%  & 0.412 & 89.7 \\
+high   & 80  & 0.193--0.249 & 100\% & 100\% & 0.989 & 0.981 & 109.6 & 0.0002 & 0.0\%  & 0.336 & 89.3 \\
+all    & 236 & 0.080--0.249 & 100\% & 100\% & 0.982 & 0.968 & 105.3 & 0.0002 & 7.6\%  & 0.473 & 89.6 \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+Gate: fast success through the real path $100\%$ with no probe failures:
+pass. The 236 two-turn tasks took 1.7\,s on ten workers; the env is not
+where the cost of a rollout lies. The full test suite (137 tests) passes,
+including the probe-run wrapper tests (hidden parameters unreadable, probe
+batch different from the scoring batch, own script unreadable) and an
+end-to-end test of the hand-written solution on the hardest held-out batch.
+
+\subsection*{Interpretation}
+
+The numbers are the ones the in-process gate gave (probe error
+$2\times10^{-4}$, normalised time 0.97--0.99 by third), so the sandbox, the
+wrapper and the switch to a separate probe batch cost nothing: the pipeline
+carries the crystallizer end to end, and the hidden limit reaches the env
+only through the task file. The blind reference through the same batches is
+unchanged as well (fast 7.6\%, normalised time 0.47), which fixes the two
+ends of the scale the model stages will be read against.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Stage~1: the frozen model, one turn, no probe run; expected near the
+  blind reference if it writes a working controller at all.
+\item Stage~2: the frozen model with a probe run; read the per-sample turn-1
+  mode and code, not only the score, to see which probe it writes. If it
+  already lands near the informed ceiling, the env has to get harder before
+  any training run.
+\item Fix the time weight (0.1 as shipped, or 0.3) before Stage~3; it sets
+  how much reward the probe is worth against how much the blind side is
+  tempted to gamble.
+\item Build the stress set (limits outside the training range) that the
+  paper's metric paragraph promises.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether the probe-run wrapper is tight enough: the inner env is reachable
+through function introspection by a determined reader, though nothing in the
+reward pushes a model that way, since the honest one-batch probe already
+yields the limit. Whether the stress set should extend the limits downward
+as well, where the slowest safe batch no longer fits the 600-step horizon.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{d849b0f}: the task builder in \texttt{scripts/seed\_tasks}, then
+\texttt{scripts/stage0b\_two\_turn.py} with 200 fresh batches and ten
+workers. Raw output in \texttt{docs/stage0b/}, file
+\texttt{two\_turn\_runner\_2026-10-25.log}.
+\end{sloppypar}
+
 \end{document}

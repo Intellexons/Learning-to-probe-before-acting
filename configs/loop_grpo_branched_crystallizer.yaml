@@ -1,3 +1,6 @@
+# Branched-rollout multi-turn GRPO on the crystallizer (Stage 6, arm F).
+# Turn 1 is the probe run (unscored), turn 2 the final run (scored).
+
 base_model:
   # Documentation only — the actual model id is read by 00_setup_env.sh
   # from the LORA4VR_BASE_MODEL env var (default Qwen/Qwen3-4B-Instruct-2507).
@@ -8,16 +11,16 @@ paths:
   hf_base_dir: "models/hf_base"
   lora_dir: "models/lora"
   rollouts_dir: "data/rollouts"
-  tasks_train: "scripts/seed_tasks/slosh_train.jsonl"
-  tasks_eval: "scripts/seed_tasks/slosh_eval.jsonl"
+  tasks_train: "scripts/seed_tasks/crystallizer_train.jsonl"
+  tasks_eval: "scripts/seed_tasks/crystallizer_eval.jsonl"
 
 loop:
   iterations: 23
   trainer: "grpo_branched"
 
 # Branched-rollout (VinePPO-style) sizing. Total trajectories per prompt
-# is g1 * g2. Per the design doc, start with g1=g2=4 (16 trajectories,
-# ~20 LLM forward calls — saves ~40% compute over flat G=16, N=2).
+# is g1 * g2. Start with g1=g2=4 (16 trajectories, ~20 LLM forward calls —
+# saves ~40% compute over flat G=16, N=2).
 branched:
   g1: 4
   g2: 4
@@ -28,11 +31,10 @@ branched:
   # because num_items_in_batch is the global token count, passed unchanged
   # to every chunk).
   #
-  # Required on 24 GB L4: empirical run `dedup-prod-l4` (2026-05-15) OOMed
-  # at the turn-2 `logits / temperature` allocation — 3.9 GiB tensor +
-  # 3.9 GiB transient duplicate. At mb=4 the per-chunk forward holds
-  # (4, 400, |V|) ≈ 0.97 GiB, recovering ~6 GiB of headroom. Cost: 4x
-  # LM-head kernel launches per turn (~5% wall-clock).
+  # Required on 24 GB L4: at mb=4 the per-chunk forward holds
+  # (4, 400, |V|) ≈ 0.97 GiB instead of the 3.9 GiB tensor plus its
+  # transient duplicate at the turn-2 `logits / temperature` allocation.
+  # Cost: 4x LM-head kernel launches per turn (~5% wall-clock).
   #
   # On A100-40GB+ this is unnecessary — leave it set since the gradient
   # is identical regardless of chunk size.
@@ -55,14 +57,16 @@ generation:
   top_p: 0.95
   max_tokens: 600
 
+# One batch is at most 600 steps of 20 s (EnvConfig.max_steps); the runner
+# must not cut a slow but safe batch short.
 scoring:
   timeout_seconds: 30
-  max_steps: 500
+  max_steps: 600
 
 # End-of-iteration eval (scripts/08_eval.py). Multi-turn rollouts match
-# the training protocol so the W&B reward curve reflects what the trainer
-# is actually optimising. The last `# MODE: policy` block in the rollout
-# is the one scored; final-turn `# MODE: main` is rejected.
+# the training protocol so the W&B curves reflect what the trainer is
+# actually optimising. The last `# MODE: policy` block in the rollout is
+# the one scored; a final-turn `# MODE: main` is rejected.
 eval:
   n_turns: 2
 

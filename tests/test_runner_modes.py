@@ -158,9 +158,106 @@ def test_score_main_rejects_invalid_syntax():
 
 
 def test_score_main_does_not_expose_env_class():
-    """Per the 2026-04-25 decision, main() runs without the env class
-    in its namespace. Trying to reference one should raise NameError."""
-    code = "SloshTankEnv()\n"
+    """Without env_code, main() runs without the env class in its
+    namespace. Trying to reference one should raise NameError."""
+    code = "CrystallizerEnv()\n"
     result = score_main_turn(code, timeout=5)
     # The subprocess will have raised NameError; we get an error back.
     assert result["error"] is not None or "NameError" in result["stdout"]
+
+
+# ---------------------------------------------------------------------------
+# The probe-run env: same hidden parameters as the final run, masked
+# ---------------------------------------------------------------------------
+
+_PROBE_ENV_SRC = '''
+class HiddenParams:
+    def __init__(self, **kw):
+        self.kw = kw
+
+
+class _ProbeTestEnv:
+    def __init__(self, seed=0, hidden=None):
+        self.seed = seed
+        self.hidden = hidden
+        self.public_note = "visible"
+
+    def reset(self, seed=None):
+        return {"seed": float(self.seed)}, {}
+
+    def step(self, action):
+        return {"seed": float(self.seed)}, 0.0, True, False, {}
+
+    def is_success(self):
+        return False
+'''
+_SCENARIO = {"scenario_id": "s0", "seed": 3, "probe_seed": 44, "hidden": {"limit": 0.123}}
+
+
+def _probe(code: str) -> dict:
+    return score_main_turn(code, env_code=_PROBE_ENV_SRC, scenario=_SCENARIO,
+                           env_class="_ProbeTestEnv", timeout=10)
+
+
+def test_probe_env_runs_on_the_probe_batch_not_the_scoring_batch():
+    out = _probe("s, _ = env.reset()\nprint('seed', s['seed'])\n")
+    assert out["error"] is None, out
+    assert "seed 44.0" in out["stdout"]
+
+
+def test_probe_env_hides_the_hidden_parameters():
+    out = _probe("print(env.hidden)\n")
+    assert out["error"] is not None
+    assert "not available in the probe run" in out["error"]
+    assert "0.123" not in out["stdout"]
+
+
+def test_probe_env_exposes_public_methods_and_attributes():
+    out = _probe(
+        "print(env.public_note)\n"
+        "s, _ = env.reset()\n"
+        "print('done', env.step(0.0)[2])\n"
+        "print('success', env.is_success())\n"
+        "print('hidden listed', 'hidden' in dir(env))\n"
+        "print(repr(env))\n"
+    )
+    assert out["error"] is None, out
+    assert "visible" in out["stdout"]
+    assert "done True" in out["stdout"]
+    assert "success False" in out["stdout"]
+    assert "hidden listed False" in out["stdout"]
+    assert "ProbeEnv(_ProbeTestEnv)" in out["stdout"]
+
+
+def test_probe_env_is_read_only_and_blocks_private_names():
+    out = _probe(
+        "for stmt in ('env.hidden = 1', 'env._inner', 'env.__dict__'):\n"
+        "    try:\n"
+        "        eval(stmt) if '=' not in stmt else exec(stmt)\n"
+        "        print('ALLOWED', stmt)\n"
+        "    except AttributeError:\n"
+        "        print('blocked', stmt)\n"
+    )
+    assert out["error"] is None, out
+    assert "ALLOWED" not in out["stdout"]
+    assert out["stdout"].count("blocked") == 3
+
+
+def test_probe_run_cannot_read_its_own_script():
+    """The script text holds the hidden values as a literal."""
+    out = _probe(
+        "try:\n"
+        "    print(open(__file__).read()[:20])\n"
+        "except Exception as e:\n"
+        "    print('no source access:', type(e).__name__)\n"
+    )
+    assert out["error"] is None, out
+    assert "no source access" in out["stdout"]
+    assert "0.123" not in out["stdout"]
+
+
+def test_score_main_without_scenario_still_builds_the_env():
+    out = score_main_turn("s, _ = env.reset()\nprint('seed', s['seed'])\n",
+                          env_code=_PROBE_ENV_SRC, env_class="_ProbeTestEnv", timeout=10)
+    assert out["error"] is None, out
+    assert "seed 0.0" in out["stdout"]

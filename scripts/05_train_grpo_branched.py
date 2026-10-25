@@ -1,6 +1,6 @@
 """Train LoRA adapter with branched-rollout multi-turn GRPO (N=2, VinePPO-style).
 
-Usage: python scripts/05_train_grpo_branched.py --iter 0 --config configs/loop_grpo_branched_slosh.yaml
+Usage: python scripts/05_train_grpo_branched.py --iter 0 --config configs/loop_grpo_branched_crystallizer.yaml
 """
 import argparse
 import logging

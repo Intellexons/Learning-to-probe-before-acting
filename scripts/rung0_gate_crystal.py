@@ -3,7 +3,7 @@
 Question: does knowing the hidden metastable limit (sigma_max) buy anything that a
 controller without it cannot get from the final run's own readings?
 
-Protocol (same as scripts/rung0_gate.py for the slosh tank):
+Protocol:
   * blind side     one controller for every hidden value
   * informed side  one controller per hidden value
   * identical controller families, identical optimizer budget

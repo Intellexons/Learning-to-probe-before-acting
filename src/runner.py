@@ -21,26 +21,31 @@ DANGEROUS_MODULES = {
 # Must be lower than the worst-possible-but-running trajectory in any supported
 # env, so GRPO's advantage ranks "broken code" strictly below "code that runs
 # and does badly." Otherwise errored samples score 0.0 (no reward accumulated)
-# and end up *higher* than running-but-failing samples (which integrate negative
-# distance penalties), and GRPO rewards the model for producing errors.
+# and end up *higher* than running-but-failing samples, and GRPO rewards the
+# model for producing errors. The crystallizer's worst running trajectory is
+# -0.1 * 600 - 80 = -140.
 ERROR_PENALTY_PER_SCENARIO = -200.0
 
 # Cap on bytes of stdout returned from a `main` turn. Prevents a runaway
 # print-loop from blowing the chat context.
 MAIN_STDOUT_TRUNCATE = 2000
 
-# Default subprocess timeouts (seconds). policy turns may run a full
-# horizon of env steps; main turns are pure scratchpad math and should
-# return quickly.
+# Default subprocess timeouts (seconds). A final run may take the full
+# 600-step horizon; a probe run may run a few full batches of its own.
 POLICY_DEFAULT_TIMEOUT = 30
 MAIN_DEFAULT_TIMEOUT = 10
 
 # How many trailing bytes of stderr to surface in error messages.
 STDERR_TAIL_BYTES = 500
 
-# Default max env steps per scenario rollout. Matches scoring config defaults.
-DEFAULT_MAX_STEPS = 500
-DEFAULT_ENV_CLASS = "SloshTankEnv"
+# Default max env steps per scenario rollout. Matches the crystallizer's own
+# horizon (EnvConfig.max_steps = 600) and the scoring config defaults.
+DEFAULT_MAX_STEPS = 600
+DEFAULT_ENV_CLASS = "CrystallizerEnv"
+
+# A final run counts as "fast" when it succeeds within this factor of the
+# time-optimal batch time stored on the scenario (`oracle_steps`).
+FAST_FACTOR = 1.25
 
 
 # Fenced-block matcher for multi-turn dispatch. Anything that doesn't yield
@@ -168,7 +173,7 @@ import random
 
 # --- Runner ---
 def run_episode(seed, max_steps):
-    env = {env_class}(seed=seed, hidden=HiddenParams(actuator_gain={kappa}))
+    env = {env_class}(seed=seed, hidden=HiddenParams(**{hidden!r}))
     state, _ = env.reset()
     total_reward = 0.0
     steps = 0
@@ -176,24 +181,23 @@ def run_episode(seed, max_steps):
         try:
             action = policy(state)
         except Exception as e:
-            return {{"reward": total_reward, "steps": steps, "settled": None, "error": f"policy() error: {{e}}"}}
+            return {{"reward": total_reward, "steps": steps, "success": None, "error": f"policy() error: {{e}}"}}
         state, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         steps += 1
         if terminated:
             break
-    # Task-outcome success — distinct from "code ran without crashing".
-    # Envs that define `is_success()` (e.g. SloshTankEnv's 4-condition
-    # settle check) get a real bool; envs without it report None and the
-    # caller treats it as "unknown" rather than "failed".
+    # Task outcome, distinct from "code ran without crashing". Envs that
+    # define `is_success()` report a real bool; envs without it report None
+    # and the caller treats it as not-a-success.
     if hasattr(env, "is_success"):
         try:
-            settled = bool(env.is_success())
+            success = bool(env.is_success())
         except Exception:
-            settled = None
+            success = None
     else:
-        settled = None
-    return {{"reward": total_reward, "steps": steps, "settled": settled, "error": None}}
+        success = None
+    return {{"reward": total_reward, "steps": steps, "success": success, "error": None}}
 
 seed = {seed}
 max_steps = {max_steps}
@@ -202,12 +206,62 @@ print(json.dumps(result))
 '''
 
 
+# The probe-run env. The model's `# MODE: main` code sees `env`: the same env
+# class with the SAME hidden parameters as the final run (the one that is
+# scored), on a different random batch. The hidden parameters are masked: the
+# way to learn about them is to run the env and watch what happens, which is
+# also all a real plant would allow.
+_PROBE_ENV_SECTION = '''\
+# --- Environment code ---
+{env_code}
+
+# --- Probe-run env ---
+# `env` is the same env class with the SAME hidden parameters as the final run
+# (the one that is scored), on a different random batch. The hidden parameters
+# are not readable; learn about them by running the env and watching what
+# happens. Anything else you build (new env instances with hidden values of
+# your own choosing, helper functions) is up to you.
+def _make_probe_env(_inner):
+    _blocked = {{"hidden"}}
+    _allowed = {{"__class__", "__doc__", "__repr__", "__str__", "__dir__",
+                "__init__", "__init_subclass__", "__subclasshook__"}}
+
+    class ProbeEnv:
+        """Same class and hidden parameters as the final run; the hidden parameters themselves are not readable."""
+        def __getattribute__(self, name):
+            if name in _allowed:
+                return object.__getattribute__(self, name)
+            if name in _blocked or name.startswith("_"):
+                raise AttributeError(f"{{name!r}} is not available in the probe run")
+            return getattr(_inner, name)
+        def __setattr__(self, name, value):
+            raise AttributeError("the probe-run env is read-only; use its methods")
+        def __dir__(self):
+            return sorted(n for n in dir(_inner) if not n.startswith("_") and n not in _blocked)
+        def __repr__(self):
+            return "ProbeEnv(" + type(_inner).__name__ + ")"
+    return ProbeEnv()
+
+env = _make_probe_env({env_class}(seed={seed}, hidden=HiddenParams(**{hidden!r})))
+del _make_probe_env
+# The script text holds the hidden values as a literal; keep the model's code
+# from reading its own source.
+try:
+    del __file__
+except NameError:
+    pass
+import builtins as _builtins
+_builtins.open = None
+del _builtins
+'''
+
+
 _RUNNER_TEMPLATE_MAIN = '''\
 import math
 import random
 
 {env_section}
-# --- Main code (model's calibration experiments) ---
+# --- Probe-run code (the model's) ---
 {main_code}
 '''
 
@@ -260,6 +314,11 @@ def _run_script_in_subprocess(script: str, timeout: int) -> _SubprocessOutcome:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+def _hidden_kwargs(scenario: dict | None) -> dict:
+    """The scenario's hidden parameters as keyword arguments for HiddenParams."""
+    return dict((scenario or {}).get("hidden") or {})
+
+
 def run_policy_in_subprocess(
     code: str,
     env_code: str,
@@ -268,54 +327,62 @@ def run_policy_in_subprocess(
     max_steps: int = DEFAULT_MAX_STEPS,
     env_class: str = DEFAULT_ENV_CLASS,
 ) -> dict:
-    """Execute policy in a subprocess with timeout."""
+    """Execute policy in a subprocess with timeout (the final run).
+
+    The env is built as `env_class(seed=scenario["seed"],
+    hidden=HiddenParams(**scenario["hidden"]))`.
+    Returns {"reward", "steps", "success", "error"}.
+    """
     script = _RUNNER_TEMPLATE_POLICY.format(
         env_code=env_code,
         policy_code=code,
         seed=scenario.get("seed", 0),
-        kappa=scenario.get("kappa", 1.0),
+        hidden=_hidden_kwargs(scenario),
         max_steps=max_steps,
         env_class=env_class,
     )
     outcome = _run_script_in_subprocess(script, timeout=timeout)
 
     if outcome.timed_out:
-        return {"reward": 0.0, "steps": 0, "settled": None, "error": "Timeout"}
+        return {"reward": 0.0, "steps": 0, "success": None, "error": "Timeout"}
     if outcome.returncode != 0:
         return {
-            "reward": 0.0, "steps": 0, "settled": None,
+            "reward": 0.0, "steps": 0, "success": None,
             "error": f"Process error: {outcome.stderr_tail()}",
         }
     try:
         result = json.loads(outcome.stdout.strip())
-        result.setdefault("settled", None)  # tolerate old in-flight subprocesses
+        result.setdefault("success", None)
+        result.setdefault("steps", 0)
         return result
     except (json.JSONDecodeError, ValueError) as e:
-        return {"reward": 0.0, "steps": 0, "settled": None, "error": f"Output parse error: {e}"}
+        return {"reward": 0.0, "steps": 0, "success": None, "error": f"Output parse error: {e}"}
 
 
 def run_main_in_subprocess(
     code: str,
     env_code: str = "",
-    kappa: float = 1.0,
-    seed: int = 0,
+    scenario: dict | None = None,
     env_class: str = DEFAULT_ENV_CLASS,
     timeout: int = MAIN_DEFAULT_TIMEOUT,
 ) -> dict:
-    """Execute a `main` turn in the sandbox and capture stdout.
+    """Execute a `main` turn (the probe run) in the sandbox and capture stdout.
 
     When env_code is provided, the env class is injected and a pre-instantiated
-    `env` object is available to the model's code — same kappa and seed as the
-    policy evaluation, so calibration experiments probe the right system.
-    Returns: {"stdout": str, "error": str | None}. Stdout is truncated to
+    probe-run `env` is available to the model's code: same hidden parameters as
+    the final run, batch seed `scenario["probe_seed"]` (falls back to
+    `scenario["seed"]`), hidden parameters masked. Returns
+    {"stdout": str, "error": str | None}. Stdout is truncated to
     `MAIN_STDOUT_TRUNCATE` bytes — the captured text is the model's "tool
     result" and an unbounded print loop would blow the chat context.
     """
+    scenario = scenario or {}
     if env_code:
-        env_section = (
-            f"# --- Environment code ---\n{env_code}\n\n"
-            f"# Pre-instantiated calibration env (same hidden params as policy evaluation)\n"
-            f"env = {env_class}(seed={seed}, hidden=HiddenParams(actuator_gain={kappa}))\n"
+        env_section = _PROBE_ENV_SECTION.format(
+            env_code=env_code,
+            env_class=env_class,
+            seed=scenario.get("probe_seed", scenario.get("seed", 0)),
+            hidden=_hidden_kwargs(scenario),
         )
     else:
         env_section = ""
@@ -335,6 +402,41 @@ def run_main_in_subprocess(
 # ---------------------------------------------------------------------------
 
 
+def _time_metrics(success: bool, steps: int, oracle_steps) -> tuple[bool, float]:
+    """(fast, normalised time) for one scenario.
+
+    fast: success within FAST_FACTOR * oracle_steps. norm_time: oracle_steps /
+    own steps, 0 on failure. A scenario without `oracle_steps` has no time
+    reference: fast == success and norm_time is 1 on success.
+    """
+    if not success:
+        return False, 0.0
+    if not oracle_steps or steps <= 0:
+        return True, 1.0
+    return steps <= FAST_FACTOR * oracle_steps, oracle_steps / steps
+
+
+def error_floor_result(task: dict, errors: list[str]) -> dict:
+    """The score dict for a sample that never ran (validation failure or no
+    valid final policy): every scenario at ERROR_PENALTY_PER_SCENARIO, no
+    success, no fast success, normalised time 0."""
+    scenarios = task.get("scenarios", [])
+    ids = [s["scenario_id"] for s in scenarios]
+    return {
+        "reward_total": ERROR_PENALTY_PER_SCENARIO * len(scenarios),
+        "reward_per_scenario": {sid: ERROR_PENALTY_PER_SCENARIO for sid in ids},
+        "success_per_scenario": {sid: False for sid in ids},
+        "n_scenarios_success": 0,
+        "fast_per_scenario": {sid: False for sid in ids},
+        "n_scenarios_fast": 0,
+        "norm_time_per_scenario": {sid: 0.0 for sid in ids},
+        "mean_norm_time": 0.0,
+        "steps_per_scenario": {sid: 0 for sid in ids},
+        "errors": list(errors),
+        "ran_successfully": False,
+    }
+
+
 def score_sample(
     code: str,
     task: dict,
@@ -343,28 +445,26 @@ def score_sample(
 ) -> dict:
     """Score a single code sample across all scenarios in the task.
 
+    Returns the reward per scenario and three task-outcome metrics per
+    scenario: `success` (the env's own `is_success()`), `fast` (success within
+    FAST_FACTOR of the scenario's `oracle_steps`) and `norm_time`
+    (oracle_steps / own steps, 0 on failure).
+
     Failed validation and per-scenario runtime errors are scored at
     `ERROR_PENALTY_PER_SCENARIO` so that erroring out is always strictly
     worse than running and doing badly. See the constant's docstring above.
     """
     scenarios = task["scenarios"]
-    n_scenarios = len(scenarios)
 
     is_valid, error_msg = validate_code(code)
     if not is_valid:
-        return {
-            "reward_total": ERROR_PENALTY_PER_SCENARIO * n_scenarios,
-            "reward_per_scenario": {
-                s["scenario_id"]: ERROR_PENALTY_PER_SCENARIO for s in scenarios
-            },
-            "settled_per_scenario": {s["scenario_id"]: False for s in scenarios},
-            "n_scenarios_settled": 0,
-            "errors": [error_msg],
-            "ran_successfully": False,
-        }
+        return error_floor_result(task, [error_msg])
 
     reward_per_scenario: dict = {}
-    settled_per_scenario: dict = {}
+    success_per_scenario: dict = {}
+    fast_per_scenario: dict = {}
+    norm_time_per_scenario: dict = {}
+    steps_per_scenario: dict = {}
     errors: list[str] = []
     ran_any = False
     env_class = task.get("env_class", DEFAULT_ENV_CLASS)
@@ -378,23 +478,35 @@ def score_sample(
         )
         if result["error"]:
             reward_per_scenario[sid] = ERROR_PENALTY_PER_SCENARIO
-            settled_per_scenario[sid] = False  # didn't even run cleanly
+            success_per_scenario[sid] = False  # didn't even run cleanly
+            fast_per_scenario[sid] = False
+            norm_time_per_scenario[sid] = 0.0
+            steps_per_scenario[sid] = int(result.get("steps") or 0)
             errors.append(f"{sid}: {result['error']}")
         else:
             reward_per_scenario[sid] = result["reward"]
-            # `settled` is the env's task-outcome check (e.g. SloshTankEnv's
-            # 4-condition |x-g|, |v|, |theta|, |omega| within tolerance).
-            # None if the env doesn't define is_success(); treat as False
-            # for aggregation since the aggregate metric is "did the task
-            # succeed", and unknown counts as not-yet-known-success.
-            settled_per_scenario[sid] = bool(result.get("settled") or False)
+            # `success` is the env's task-outcome check; None if the env
+            # doesn't define is_success(). Unknown counts as not-a-success.
+            success = bool(result.get("success") or False)
+            steps = int(result.get("steps") or 0)
+            fast, norm_time = _time_metrics(success, steps, scenario.get("oracle_steps"))
+            success_per_scenario[sid] = success
+            fast_per_scenario[sid] = fast
+            norm_time_per_scenario[sid] = norm_time
+            steps_per_scenario[sid] = steps
             ran_any = True
 
+    n = max(len(scenarios), 1)
     return {
         "reward_total": sum(reward_per_scenario.values()),
         "reward_per_scenario": reward_per_scenario,
-        "settled_per_scenario": settled_per_scenario,
-        "n_scenarios_settled": sum(settled_per_scenario.values()),
+        "success_per_scenario": success_per_scenario,
+        "n_scenarios_success": sum(success_per_scenario.values()),
+        "fast_per_scenario": fast_per_scenario,
+        "n_scenarios_fast": sum(fast_per_scenario.values()),
+        "norm_time_per_scenario": norm_time_per_scenario,
+        "mean_norm_time": sum(norm_time_per_scenario.values()) / n,
+        "steps_per_scenario": steps_per_scenario,
         "errors": errors,
         "ran_successfully": ran_any,
     }
@@ -410,12 +522,12 @@ score_policy_turn = score_sample
 def score_main_turn(
     code: str,
     env_code: str = "",
-    kappa: float = 1.0,
-    seed: int = 0,
+    scenario: dict | None = None,
     env_class: str = DEFAULT_ENV_CLASS,
     timeout: int = MAIN_DEFAULT_TIMEOUT,
 ) -> dict:
-    """Score a `main` turn — execute the code in the sandbox, return stdout.
+    """Score a `main` turn (the probe run): execute the code in the sandbox
+    and return its stdout.
 
     Unlike `score_policy_turn`, this does NOT produce a numeric reward. The
     "value" of a main turn is the captured stdout text returned to the model
@@ -431,7 +543,9 @@ def score_main_turn(
     is_valid, error_msg = validate_main_code(code)
     if not is_valid:
         return {"stdout": f"[main rejected: {error_msg}]", "error": error_msg}
-    result = run_main_in_subprocess(code, env_code=env_code, kappa=kappa, seed=seed, env_class=env_class, timeout=timeout)
+    result = run_main_in_subprocess(
+        code, env_code=env_code, scenario=scenario, env_class=env_class, timeout=timeout,
+    )
     if result["error"]:
         return {
             "stdout": f"{result['stdout']}\n[main error: {result['error']}]".strip(),

@@ -1,397 +1,308 @@
-"""Frozen-model baseline on the slosh task: one-turn or two-turn, no training.
+"""Frozen-model references on the crystallizer: Stage 1 (one turn) and Stage 2 (two turns).
 
-Arm A (--turns 1): generates N one-turn policy completions, evaluates at
-κ ∈ {0.65, 0.80, 1.00} over EVAL_SEEDS. Compares to oracle and blind curves.
+No training. Stage 1 (--turns 1): the model writes `policy(state)` in a single
+turn with no probe run. Stage 2 (--turns 2): the model gets a probe run
+(`# MODE: main` against the probe-run env: same hidden limit, different batch,
+limit masked) and then writes the final policy. The two-turn protocol is the
+training/eval one: the final turn must be a policy block, and an early policy
+does not end the rollout.
 
-Arm B (--turns 2): same but generates a two-turn (main + policy) rollout.
+For every task in the task file (default: the held-out eval set) N samples
+are drawn and scored with the same `score_sample` the trainer uses. Per task
+and overall the script reports success, fast success (within 1.25x the
+time-optimal batch), normalised time (oracle steps / own steps, 0 on failure)
+and reward, next to two hand-written references computed in-process: the
+blind cautious controller (rides at 0.077, safe for every limit in the range)
+and the oracle (tracks the true limit). For Stage 2 the turn-1 mode, the
+turn-1 code and the tool output are kept per sample, so the record shows what
+the frozen model does with the probe run.
+
+usage:
+  uv run python scripts/eval_frozen_baseline.py --turns 1 --n-samples 8
+  uv run python scripts/eval_frozen_baseline.py --turns 2 --n-samples 8
 """
+from __future__ import annotations
+
 import argparse
 import json
 import logging
-import subprocess
 import sys
-import tempfile
+from collections import Counter
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "scripts" / "seed_tasks"))
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-_SEED_TASKS_DIR = Path(__file__).resolve().parent / "seed_tasks"
-sys.path.insert(0, str(_SEED_TASKS_DIR))
-
-from src.hf_generator import load_model_for_generation, generate_code, generate_code_from_messages
-from src.prompts import load_template, render_prompt
-from src.runner import validate_code, run_main_in_subprocess, extract_code_with_mode, ERROR_PENALTY_PER_SCENARIO
-from src.dataset import load_jsonl
+from src.dataset import load_jsonl, save_jsonl  # noqa: E402
+from src.hf_generator import (  # noqa: E402
+    generate_code,
+    generate_code_from_messages,
+    load_model_for_generation,
+)
+from src.multi_turn import execute_turn  # noqa: E402
+from src.prompts import load_template, render_prompt  # noqa: E402
+from src.runner import (  # noqa: E402
+    DEFAULT_MAX_STEPS,
+    FAST_FACTOR,
+    POLICY_DEFAULT_TIMEOUT,
+    error_floor_result,
+    extract_code_with_mode,
+    score_sample,
+    validate_code,
+)
+from crystallizer_env import HiddenParams  # noqa: E402
+from crystallizer_utils import cautious_policy, make_tracking_policy, run_episode  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
 
-KAPPAS = [0.65, 0.80, 1.00]
-MAX_STEPS = 105
-EPISODE_TIMEOUT = 15
 
-_RUNNER_TMPL = """\
-import json, math, random
-{env_code}
-{policy_code}
-def _run(seed, kappa, max_steps):
-    hidden = HiddenParams(actuator_gain=kappa)
-    env = SloshTankEnv(seed=seed, hidden=hidden)
-    state, _ = env.reset()
-    total_reward = 0.0
-    for _ in range(max_steps):
-        try:
-            action = policy(state)
-        except Exception as e:
-            return {{"reward": total_reward, "success": False, "error": str(e)}}
-        state, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        if terminated:
-            break
-    return {{"reward": float(total_reward), "success": env.is_success(), "error": None}}
-print(json.dumps(_run({seed}, {kappa!r}, {max_steps})))
-"""
+# ---------------------------------------------------------------------------
+# Hand-written references (in-process, no model)
+# ---------------------------------------------------------------------------
 
 
-def _run_at_kappa(policy_code: str, env_code: str, seed: int, kappa: float) -> dict:
-    script = _RUNNER_TMPL.format(
-        env_code=env_code,
-        policy_code=policy_code,
-        seed=seed,
-        kappa=kappa,
-        max_steps=MAX_STEPS,
-    )
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(script)
-        tmp = f.name
-    _err = lambda msg: {"success": False, "reward": ERROR_PENALTY_PER_SCENARIO, "error": msg}
-    try:
-        proc = subprocess.run(
-            [sys.executable, tmp],
-            capture_output=True, text=True, timeout=EPISODE_TIMEOUT,
-        )
-        if proc.returncode != 0:
-            return _err(proc.stderr[-300:])
-        try:
-            result = json.loads(proc.stdout.strip())
-        except (json.JSONDecodeError, ValueError) as e:
-            return _err(f"output parse error: {e}")
-        # Policy crashed mid-episode — apply same penalty as GRPO scorer
-        if result.get("error"):
-            result["reward"] = ERROR_PENALTY_PER_SCENARIO
-        return result
-    except subprocess.TimeoutExpired:
-        return _err("timeout")
-    except Exception as e:
-        return _err(str(e))
-    finally:
-        Path(tmp).unlink(missing_ok=True)
+def _reference(policy, scenario: dict) -> dict:
+    hidden = HiddenParams(sigma_max=scenario["hidden"]["sigma_max"])
+    res = run_episode(policy, seed=scenario["seed"], hidden=hidden)
+    oracle = scenario["oracle_steps"]
+    fast = bool(res["success"] and res["steps"] <= FAST_FACTOR * oracle)
+    norm = oracle / res["steps"] if res["success"] and res["steps"] else 0.0
+    return {"success": bool(res["success"]), "fast": fast, "norm_time": norm,
+            "reward": res["reward"], "steps": res["steps"]}
 
 
-def eval_policy(policy_code: str, env_code: str, seeds: list[int]) -> dict:
-    """Return per-kappa success_rate and mean_reward."""
-    results = {}
-    for kappa in KAPPAS:
-        successes, rewards = 0, []
-        for seed in seeds:
-            r = _run_at_kappa(policy_code, env_code, seed, kappa)
-            successes += int(r.get("success", False))
-            rewards.append(r.get("reward", 0.0))
-        results[kappa] = {
-            "success_rate": successes / len(seeds),
-            "mean_reward": sum(rewards) / len(rewards),
-        }
-    return results
+def reference_rows(task: dict) -> dict:
+    sc = task["scenarios"][0]
+    smax = sc["hidden"]["sigma_max"]
+    return {
+        "blind": _reference(cautious_policy, sc),
+        "oracle": _reference(make_tracking_policy(smax * (1.0 - 1e-9)), sc),
+    }
 
 
-def compute_reference_rates(seeds: list[int]) -> tuple[dict, dict]:
-    """Return (blind_rates, oracle_rates) at each kappa using reference policies."""
-    from slosh_tank_env import HiddenParams
-    from slosh_tank_utils import run_episode, nominal_fast_policy
-
-    def make_oracle(k: float):
-        def pol(state):
-            x, v, goal = state["x"], state["v"], state["goal"]
-            theta, omega = state["theta"], state["omega"]
-            a = (1.25 * (goal - x) - 1.15 * v + 1.30 * theta + 0.45 * omega) / k
-            return max(-1.0, min(1.0, a))
-        return pol
-
-    blind_rates, oracle_rates = {}, {}
-    for kappa in KAPPAS:
-        hidden = HiddenParams(actuator_gain=kappa)
-        oracle_pol = make_oracle(kappa)
-        b_ok = o_ok = 0
-        for seed in seeds:
-            if run_episode(nominal_fast_policy, seed=seed, hidden=hidden)["success"]:
-                b_ok += 1
-            if run_episode(oracle_pol, seed=seed, hidden=hidden)["success"]:
-                o_ok += 1
-        blind_rates[kappa] = b_ok / len(seeds)
-        oracle_rates[kappa] = o_ok / len(seeds)
-    return blind_rates, oracle_rates
+# ---------------------------------------------------------------------------
+# Rollouts
+# ---------------------------------------------------------------------------
 
 
-def generate_one_shot(model, tokenizer, prompt: str, temperature: float, max_tokens: int) -> dict:
-    """Generate a single-turn policy. Returns dict with code, success, error."""
-    sample = generate_code(model, tokenizer, prompt, temperature=temperature, max_tokens=max_tokens)
+def one_turn_rollout(model, tokenizer, template: str, task: dict, *,
+                     temperature: float, top_p: float, max_tokens: int) -> dict:
+    """Stage 1: a single turn, `policy(state)` straight from the task prompt."""
+    prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
+    sample = generate_code(model, tokenizer, prompt, temperature=temperature,
+                           top_p=top_p, max_tokens=max_tokens)
+    raw = sample.get("raw_response", "")
+    transcript = [{"role": "user", "content": prompt},
+                  {"role": "assistant", "content": raw}]
     if not sample["success"]:
-        return sample
-    # Single-turn: model may respond raw or with python fence — extract code
+        return {"code": "", "success": False, "error": sample.get("error"),
+                "transcript": transcript}
     code = sample["code"]
-    is_valid, err = validate_code(code)
-    if not is_valid:
-        return {"code": code, "success": False, "error": err}
-    return {"code": code, "success": True, "error": None}
+    ok, err = validate_code(code)
+    return {"code": code if ok else "", "success": ok, "error": None if ok else err,
+            "transcript": transcript}
 
 
-def generate_two_turn(
-    model, tokenizer,
-    task: dict, template: str,
-    kappa: float,
-    calibration_seed: int,
-    temperature: float, max_tokens: int,
-) -> dict:
-    """Generate a two-turn (main + policy) rollout calibrated to a specific kappa.
+def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
+                     temperature: float, top_p: float, max_tokens: int,
+                     timeout: int, max_steps: int) -> dict:
+    """Stage 2: probe run (turn 1, unscored), then the final run's policy (turn 2).
 
-    Turn 1 (main): model receives the task prompt with env source and a
-    pre-instantiated `env` object (same kappa/seed as evaluation) to run
-    calibration experiments. Stdout is fed back as the tool result.
-    Turn 2 (policy): model writes a policy informed by the calibration.
+    Mirrors `08_eval.run_n_turn_rollout` for n_turns=2 and keeps the turn-1
+    details: mode, code and the tool output the model read before turn 2.
     """
+    scenario = task["scenarios"][0]
     prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
-    t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature, max_tokens=max_tokens)
+    t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature,
+                       top_p=top_p, max_tokens=max_tokens)
+    t1_raw = t1.get("raw_response", "")
+    transcript = [{"role": "user", "content": prompt_t1},
+                  {"role": "assistant", "content": t1_raw}]
     if not t1["success"]:
-        logger.warning(f"  turn1 failed: {t1['error']} | raw: {t1['raw_response'][:120]!r}")
-        return {"code": "", "success": False, "error": f"turn1: {t1['error']}",
-                "t1_raw": t1["raw_response"], "t1_mode": "none", "tool_output": "", "t2_raw": ""}
+        return {"code": "", "success": False, "error": f"turn 1: {t1.get('error')}",
+                "t1_mode": "none", "t1_code": "", "tool_output": "", "t2_mode": "none",
+                "transcript": transcript}
 
-    t1_mode, t1_code = extract_code_with_mode(t1["raw_response"])
-    logger.info(f"  turn1 mode={t1_mode}  raw: {t1['raw_response'][:120]!r}")
-
-    if t1_mode == "policy":
-        is_valid, err = validate_code(t1_code)
-        if is_valid:
-            logger.info("  turn1 jumped straight to policy — accepted")
-            return {"code": t1_code, "success": True, "error": None,
-                    "t1_raw": t1["raw_response"], "t1_mode": "policy", "tool_output": "", "t2_raw": ""}
-
-    if t1_mode == "main":
-        main_result = run_main_in_subprocess(
-            t1_code,
-            env_code=task["env_code"],
-            kappa=kappa,
-            seed=calibration_seed,
-            env_class=task.get("env_class", "SloshTankEnv"),
-        )
-        tool_output = main_result["stdout"] or "[empty output]"
-        logger.info(f"  tool output: {tool_output[:300]!r}")
-        if main_result["error"]:
-            logger.warning(f"  main error: {main_result['error']}")
-    else:
-        tool_output = "[turn 1 produced no recognized code block]"
-        logger.warning(f"  turn1 unrecognized mode={t1_mode}")
-
+    t1_mode, t1_code = extract_code_with_mode(t1_raw)
+    tool = execute_turn(t1_raw, task, is_last_turn=False, scenario=scenario,
+                        timeout_policy=timeout, max_steps=max_steps)
     prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
-    t2_messages = [
-        {"role": "user", "content": prompt_t1},
-        {"role": "assistant", "content": t1["raw_response"]},
-        {"role": "user", "content": f"{prompt_t2}\n\n[Tool output from turn 1]\n{tool_output}"},
-    ]
-    t2 = generate_code_from_messages(model, tokenizer, t2_messages, temperature=temperature, max_tokens=max_tokens)
-    logger.info(f"  turn2 raw: {t2['raw_response'][:200]!r}")
-    if not t2["success"]:
-        return {"code": "", "success": False, "error": f"turn2: {t2['error']}",
-                "t1_raw": t1["raw_response"], "t1_mode": t1_mode,
-                "tool_output": tool_output, "t2_raw": t2["raw_response"]}
-
-    _, t2_code = extract_code_with_mode(t2["raw_response"])
-    if not t2_code:
-        t2_code = t2["code"]
-    is_valid, err = validate_code(t2_code)
-    if not is_valid:
-        logger.warning(f"  turn2 policy invalid: {err}")
-    return {"code": t2_code, "success": is_valid, "error": err if not is_valid else None,
-            "t1_raw": t1["raw_response"], "t1_mode": t1_mode,
-            "tool_output": tool_output, "t2_raw": t2["raw_response"]}
+    transcript.append({"role": "user",
+                       "content": f"{prompt_t2}\n\n[Tool output from turn 1]\n{tool.text}"})
+    t2 = generate_code_from_messages(model, tokenizer, transcript, temperature=temperature,
+                                     top_p=top_p, max_tokens=max_tokens)
+    t2_raw = t2.get("raw_response", "")
+    transcript.append({"role": "assistant", "content": t2_raw})
+    t2_mode, t2_code = extract_code_with_mode(t2_raw)
+    ok = bool(t2["success"]) and t2_mode == "policy" and validate_code(t2_code)[0]
+    if ok:
+        error = None
+    elif not t2["success"]:
+        error = f"turn 2: {t2.get('error')}"
+    elif t2_mode != "policy":
+        error = f"final turn emitted mode={t2_mode!r}, not policy"
+    else:
+        error = f"final policy invalid: {validate_code(t2_code)[1]}"
+    return {"code": t2_code if ok else "", "success": ok, "error": error,
+            "t1_mode": t1_mode, "t1_code": t1_code, "tool_output": tool.text,
+            "t2_mode": t2_mode, "transcript": transcript}
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", default="models/hf_base/iter_000")
-    parser.add_argument("--task-file", default="scripts/seed_tasks/slosh_train.jsonl")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def _mean(xs):
+    xs = list(xs)
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--turns", type=int, default=1, choices=[1, 2],
-                        help="1 = arm A (one-shot), 2 = arm B (two-turn)")
-    parser.add_argument("--n-samples", type=int, default=20)
-    parser.add_argument("--n-seeds", type=int, default=50)
+                        help="1 = Stage 1 (one turn, no probe run), 2 = Stage 2 (probe run, then final run)")
+    parser.add_argument("--model-path", default="models/hf_base/iter_000")
+    parser.add_argument("--task-file", default="scripts/seed_tasks/crystallizer_eval.jsonl")
+    parser.add_argument("--n-samples", type=int, default=8, help="rollouts per task")
     parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--max-tokens", type=int, default=600)
-    parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--timeout", type=int, default=POLICY_DEFAULT_TIMEOUT)
+    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--out-dir", default=None,
+                        help="default data/frozen/stage<turns>")
     args = parser.parse_args()
 
-    arm_label = "A" if args.turns == 1 else "B"
-    out_dir = Path(args.out_dir or f"results/arm_{arm_label.lower()}")
+    stage = args.turns
+    out_dir = Path(args.out_dir or f"data/frozen/stage{stage}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    eval_seeds = list(range(args.n_seeds))
-
     tasks = load_jsonl(args.task_file)
-    task = tasks[0]
-    env_code = task["env_code"]
     template = load_template("configs/prompt_template.txt")
 
     logger.info(f"Loading model from {args.model_path}")
     model, tokenizer = load_model_for_generation(
-        base_model_path=args.model_path,
-        lora_base=None,
-        iter_num=0,
+        base_model_path=args.model_path, lora_base=None, iter_num=0,
     )
 
-    # Compute reference rates once
-    logger.info(f"Computing blind/oracle reference rates over {args.n_seeds} seeds...")
-    blind_rates, oracle_rates = compute_reference_rates(eval_seeds)
-    for kappa in KAPPAS:
-        logger.info(f"  κ={kappa:.2f}  blind={blind_rates[kappa]*100:.1f}%  oracle={oracle_rates[kappa]*100:.1f}%")
-
-    # For arm B: generate n_samples per kappa, each calibrated to that kappa.
-    # For arm A: generate n_samples once and evaluate across all kappas.
-    kappa_successes = {k: [] for k in KAPPAS}
-    kappa_rewards = {k: [] for k in KAPPAS}
-    per_sample_results = []
-
-    if args.turns == 1:
-        prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
-        samples = []
+    per_task = []
+    samples_out = []
+    for task in tasks:
+        tid = task["task_id"]
+        sc = task["scenarios"][0]
+        sid = sc["scenario_id"]
+        refs = reference_rows(task)
+        rows = []
         for i in range(args.n_samples):
-            logger.info(f"Generating sample {i+1}/{args.n_samples} (arm A)")
-            sample = generate_one_shot(model, tokenizer, prompt, args.temperature, args.max_tokens)
-            samples.append(sample)
-            if not sample["success"]:
-                logger.warning(f"  Sample {i+1} failed: {sample['error']}")
+            logger.info(f"{tid}: sample {i + 1}/{args.n_samples} ({stage}-turn)")
+            if stage == 1:
+                roll = one_turn_rollout(model, tokenizer, template, task,
+                                        temperature=args.temperature, top_p=args.top_p,
+                                        max_tokens=args.max_tokens)
+            else:
+                roll = two_turn_rollout(model, tokenizer, template, task,
+                                        temperature=args.temperature, top_p=args.top_p,
+                                        max_tokens=args.max_tokens, timeout=args.timeout,
+                                        max_steps=args.max_steps)
+            if roll["success"] and roll["code"]:
+                score = score_sample(roll["code"], task, timeout=args.timeout,
+                                     max_steps=args.max_steps)
+            else:
+                score = error_floor_result(task, [roll.get("error") or "no valid final policy"])
+            row = {
+                "task_id": tid, "sample_id": i, "sigma_max": sc["hidden"]["sigma_max"],
+                "generated": bool(roll["success"]), "generation_error": roll.get("error"),
+                "ran": bool(score["ran_successfully"]),
+                "success": bool(score["success_per_scenario"].get(sid, False)),
+                "fast": bool(score["fast_per_scenario"].get(sid, False)),
+                "norm_time": float(score["norm_time_per_scenario"].get(sid, 0.0)),
+                "reward": float(score["reward_per_scenario"].get(sid, score["reward_total"])),
+                "steps": int(score["steps_per_scenario"].get(sid, 0)),
+                "errors": score["errors"],
+                "code": roll["code"],
+            }
+            if stage == 2:
+                row.update({k: roll.get(k) for k in ("t1_mode", "t1_code", "tool_output", "t2_mode")})
+            rows.append(row)
+            samples_out.append({**row, "transcript": roll.get("transcript", [])})
+            logger.info(f"  success={row['success']} fast={row['fast']} "
+                        f"norm_time={row['norm_time']:.3f} reward={row['reward']:.1f}"
+                        + (f" t1_mode={row.get('t1_mode')}" if stage == 2 else ""))
 
-        for i, sample in enumerate(samples):
-            if not sample["success"] or not sample.get("code"):
-                for kappa in KAPPAS:
-                    kappa_successes[kappa].append(0.0)
-                    kappa_rewards[kappa].append(0.0)
-                per_sample_results.append({
-                    "sample_id": i, "kappa": None, "valid": False,
-                    "error": sample.get("error"), "t1_raw": "", "per_kappa": {},
-                })
-                continue
-            logger.info(f"Evaluating sample {i+1}/{args.n_samples} × {len(KAPPAS)} κ × {args.n_seeds} seeds")
-            per_kappa = eval_policy(sample["code"], env_code, eval_seeds)
-            for kappa in KAPPAS:
-                kappa_successes[kappa].append(per_kappa[kappa]["success_rate"])
-                kappa_rewards[kappa].append(per_kappa[kappa]["mean_reward"])
-            per_sample_results.append({
-                "sample_id": i, "kappa": None, "valid": True,
-                "code": sample["code"], "t1_raw": "",
-                "per_kappa": {str(k): v for k, v in per_kappa.items()},
-            })
-            logger.info("  " + "  ".join(
-                f"κ={k:.2f}:{per_kappa[k]['success_rate']*100:.1f}%" for k in KAPPAS))
-    else:
-        # Arm B: one generation batch per kappa, calibrated to that kappa
-        sample_idx = 0
-        for kappa in KAPPAS:
-            for i in range(args.n_samples):
-                logger.info(f"Generating κ={kappa:.2f} sample {i+1}/{args.n_samples} (arm B, cal_seed={i})")
-                sample = generate_two_turn(
-                    model, tokenizer, task, template,
-                    kappa=kappa, calibration_seed=i,
-                    temperature=args.temperature, max_tokens=args.max_tokens,
-                )
-                if not sample["success"]:
-                    logger.warning(f"  Failed: {sample['error']}")
-                    kappa_successes[kappa].append(0.0)
-                    kappa_rewards[kappa].append(0.0)
-                    per_sample_results.append({
-                        "sample_id": sample_idx, "kappa": kappa, "valid": False,
-                        "error": sample.get("error"),
-                        "t1_mode": sample.get("t1_mode", ""),
-                        "t1_raw": sample.get("t1_raw", ""),
-                        "tool_output": sample.get("tool_output", ""),
-                        "t2_raw": sample.get("t2_raw", ""),
-                        "per_kappa": {},
-                    })
-                else:
-                    successes, rewards = 0, []
-                    for seed in eval_seeds:
-                        r = _run_at_kappa(sample["code"], env_code, seed=seed, kappa=kappa)
-                        successes += int(r.get("success", False))
-                        rewards.append(r.get("reward", 0.0))
-                    sr = successes / len(eval_seeds)
-                    mr = sum(rewards) / len(rewards)
-                    kappa_successes[kappa].append(sr)
-                    kappa_rewards[kappa].append(mr)
-                    per_sample_results.append({
-                        "sample_id": sample_idx, "kappa": kappa, "valid": True,
-                        "t1_mode": sample.get("t1_mode", ""),
-                        "t1_raw": sample.get("t1_raw", ""),
-                        "tool_output": sample.get("tool_output", ""),
-                        "t2_raw": sample.get("t2_raw", ""),
-                        "code": sample["code"],
-                        "success_rate": sr, "mean_reward": mr,
-                        "per_kappa": {str(kappa): {"success_rate": sr, "mean_reward": mr}},
-                    })
-                    logger.info(f"  κ={kappa:.2f}: success={sr*100:.1f}%  reward={mr:.1f}")
-                sample_idx += 1
+        summary = {
+            "task_id": tid, "sigma_max": sc["hidden"]["sigma_max"],
+            "oracle_steps": sc["oracle_steps"],
+            "n_samples": len(rows),
+            "generated_rate": _mean(r["generated"] for r in rows),
+            "ran_rate": _mean(r["ran"] for r in rows),
+            "success_rate": _mean(r["success"] for r in rows),
+            "fast_rate": _mean(r["fast"] for r in rows),
+            "mean_norm_time": _mean(r["norm_time"] for r in rows),
+            "mean_reward": _mean(r["reward"] for r in rows),
+            "blind": refs["blind"], "oracle": refs["oracle"],
+        }
+        if stage == 2:
+            summary["t1_modes"] = dict(Counter(r.get("t1_mode") for r in rows))
+        per_task.append(summary)
 
-    qwen_rates = {
-        k: (sum(kappa_successes[k]) / len(kappa_successes[k]) if kappa_successes[k] else 0.0)
-        for k in KAPPAS
+    overall = {
+        "stage": stage, "turns": stage, "model": args.model_path,
+        "task_file": args.task_file, "n_tasks": len(tasks), "n_samples_per_task": args.n_samples,
+        "generated_rate": _mean(t["generated_rate"] for t in per_task),
+        "ran_rate": _mean(t["ran_rate"] for t in per_task),
+        "success_rate": _mean(t["success_rate"] for t in per_task),
+        "fast_rate": _mean(t["fast_rate"] for t in per_task),
+        "mean_norm_time": _mean(t["mean_norm_time"] for t in per_task),
+        "mean_reward": _mean(t["mean_reward"] for t in per_task),
+        "blind": {
+            "fast_rate": _mean(t["blind"]["fast"] for t in per_task),
+            "mean_norm_time": _mean(t["blind"]["norm_time"] for t in per_task),
+            "mean_reward": _mean(t["blind"]["reward"] for t in per_task),
+        },
+        "oracle": {
+            "fast_rate": _mean(t["oracle"]["fast"] for t in per_task),
+            "mean_norm_time": _mean(t["oracle"]["norm_time"] for t in per_task),
+            "mean_reward": _mean(t["oracle"]["reward"] for t in per_task),
+        },
+        "per_task": per_task,
     }
+    if stage == 2:
+        overall["t1_modes"] = dict(sum((Counter(t["t1_modes"]) for t in per_task), Counter()))
 
-    summary = {
-        "arm": arm_label,
-        "turns": args.turns,
-        "model": args.model_path,
-        "n_samples": args.n_samples,
-        "n_seeds": args.n_seeds,
-        "qwen": {str(k): v for k, v in qwen_rates.items()},
-        "blind_pd": {str(k): v for k, v in blind_rates.items()},
-        "oracle_pd": {str(k): v for k, v in oracle_rates.items()},
-        "per_sample": per_sample_results,
-    }
-    summary_path = out_dir / f"arm_{arm_label.lower()}_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
-    logger.info(f"Results saved to {summary_path}")
+    save_jsonl(samples_out, str(out_dir / f"stage{stage}_samples.jsonl"))
+    with open(out_dir / f"stage{stage}_summary.json", "w") as f:
+        json.dump(overall, f, indent=2)
 
-    # Print table
-    label = f"Qwen {args.turns}-shot (frozen)"
-    print(f"\n=== Arm {arm_label}: {label} ===")
-    print(f"{'κ':>6}  {label:>20}  {'Blind PD':>10}  {'Oracle PD':>10}")
-    for kappa in KAPPAS:
-        print(
-            f"{kappa:>6.2f}  {qwen_rates[kappa]*100:>19.1f}%  "
-            f"{blind_rates[kappa]*100:>9.1f}%  {oracle_rates[kappa]*100:>9.1f}%"
-        )
-
-    # Plot
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(KAPPAS, [oracle_rates[k] * 100 for k in KAPPAS],
-            "-", color="darkorange", label="oracle (gains / κ)")
-    ax.plot(KAPPAS, [blind_rates[k] * 100 for k in KAPPAS],
-            "-", color="steelblue", label="blind (nominal PD)")
-    ax.plot(KAPPAS, [qwen_rates[k] * 100 for k in KAPPAS],
-            "-o", color="forestgreen", label=label)
-    ax.axhline(50, color="gray", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("actuator gain κ")
-    ax.set_ylabel("success rate (%)")
-    ax.set_title(f"Arm {arm_label}: {label} vs baselines")
-    ax.legend()
-    ax.set_ylim(-5, 105)
-    ax.set_xticks(KAPPAS)
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    plot_path = out_dir / f"arm_{arm_label.lower()}_success_rate.png"
-    fig.savefig(str(plot_path), dpi=150)
-    logger.info(f"Plot saved to {plot_path}")
+    # Table
+    print(f"\n=== Stage {stage}: frozen model, {stage} turn(s), "
+          f"{len(tasks)} tasks x {args.n_samples} samples ===")
+    head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
+            f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s}")
+    if stage == 2:
+        head += " | t1 modes"
+    print(head)
+    for t in sorted(per_task, key=lambda t: t["sigma_max"]):
+        line = (f"{t['task_id']:24s} {t['sigma_max']:6.3f} {t['oracle_steps']:6d} | "
+                f"{100 * t['blind']['fast']:4.0f}% {t['blind']['norm_time']:5.2f} | "
+                f"{100 * t['ran_rate']:4.0f}% {100 * t['success_rate']:4.0f}% "
+                f"{100 * t['fast_rate']:4.0f}% {t['mean_norm_time']:5.2f} {t['mean_reward']:7.1f}")
+        if stage == 2:
+            line += " | " + ", ".join(f"{k}={v}" for k, v in sorted(t["t1_modes"].items()))
+        print(line)
+    print(f"\noverall: ran {100 * overall['ran_rate']:.1f}%  success {100 * overall['success_rate']:.1f}%  "
+          f"fast {100 * overall['fast_rate']:.1f}%  norm-time {overall['mean_norm_time']:.3f}  "
+          f"reward {overall['mean_reward']:.1f}")
+    print(f"blind:   fast {100 * overall['blind']['fast_rate']:.1f}%  "
+          f"norm-time {overall['blind']['mean_norm_time']:.3f}  reward {overall['blind']['mean_reward']:.1f}")
+    print(f"oracle:  fast {100 * overall['oracle']['fast_rate']:.1f}%  "
+          f"norm-time {overall['oracle']['mean_norm_time']:.3f}  reward {overall['oracle']['mean_reward']:.1f}")
+    if stage == 2:
+        print("turn-1 modes: " + ", ".join(f"{k}={v}" for k, v in sorted(overall["t1_modes"].items())))
+    print(f"\nSaved {out_dir / f'stage{stage}_summary.json'} and {out_dir / f'stage{stage}_samples.jsonl'}")
 
 
 if __name__ == "__main__":

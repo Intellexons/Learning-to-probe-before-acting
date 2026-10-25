@@ -19,12 +19,13 @@ TRAIN_FIELDS = [
 EVAL_FIELDS = [
     "timestamp", "iter", "model", "n_samples", "n_success", "success_rate",
     "mean_reward", "mean_best_reward",
-    # 4-condition task-outcome success aggregated across all
-    # (sample × scenario) pairs in the eval set. This is the paper's
-    # headline metric — distinct from `n_success` / `success_rate` above,
-    # which only track whether the rollout's policy code ran without
-    # crashing on any scenario.
-    "n_settled", "settle_rate",
+    # Task-outcome metrics aggregated over all (sample × scenario) pairs in
+    # the eval set: the env's own success test, fast success (success within
+    # FAST_FACTOR of the time-optimal batch) and normalised time (oracle
+    # steps / own steps, 0 on failure). Fast success is the headline metric.
+    # Distinct from `n_success` / `success_rate` above, which only track
+    # whether the rollout's policy code ran without crashing.
+    "n_task_success", "task_success_rate", "n_fast", "fast_rate", "mean_norm_time",
 ]
 
 
@@ -76,8 +77,10 @@ def append_eval_progress(
     n_success: int,
     mean_reward: float,
     mean_best_reward: float,
-    n_settled: int,
-    n_settle_attempts: int,
+    n_task_success: int,
+    n_fast: int,
+    n_attempts: int,
+    mean_norm_time: float,
     run_name: str | None = None,
 ):
     _, eval_csv = _get_csv_paths(run_name)
@@ -90,8 +93,11 @@ def append_eval_progress(
         "success_rate": f"{n_success / n_samples:.2%}" if n_samples else "0%",
         "mean_reward": f"{mean_reward:.1f}",
         "mean_best_reward": f"{mean_best_reward:.1f}",
-        "n_settled": n_settled,
-        "settle_rate": f"{n_settled / n_settle_attempts:.2%}" if n_settle_attempts else "0%",
+        "n_task_success": n_task_success,
+        "task_success_rate": f"{n_task_success / n_attempts:.2%}" if n_attempts else "0%",
+        "n_fast": n_fast,
+        "fast_rate": f"{n_fast / n_attempts:.2%}" if n_attempts else "0%",
+        "mean_norm_time": f"{mean_norm_time:.3f}",
     })
 
 

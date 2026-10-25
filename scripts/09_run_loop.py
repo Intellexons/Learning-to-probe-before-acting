@@ -1,7 +1,7 @@
 """Orchestrate the full training loop (DPO or GRPO).
 
-Usage: uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_slosh.yaml
-       uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_slosh.yaml --run_name my_experiment
+Usage: uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_crystallizer.yaml
+       uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_crystallizer.yaml --run_name my_experiment
 """
 import argparse
 import csv
@@ -83,14 +83,16 @@ def _log_iteration_metrics(wandb_run, run_name: str, k: int, step: int):
             "eval/mean_reward": float(eval_row["mean_reward"]),
             "eval/mean_best_reward": float(eval_row["mean_best_reward"]),
         })
-        # `n_settled` / `settle_rate` are new in PR #69; old rows from
-        # prior runs won't have them. Skip silently rather than failing.
-        if eval_row.get("n_settled") not in (None, ""):
-            payload["eval/n_settled"] = int(eval_row["n_settled"])
-        if eval_row.get("settle_rate") not in (None, ""):
-            payload["eval/settle_rate"] = (
-                float(eval_row["settle_rate"].rstrip("%")) / 100
-            )
+        # Task-outcome columns (env success, fast success, normalised time).
+        # Rows from older runs may lack them; skip silently rather than failing.
+        for col in ("n_task_success", "n_fast"):
+            if eval_row.get(col) not in (None, ""):
+                payload[f"eval/{col}"] = int(eval_row[col])
+        for col in ("task_success_rate", "fast_rate"):
+            if eval_row.get(col) not in (None, ""):
+                payload[f"eval/{col}"] = float(eval_row[col].rstrip("%")) / 100
+        if eval_row.get("mean_norm_time") not in (None, ""):
+            payload["eval/mean_norm_time"] = float(eval_row["mean_norm_time"])
     if payload:
         wandb_run.log(payload, step=step)
 

@@ -151,7 +151,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
         prompt_turn2_map: dict[str, str] | None = None,
         max_turn_tokens: int = 400,
         scoring_timeout: int = 30,
-        scoring_max_steps: int = 500,
+        scoring_max_steps: int = 600,
         loss_micro_batch_size: int | None = None,
         **kwargs,
     ):

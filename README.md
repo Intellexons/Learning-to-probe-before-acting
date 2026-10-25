@@ -18,14 +18,17 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
 
 - **Base model:** `Qwen/Qwen3-4B-Instruct-2507` (override with
   `LORA4VR_BASE_MODEL`). Weights are frozen; only a LoRA adapter is trained.
-- **Task family:** a custom slosh-tank control problem. A cart carries
-  liquid (modelled as one damped pendulum mode) and the policy has to drive
-  it to a goal *and* settle the slosh. A per-task hidden actuator parameter
-  is not in the policy's observed state; a first turn with access to a
-  calibration copy of the environment can identify it, and passing that
-  information to the final policy is what turn 1 is for. The environment
-  source ships inside each prompt, so the model has to read the dynamics
-  rather than recognize a name.
+- **Task family:** a seeded batch cooling crystallizer. A saturated
+  solution holding seed crystals is cooled to a target temperature, and the
+  policy sets the cooling rate every 20 s. Cooling creates supersaturation,
+  the seeds grow and consume it, and if the supersaturation ever crosses a
+  hidden metastable limit a shower of new nuclei ruins the batch. The
+  fastest safe recipe rides just below that limit, and the limit shows up
+  nowhere in the readings until it is crossed. The first turn, the **probe
+  run**, is where the model can find it, by crossing it on a throwaway
+  batch; the second turn, the **final run**, is the one that is scored. The
+  environment source ships inside each prompt, so the model has to read the
+  physics rather than recognize a name.
 - **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
   top of the merged previous adapters, then runs an eval pass on held-out
   scenarios.
@@ -66,18 +69,18 @@ Both pieces are in `src/branched_trainer.py`, a `BranchedGRPOTrainer` that
 subclasses TRL 0.28's `GRPOTrainer` with two overrides — the branched
 rollout and the two-pass loss.
 
-For the full derivation, ablation arms, and slosh-tank specifics, see the
+For the full derivation, the ablation arms and the environment, see the
 paper.
 
 ## Prerequisites
 
 - Python 3.11+ (the project pins 3.14 via `uv`)
 - [uv](https://docs.astral.sh/uv/)
-- A GPU. The production config (`configs/loop_grpo_branched_slosh.yaml`,
+- A GPU. The full config (`configs/loop_grpo_branched_crystallizer.yaml`,
   $G_1 = G_2 = 4$, 400 tokens per turn, bf16) targets ~22 GiB free —
-  comfortably an A100-40GB. The smoke config (`configs/smoke_test_slosh.yaml`,
+  comfortably an A100-40GB. The smoke config (`configs/smoke_test_crystallizer.yaml`,
   $G_1 = G_2 = 2$, 400 tokens per turn) runs on an L4 24 GB, and so does the
-  production config with `branched.loss_micro_batch_size: 4` (its default).
+  full config with `branched.loss_micro_batch_size: 4` (its default).
 - About 8 GB of disk for the base model, plus a few hundred MB per adapter.
 
 ## Setup
@@ -96,17 +99,16 @@ Smoke run first — one outer iteration, roughly 15–25 minutes on an A100:
 
 ```bash
 uv run python scripts/09_run_loop.py \
-  --config configs/smoke_test_slosh.yaml \
+  --config configs/smoke_test_crystallizer.yaml \
   --run_name smoke_001
 ```
 
-Production slosh run — 23 outer iterations, two inner steps each, eval at
-the end of every iteration:
+Full run — 23 outer iterations, eval at the end of every iteration:
 
 ```bash
 uv run python scripts/09_run_loop.py \
-  --config configs/loop_grpo_branched_slosh.yaml \
-  --run_name slosh_grpo_run_1
+  --config configs/loop_grpo_branched_crystallizer.yaml \
+  --run_name crystallizer_run_1
 ```
 
 For running on a Google Cloud GPU VM with auto-fetch and auto-teardown, see
@@ -123,7 +125,10 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `09_run_loop.py` | Outer loop, train + eval per iteration, orchestrator W&B run |
 | `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
-| `eval_frozen_baseline.py` | Standalone N-turn eval against a frozen or merged-adapter checkpoint |
+| `eval_frozen_baseline.py` | Stages 1 and 2: frozen model, one turn or probe run + final run, next to the blind and oracle references |
+| `rung0_gate_crystal.py` | Stage 0: blind vs informed hand-written controllers on the crystallizer (the env-validity gate) |
+| `stage0b_two_turn.py` | Stage 0b: the hand-written probe run and final run through the real execution path |
+| `seed_tasks/build_crystallizer_tasks.py` | Regenerates the task files from the env source |
 
 `09_run_loop.py` flags:
 
@@ -137,7 +142,7 @@ directly. It chains training and eval subprocesses for each outer iteration.
 
 `04_train_grpo_lora.py` is the flat single-turn GRPO trainer (stock TRL
 `GRPOTrainer`), used for the one-turn RL reference arm via
-`configs/loop_grpo_slosh.yaml`. `01_generate.py`, `02_score.py`,
+`configs/loop_grpo_crystallizer.yaml`. `01_generate.py`, `02_score.py`,
 `03_build_dpo.py`, and `04_train_dpo_lora.py` form a DPO pipeline that is not
 part of the current study and ships without a config.
 
@@ -145,9 +150,9 @@ part of the current study and ships without a config.
 
 ```
 configs/
-  loop_grpo_branched_slosh.yaml   # production: slosh env, branched multi-turn GRPO
-  loop_grpo_slosh.yaml            # one-turn reference arm: flat GRPO, same sizing
-  smoke_test_slosh.yaml           # smoke: 1 outer iter, G_1=G_2=2
+  loop_grpo_branched_crystallizer.yaml  # full run: branched multi-turn GRPO (Stage 6)
+  loop_grpo_crystallizer.yaml           # one-turn reference arm: flat GRPO, same sizing (Stage 3)
+  smoke_test_crystallizer.yaml          # smoke: 1 outer iter, G_1=G_2=2
   prompt_template.txt
 data/
   progress/<run>/                 # per-run CSVs and trainer_log_iter_*.json
@@ -156,6 +161,7 @@ docs/
   paper.tex                       # method write-up
   findings.tex                    # dated experiment log
   methodology.tex
+  rung0/, stage0b/                # raw logs behind the Stage 0 and Stage 0b entries
 models/
   hf_base/iter_000/               # base weights downloaded by 00_setup_env.sh
   lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
@@ -166,29 +172,30 @@ scripts/
   08_eval.py                      # eval subprocess
   09_run_loop.py                  # orchestrator
   01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
-  eval_frozen_baseline.py         # standalone N-turn eval of a frozen model
-  gain_sweep.py                   # hand-written controller sweep (env validity)
+  eval_frozen_baseline.py         # Stages 1-2: frozen model, one or two turns
+  rung0_gate_crystal.py           # Stage 0: env-validity gate (blind vs informed controllers)
+  stage0b_two_turn.py             # Stage 0b: hand-written two-turn solution through the runner
   gcp_*.sh                        # VM lifecycle + train/eval wrappers
   seed_tasks/
-    slosh_train.jsonl             # 24 per-(seed, kappa) slosh training tasks
-    slosh_eval.jsonl              # 12 held-out slosh eval tasks
-    slosh_smoke_train.jsonl       # 2-row subset for smoke runs
-    slosh_tank_env.py             # slosh-tank env source
-    slosh_tank_utils.py           # offline rollout + reference controllers
-    build_slosh_tasks.py          # regenerates the jsonls from the env
+    crystallizer_env.py           # the environment (embedded in every prompt)
+    crystallizer_utils.py         # offline rollouts + reference controllers (blind, oracle)
+    build_crystallizer_tasks.py   # regenerates the task files from the env
+    crystallizer_train.jsonl      # 24 training tasks: one batch + one hidden limit each
+    crystallizer_eval.jsonl       # 12 held-out tasks
+    crystallizer_smoke_train.jsonl  # 2 tasks for smoke runs
 src/
   branched_trainer.py             # current trainer (TRL 0.28 GRPOTrainer subclass)
   multi_turn.py                   # rollout + per-turn advantages
-  runner.py                       # sandboxed policy/main subprocess execution
+  runner.py                       # sandboxed final-run / probe-run execution and scoring
   prompts.py                      # multi-turn chat template rendering
   diversity.py                    # DiversityCallback (W&B diagnostics)
   dataset.py, config.py, progress.py, hf_generator.py, gcs_sync.py
-tests/                            # unit tests for trainer math, prompts, runner
+tests/                            # unit tests for trainer math, prompts, runner, env, task files
 ```
 
 ## Configuration
 
-The main config is `configs/loop_grpo_branched_slosh.yaml`. The knobs you're
+The main config is `configs/loop_grpo_branched_crystallizer.yaml`. The knobs you're
 most likely to touch:
 
 | Section | Key | Default | Description |
@@ -214,29 +221,35 @@ on entry rather than silently producing a different gradient. The paper's
 
 ## Tasks
 
-Tasks live in `scripts/seed_tasks/*.jsonl`. One line per task, one scenario
-per task — the per-(seed, kappa) split (see
-[#49](https://github.com/nima-siboni/LoRA4VR/pull/49)) is what lets the
+Tasks live in `scripts/seed_tasks/crystallizer_*.jsonl`. One line per task,
+one scenario per task: one batch with one hidden limit. That is what lets the
 branched estimator's invariant hold: all $G_2$ continuations of a given
-first-turn variant see byte-identical environment state.
+first-turn variant see the same environment, and the probe run sees the same
+hidden limit as the final run.
 
 ```json
 {
-  "task_id": "slosh_tank_train_s0_k0.65",
-  "env_class": "SloshTankEnv",
-  "env_code": "from dataclasses import dataclass\n...",
-  "state_spec": "state is a dict with keys: t, x, v, theta, omega, goal, steps_left",
-  "action_spec": "action is a float — commanded cart acceleration in m/s^2",
-  "goal": "Move the cart to the goal position and settle the liquid...",
+  "task_id": "crystallizer_train_s0",
+  "env_class": "CrystallizerEnv",
+  "env_code": "\"\"\"Seeded batch cooling crystallizer with a hidden metastable limit. ...",
+  "state_spec": "state is a dict with keys: t (elapsed steps), T (solution temperature, degC), ...",
+  "action_spec": "action is a float in [-1, 1]: the commanded jacket rate ...",
+  "goal": "Cool the seeded batch to the target temperature as fast as possible ...",
   "scenarios": [
-    {"scenario_id": "s0_k0.65", "seed": 0, "kappa": 0.65}
+    {"scenario_id": "s0", "seed": 0, "probe_seed": 100000,
+     "hidden": {"sigma_max": 0.1687}, "oracle_steps": 121}
   ]
 }
 ```
 
-The full env source is embedded in `env_code` so the prompt template can
-paste it into the model's context. `build_slosh_tasks.py` regenerates the
-jsonls when the env source changes.
+`seed` is the batch the final run (the scored one) is run on and `probe_seed`
+a different batch for the probe run. `hidden` is splatted into the env's
+`HiddenParams` by the runner. `oracle_steps` is what the time-optimal
+controller needs on the scoring batch; the fast-success and normalised-time
+metrics are measured against it. The full env source is embedded in
+`env_code` so the prompt template can paste it into the model's context.
+`build_crystallizer_tasks.py` regenerates the files when the env source or
+the task text changes.
 
 ## Training on GCP
 
@@ -245,10 +258,10 @@ The whole VM lifecycle is wrapped by a few scripts. The shortest path:
 ```bash
 # Train: walk GPU zones until one has capacity, then run training there
 bash scripts/gcp_find_gpu_and_train.sh \
-  configs/loop_grpo_branched_slosh.yaml slosh_grpo_run_1 --wait
+  configs/loop_grpo_branched_crystallizer.yaml crystallizer_run_1 --wait
 
 # Eval against a specific iteration's adapter
-bash scripts/gcp_find_gpu_and_eval.sh slosh_grpo_run_1 --wait -- --iter 22
+bash scripts/gcp_find_gpu_and_eval.sh crystallizer_run_1 --wait -- --iter 22
 
 # Manual teardown if you skipped --wait
 bash scripts/gcp_destroy_vm.sh --yes

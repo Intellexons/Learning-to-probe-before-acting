@@ -43,8 +43,8 @@ def _minimal_dpo_cfg() -> dict:
             "lora_dir": "models/lora",
             "rollouts_dir": "data/rollouts",
             "dpo_dir": "data/dpo",
-            "tasks_train": "scripts/seed_tasks/slosh_train.jsonl",
-            "tasks_eval": "scripts/seed_tasks/slosh_eval.jsonl",
+            "tasks_train": "scripts/seed_tasks/crystallizer_train.jsonl",
+            "tasks_eval": "scripts/seed_tasks/crystallizer_eval.jsonl",
         },
         "loop": {"iterations": 1, "trainer": "dpo"},
         "generation": {"n_samples_per_task": 2, "temperature": 0.8, "top_p": 0.95, "max_tokens": 400},
@@ -83,12 +83,12 @@ def test_dispatches_to_dpo_when_trainer_dpo() -> None:
 
 
 def test_dispatches_to_flat_grpo() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_crystallizer.yaml").read_text())
     assert isinstance(validate_config(cfg), FlatGRPOConfig)
 
 
 def test_dispatches_to_branched_grpo() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_crystallizer.yaml").read_text())
     assert isinstance(validate_config(cfg), BranchedGRPOConfig)
 
 
@@ -100,7 +100,7 @@ def test_default_trainer_is_dpo() -> None:
 
 
 def test_unknown_trainer_raises() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_crystallizer.yaml").read_text())
     cfg["loop"]["trainer"] = "not_a_real_trainer"
     with pytest.raises((ValueError, ValidationError)):
         validate_config(cfg)
@@ -148,7 +148,7 @@ def test_unknown_key_in_branched_section_rejected() -> None:
 def test_unknown_top_level_section_rejected() -> None:
     """Top-level extras forbidden — keeps the config dict in sync with the
     schema as the surface area changes."""
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_crystallizer.yaml").read_text())
     cfg["new_section_that_nothing_reads"] = {"foo": "bar"}
     with pytest.raises(ValidationError) as exc:
         validate_config(cfg)
@@ -179,14 +179,14 @@ def test_branched_section_requires_g1_g2() -> None:
 
 
 def test_loop_iterations_must_be_positive() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_crystallizer.yaml").read_text())
     cfg["loop"]["iterations"] = 0
     with pytest.raises(ValidationError):
         validate_config(cfg)
 
 
 def test_lora_dropout_must_be_in_unit_interval() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_crystallizer.yaml").read_text())
     cfg["lora"]["dropout"] = 1.5
     with pytest.raises(ValidationError):
         validate_config(cfg)
@@ -198,7 +198,7 @@ def test_lora_dropout_must_be_in_unit_interval() -> None:
 
 
 def test_branched_config_missing_branched_section() -> None:
-    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_slosh.yaml").read_text())
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_crystallizer.yaml").read_text())
     del cfg["branched"]
     with pytest.raises(ValidationError) as exc:
         validate_config(cfg)

@@ -1,0 +1,11 @@
+Stage 0b: 236 tasks (36 from files, 200 fresh), 10 workers
+
+group                     n     smax range |   succ   fast  norm-t    min  reward probe err | blind fast blind norm-t blind rew
+sigma_max low third      78  0.080- 0.136 | 100.0% 100.0%   0.974  0.968    99.0    0.0002 |      23.1%        0.674      89.7
+middle third             78  0.138- 0.192 | 100.0% 100.0%   0.983  0.975   107.3    0.0002 |       0.0%        0.412      89.7
+high third               80  0.193- 0.249 | 100.0% 100.0%   0.989  0.981   109.6    0.0002 |       0.0%        0.336      89.3
+overall                 236  0.080- 0.249 | 100.0% 100.0%   0.982  0.968   105.3    0.0002 |       7.6%        0.473      89.6
+
+Gate: fast success >= 95% through the real path: 100.0% (0 probe failures) -> PASS
+wall time 1.7s, 0.01s per task
+wrote data/stage0b/two_turn_2026-10-25.json

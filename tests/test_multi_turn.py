@@ -123,7 +123,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class HiddenParams:
-    actuator_gain: float = 1.0
+    limit: float = 1.0
 
 class TinyEnv:
     def __init__(self, seed=0, hidden=None, config=None):

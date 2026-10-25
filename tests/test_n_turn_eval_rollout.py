@@ -35,8 +35,8 @@ import math, random
 
 
 class HiddenParams:
-    def __init__(self, actuator_gain=1.0):
-        self.actuator_gain = actuator_gain
+    def __init__(self, **hidden):
+        self.hidden = hidden
 
 
 class TinyEnv:
@@ -63,7 +63,7 @@ def _tiny_task() -> dict:
         "state_spec": "- px (float)\n- gx (float)",
         "action_spec": "(ax, ay) — 2-tuple",
         "goal": "test goal",
-        "scenarios": [{"scenario_id": "s0", "seed": 0, "kappa": 1.0}],
+        "scenarios": [{"scenario_id": "s0", "seed": 0, "hidden": {}}],
     }
 
 
