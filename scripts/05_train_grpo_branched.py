@@ -1,6 +1,6 @@
 """Train LoRA adapter with branched-rollout multi-turn GRPO (N=2, VinePPO-style).
 
-Usage: python scripts/05_train_grpo_branched.py --iter 0 --config configs/loop_grpo_branched.yaml
+Usage: python scripts/05_train_grpo_branched.py --iter 0 --config configs/loop_grpo_branched_slosh.yaml
 """
 import argparse
 import logging
@@ -44,7 +44,7 @@ def _placeholder_reward_fn(completions, **kwargs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iter", type=int, required=True)
-    parser.add_argument("--config", default="configs/loop_grpo_branched.yaml")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--run_name", default=None, help="Run name for output directories")
     args = parser.parse_args()
 

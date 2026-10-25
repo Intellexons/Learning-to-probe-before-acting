@@ -268,7 +268,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
 
         This is an approximation — the chat template adds role-tokens around
         each message, so tokenize-the-difference would be more accurate. For
-        Qwen2.5's ChatML this is close enough. If we ever switch templates,
+        Qwen's ChatML this is close enough. If we ever switch templates,
         revisit.
         """
         tokenizer = self.processing_class

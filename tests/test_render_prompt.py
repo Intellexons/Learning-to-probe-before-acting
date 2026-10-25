@@ -27,7 +27,7 @@ def _toy_task() -> dict:
         "env_code": "class FakeEnv: pass",
         "state_spec": "- px (float): x position",
         "action_spec": "(ax, ay) — 2-tuple of floats",
-        "goal": "drive the puck to the goal.",
+        "goal": "drive the cart to the goal.",
     }
 
 
@@ -103,7 +103,7 @@ def test_task_fields_are_substituted():
     template = load_template(str(TEMPLATE_PATH))
     rendered = render_prompt(template, _toy_task())
     assert "class FakeEnv: pass" in rendered
-    assert "drive the puck to the goal." in rendered
+    assert "drive the cart to the goal." in rendered
     assert "(ax, ay) — 2-tuple of floats" in rendered
 
 

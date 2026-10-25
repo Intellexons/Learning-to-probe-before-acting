@@ -20,11 +20,12 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
   `LORA4VR_BASE_MODEL`). Weights are frozen; only a LoRA adapter is trained.
 - **Task family:** a custom slosh-tank control problem. A cart carries
   liquid (modelled as one damped pendulum mode) and the policy has to drive
-  it to a goal *and* settle the slosh. A per-task hidden actuator gain
-  $\kappa$ makes a blind controller fail at some levels and succeed at
-  others — the gap that information-gathering turn 1 is meant to close. The
-  environment source ships inside each prompt, so the model has to read the
-  dynamics rather than recognize a name.
+  it to a goal *and* settle the slosh. A per-task hidden actuator parameter
+  is not in the policy's observed state; a first turn with access to a
+  calibration copy of the environment can identify it, and passing that
+  information to the final policy is what turn 1 is for. The environment
+  source ships inside each prompt, so the model has to read the dynamics
+  rather than recognize a name.
 - **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
   top of the merged previous adapters, then runs an eval pass on held-out
   scenarios.
@@ -75,9 +76,8 @@ paper.
 - A GPU. The production config (`configs/loop_grpo_branched_slosh.yaml`,
   $G_1 = G_2 = 4$, 400 tokens per turn, bf16) targets ~22 GiB free —
   comfortably an A100-40GB. The smoke config (`configs/smoke_test_slosh.yaml`,
-  $G_1 = G_2 = 2$, 200 tokens per turn) is sized for an L4 24 GB. Whether
-  the production config also fits on L4 is being characterized in
-  `docs/findings.tex`.
+  $G_1 = G_2 = 2$, 400 tokens per turn) runs on an L4 24 GB, and so does the
+  production config with `branched.loss_micro_batch_size: 4` (its default).
 - About 8 GB of disk for the base model, plus a few hundred MB per adapter.
 
 ## Setup
@@ -133,23 +133,21 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `--run_name` | Output prefix under `models/lora/`, `data/progress/`, `data/rollouts/` |
 | `--start_iter` | Iteration to resume from (default `0`); useful after a crash |
 
-### Legacy scripts
+### Other trainers
 
-`01_generate.py`, `02_score.py`, `03_build_dpo.py`, `04_train_dpo_lora.py`,
-and `04_train_grpo_lora.py` are the older DPO and single-turn GRPO pipelines
-from the puck-environment era. They still run, but the active path goes
-through `05_train_grpo_branched.py`. The matching old configs are `loop.yaml`,
-`loop_grpo.yaml`, and `smoke_test*.yaml`.
+`04_train_grpo_lora.py` is the flat single-turn GRPO trainer (stock TRL
+`GRPOTrainer`), used for the one-turn RL reference arm via
+`configs/loop_grpo_slosh.yaml`. `01_generate.py`, `02_score.py`,
+`03_build_dpo.py`, and `04_train_dpo_lora.py` form a DPO pipeline that is not
+part of the current study and ships without a config.
 
 ## Project structure
 
 ```
 configs/
   loop_grpo_branched_slosh.yaml   # production: slosh env, branched multi-turn GRPO
+  loop_grpo_slosh.yaml            # one-turn reference arm: flat GRPO, same sizing
   smoke_test_slosh.yaml           # smoke: 1 outer iter, G_1=G_2=2
-  loop_grpo_branched.yaml         # older: branched multi-turn GRPO on the puck env
-  loop_grpo.yaml / loop.yaml      # legacy single-turn GRPO / DPO
-  smoke_test_grpo_branched.yaml   # legacy branched smoke (puck)
   prompt_template.txt
 data/
   progress/<run>/                 # per-run CSVs and trainer_log_iter_*.json
@@ -163,19 +161,21 @@ models/
   lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
 scripts/
   00_setup_env.sh                 # bootstrap
-  05_train_grpo_branched.py       # current trainer subprocess
-  08_eval.py                      # current eval subprocess
+  05_train_grpo_branched.py       # branched multi-turn trainer subprocess
+  04_train_grpo_lora.py           # flat single-turn trainer subprocess
+  08_eval.py                      # eval subprocess
   09_run_loop.py                  # orchestrator
-  01..04_*.py                     # legacy DPO + single-turn GRPO
-  eval_frozen_baseline.py         # standalone N-turn eval
+  01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
+  eval_frozen_baseline.py         # standalone N-turn eval of a frozen model
+  gain_sweep.py                   # hand-written controller sweep (env validity)
   gcp_*.sh                        # VM lifecycle + train/eval wrappers
   seed_tasks/
     slosh_train.jsonl             # 24 per-(seed, kappa) slosh training tasks
     slosh_eval.jsonl              # 12 held-out slosh eval tasks
     slosh_smoke_train.jsonl       # 2-row subset for smoke runs
     slosh_tank_env.py             # slosh-tank env source
+    slosh_tank_utils.py           # offline rollout + reference controllers
     build_slosh_tasks.py          # regenerates the jsonls from the env
-    puck_*.jsonl, puck_tilted_plane_env.py    # earlier puck env (legacy)
 src/
   branched_trainer.py             # current trainer (TRL 0.28 GRPOTrainer subclass)
   multi_turn.py                   # rollout + per-turn advantages
@@ -200,7 +200,6 @@ most likely to touch:
 | `grpo` | `loss_type` | `dapo` | Token-summed surrogate; required for the per-turn decomposition |
 | `grpo` | `beta`, `num_iterations` | `0`, `1` | Required for the per-turn decomposition |
 | `grpo` | `epsilon`, `epsilon_high` | `0.2`, `0.28` | Asymmetric DAPO clip |
-| `grpo` | `scale_rewards` | `batch` | Reward normalization |
 | `training` | `per_device_train_batch_size` | `16` | = `g1 * g2`, one prompt's trajectories per inner step |
 | `training` | `num_train_epochs` | `1` | Passes over the train task set per outer iter |
 | `eval` | `n_turns` | `2` | Eval rollouts match the training protocol |

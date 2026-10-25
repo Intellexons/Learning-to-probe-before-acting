@@ -21,7 +21,7 @@
 
 The agent is a language model $\pi_\theta$ that, conditioned on a textual
 prompt $s$ describing a control task, emits a Python policy. The base is
-\texttt{Qwen2.5-Coder-3B-Instruct} with frozen weights $W$; $\theta$
+\texttt{Qwen3-4B-Instruct-2507} with frozen weights $W$; $\theta$
 parameterizes a LoRA adapter giving effective layer weights
 $W' = W + AB^\top$. Interaction with the environment is mediated by a
 chat template, so a trajectory is a sequence of role-typed messages.
@@ -188,7 +188,7 @@ GAE, no context truncation across turns.
 
 A single forward over the full trajectory
 $[s\,|\,y^{(1)}\,|\,m\,|\,y^{(2)}]$ materializes an LM-head logits
-gradient of shape $(B,\,T_{\text{full}},\,|V|)$. With Qwen2.5's
+gradient of shape $(B,\,T_{\text{full}},\,|V|)$. With Qwen3's
 $|V|\approx 152{,}000$ this gradient is several gigabytes and OOMs a
 24\,GB L4 at our trajectory lengths. We exploit additivity of
 \eqref{eq:loss} to split the loss into two passes that share parameter

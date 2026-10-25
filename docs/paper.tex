@@ -30,7 +30,7 @@ We study credit assignment for LLM agents that act through code over multiple tu
 
 We propose a critic-free estimator that branches rollouts at turn boundaries. For each prompt the model samples several first-turn variants and several continuations under each variant; leaf rewards define a root Monte Carlo baseline for the prompt and a per-prefix baseline for each first-turn variant, so first-turn tokens are credited only when their prefix improves the expected reward of downstream continuations. Paired with token-summed clipped policy gradients, the estimator admits a per-turn loss decomposition that recovers the exact full-trajectory gradient while substantially reducing peak activation memory.
 
-We instantiate the method on a two-turn code-policy task constructed so that a first-turn probe can identify a hidden environment parameter the final policy needs. Frozen one- and two-turn baselines establish a large reproducible gap to oracle reference policies and show that the probe-then-adapt protocol fires syntactically but transfers no value into the final policy, leaving a concrete RL training target on which per-turn credit assignment can be measured against a flat trajectory-level baseline. Training-arm comparisons are in progress.
+We instantiate the method on a two-turn code-policy task in which a first-turn probe can identify a hidden environment parameter the final policy needs, and lay out a staged ablation that separates the per-turn credit signal from branching, from multi-turn training, and from single-turn RL. Experiments are pending.
 \end{abstract}
 
 \section{Introduction}
@@ -43,13 +43,13 @@ The concrete instance is probe-and-adapt control. The environment hides an actua
 
 We propose a critic-free Monte Carlo estimator for this situation. For each prompt the model samples a small tree: several first-turn variants, and several second-turn continuations below each variant. The mean reward over the whole tree estimates the prompt's root value; the mean below one variant estimates that prefix's value. Their difference advantages the first-turn tokens; the gap between a leaf reward and its prefix value advantages the second-turn tokens. The estimator pairs with a per-turn loss decomposition for token-summed clipped surrogates: because the loss is additive over disjoint token sets when all pieces share a global normalizer, one forward/backward per turn recovers the exact full-trajectory gradient at substantially reduced peak activation memory.
 
-We instantiate the method on a custom control task constructed so that probing is the only channel through which the relevant information becomes available. Frozen one- and two-turn baselines establish a large reproducible gap to oracle reference policies and show that, prompted alone, the model writes the probe-then-adapt protocol syntactically but never transfers the probe's information into the final policy --- leaving a concrete RL training target. Training-arm comparisons are in progress.
+We instantiate the method on a custom control task in which a first-turn probe can reveal a hidden actuator parameter that the final policy needs. Experiments are pending.
 
 The contributions are:
 \begin{enumerate}
   \item a critic-free turn-level Monte Carlo baseline with per-turn advantages for sparse-reward multi-turn RL;
   \item an exact per-turn loss decomposition for token-summed clipped policy-gradient objectives;
-  \item a probe-and-adapt benchmark with measured frozen baselines and an ablation design isolating the per-turn credit signal.
+  \item a probe-and-adapt benchmark and an ablation design isolating the per-turn credit signal.
 \end{enumerate}
 
 \section{Related work}
@@ -369,9 +369,9 @@ no theoretical cost (\S\ref{sec:limitations}).
 \section{Experimental setup}
 
 \paragraph{Environment.} We use a custom slosh-tank control task rather than a standard benchmark whose solution may already be familiar to the base model. A cart carries liquid represented by a damped pendulum mode. The policy observes
-$\{t,x,v,\theta,\omega,g,\text{steps\_left}\}$ and outputs acceleration clipped to $[-1,1]$ m/s$^2$. Success requires reaching the goal while also settling velocity, slosh angle, and slosh velocity. In the V1 task, the only hidden parameter is actuator gain $\kappa\in\{0.65,0.80,1.00\}$; all other parameters are fixed. Full dynamics and the gain sweep are in Appendix~\ref{app:slosh}.
+$\{t,x,v,\theta,\omega,g,\text{steps\_left}\}$ and outputs acceleration clipped to $[-1,1]$ m/s$^2$. Success requires reaching the goal while also settling velocity, slosh angle, and slosh velocity. In the V1 task, the only hidden parameter is actuator gain $\kappa\in\{0.65,0.80,1.00\}$; all other parameters are fixed. Full dynamics are in Appendix~\ref{app:slosh}.
 
-\paragraph{Why it tests turn-level credit.} A first-turn probe can estimate $\kappa$ by commanding a short pulse and measuring $\Delta v/(a_{\rm cmd}\Delta t)$. The final policy can then rescale its controller. This makes the first turn useful only through its effect on the final policy. Blind nominal PD has a large gap to an oracle that divides actions by $\kappa$: at the V1 levels the blind-vs-oracle success gaps are $100$, $49.5$, and $0$ percentage points. Thus the task has one stress level, one transitional level, and one nominal level.
+\paragraph{Why it tests turn-level credit.} A first-turn probe can estimate $\kappa$ by commanding a short pulse and measuring $\Delta v/(a_{\rm cmd}\Delta t)$. The final policy can then rescale its controller. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a $\kappa$-aware oracle is large enough to carry the study is settled with hand-written controllers before any model is run.
 
 \paragraph{Model and training.} We train LoRA rank $r=16$ on attention projections of \texttt{Qwen3-4B-Instruct-2507}; base weights are frozen, bf16 is used, and gradient checkpointing is enabled. Unless stated otherwise, $G_1=G_2=4$ and each turn is capped at 400 tokens. The loss is the token-summed clipped surrogate \eqref{eq:loss} with $\epsilon_{\rm lo}=0.2$, asymmetric upper clipping, $\beta=0$, no critic, no GAE, and no context truncation across turns.
 
@@ -405,10 +405,7 @@ equal-rollouts and equal-wall-clock comparisons. Frozen arms (A, B)
 use \texttt{Qwen3-4B-Instruct-2507} (\S\ref{sec:setup}) with no
 gradient updates, and serve as training-free references analogous to
 Voyager- or FunSearch-style frozen-LLM uses of the code-policy
-interface. (Table~\ref{tab:arm_a}'s Qwen2.5-Coder-3B numbers are
-preserved as the historical Arm~A record from the prior base model;
-the current 1-turn re-run on Qwen3-4B is in Table~\ref{tab:arm_b}'s
-third column.)}
+interface.}
 \label{tab:ablation}
 \end{table}
 
@@ -423,124 +420,6 @@ is F $>$ D at matched leaves.
 
 \paragraph{Diagnostic checks.}
 We track two mechanism checks. First, when turn~1 emits a \texttt{policy}, its reward should improve faster under F than under flat multi-turn training. Second, prompts with high iteration-0 signal ratio $\widehat\sigma(\widehat V_1^{(i)})/\overline{\widehat\sigma(R_{i,\cdot})}$ should show the largest F--D gain; otherwise the proposed credit-assignment explanation is weak.
-
-\paragraph{Arm A: frozen one-shot baseline (preliminary).}
-Table~\ref{tab:arm_a} reports the first completed arm.
-Qwen2.5-Coder-3B-Instruct (no LoRA, $N{=}1$, temperature 0.8) achieves
-\textbf{0\% success} at all three gain values $\kappa \in \{0.65, 0.80, 1.00\}$
-over 20 sampled policies $\times$ 50 seeds each.
-The mean reward $\approx -112$ is well below both the blind PD ($-10$ to $+112$
-depending on $\kappa$) and the oracle ($+111$), a gap of $\approx\!223$ points.
-Even the single best generated policy scores $-12.1$ at every $\kappa$,
-confirming the base model cannot write a working controller zero-shot.
-Two failure modes account for the result: $\approx$40\% of policies crash at
-runtime (hallucinated state keys; penalised at $-200$), and the rest produce
-control-theoretically wrong code (reversed-sign bang-bang, pendulum dynamics
-mis-applied as a control law).
-The flat reward across all three $\kappa$ values confirms the model has no
-awareness of the hidden gain.
-This large gap to both reference curves establishes that RL fine-tuning has
-a clear training signal, validating the benchmark difficulty.
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}ccccc@{}}
-\toprule
-$\kappa$ & Qwen 1-shot (mean) & Qwen 1-shot (max) & Blind PD & Oracle PD \\
-\midrule
-0.65 & $-112.0$ & $-12.1$ & $-9.6$  & $+111.2$ \\
-0.80 & $-111.9$ & $-12.1$ & $+45.9$ & $+111.4$ \\
-1.00 & $-111.9$ & $-12.1$ & $+111.5$ & $+111.5$ \\
-\bottomrule
-\end{tabular}
-\caption{Arm A: frozen one-shot Qwen2.5-Coder-3B-Instruct vs.\ reference
-policies on the slosh-tank task ($\kappa \in \{0.65, 0.80, 1.00\}$,
-20 policy samples, 50 seeds each, $\kappa$ fixed per episode).
-Mean reward averages over all samples; max is the best mean achieved by any
-single generated policy.
-Crashed policies scored at $-200$ (matching the GRPO training signal).
-Oracle scales PD gains by $1/\kappa$; blind uses nominal gains.}
-\label{tab:arm_a}
-\end{table}
-
-\paragraph{Arm B: frozen two-turn baseline (preliminary).}
-Table~\ref{tab:arm_b} reports the second completed arm: the same model
-in the two-turn probe-then-adapt prompt ($N{=}2$, temperature 0.8, 20
-sampled policies $\times$ 50 seeds per $\kappa$). Arm~B was run after
-adopting \texttt{Qwen3-4B-Instruct-2507} as the study's base model; for
-direct comparability, the 1-turn run was repeated on the same base and
-is included as the third column of Table~\ref{tab:arm_b}.
-Table~\ref{tab:arm_a}'s Qwen2.5-Coder-3B numbers remain as the original
-Arm~A record.
-
-\emph{The format gate fires, the value transfer does not.}
-60/60 samples open turn 1 with \texttt{\# MODE: main} and call
-\texttt{env.reset()} --- vs.\ 27\% \texttt{main}-mode usage on the
-earlier 3B baseline; 21/60 also step the env at least once with a known
-commanded acceleration. Yet \textbf{0/60 samples compute a $\kappa$
-estimate} from the probe data: the arithmetic that would turn the
-printed $\Delta v$ into a gain estimate ---
-$\kappa \approx \Delta v / (a_{\text{cmd}}\,\Delta t)$ at
-$\theta\!\approx\!\omega\!\approx\!0$ on a single step --- is never
-written, even when all of $a_{\text{cmd}}$, $\Delta v$, and $\Delta t$
-are on screen. The protocol's intent appears in 60/60 turn-1 comments
-(``probing the environment to gain insights about the hidden actuator
-gain $\kappa$''); the corresponding code appears zero times.
-
-\emph{Mean reward improves modestly; success rate does not.}
-The 2-turn per-sample median mean-reward exceeds the 1-turn median by
-12--18 points at every $\kappa$ ($-57.7$ vs.\ $-76.3$ at $\kappa=0.65$;
-$-74.2$ vs.\ $-86.8$ at $\kappa=0.80$; $-68.2$ vs.\ $-86.5$ at
-$\kappa=1.00$), consistent with the model writing slightly better
-controllers in turn~2 after seeing the state shape printed in turn~1 ---
-a weak format-side effect, not information gathering. Success rate
-stays $\leq 0.7\%$ across all $\kappa$, driven by a single
-$\kappa=0.65$ sample whose Pattern-D (reset-only) probe transferred no
-information and whose turn-2 body is a clean four-state PD controller
-earning $+5.7$ mean reward and 14\% per-seed success rate --- the
-first positive frozen-baseline reward on the slosh task, and an
-instance of \emph{control reasoning} improving rather than
-probe-then-adapt operating.
-
-The probe-then-adapt protocol is therefore \emph{nominal but not
-operative}: every sample passes the format gate, the prompt's
-instruction to probe is followed, but the value the protocol is
-supposed to deliver --- a $\kappa$ estimate that conditions the turn-2
-controller --- never materialises. The headline gap RL fine-tuning has
-to close is exactly to make $\kappa$-estimation arithmetic appear in
-turn-1 probe code and be \emph{read} by the turn-2 policy. The signal
-the trainer needs is supplied by the $G_2$ branched continuations of
-\S\ref{sec:per-turn-decomp}: a turn-1 probe that contains the
-information turn-2 needs should produce, on average, higher-reward
-$G_2$ leaves, and the per-turn baseline $\widehat V_1^{(i)}$ of
-Figure~\ref{fig:credit-assignment}~(c) is what propagates that signal
-back to turn-1 tokens.
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}ccccc@{}}
-\toprule
-$\kappa$ & Naive PD & Oracle PD & Qwen3-4B 1-turn & Qwen3-4B 2-turn \\
-\midrule
-0.65 & $0\%$   & $100\%$ & $0\%$   & $\mathbf{0.7\%}^{\dagger}$ \\
-0.80 & $46\%$  & $100\%$ & $0.5\%$ & $0\%$ \\
-1.00 & $100\%$ & $100\%$ & $0.7\%$ & $0\%$ \\
-\bottomrule
-\end{tabular}
-\caption{Arms~A and~B on \texttt{Qwen3-4B-Instruct-2507} vs.\ reference
-controllers on the slosh-tank task. Success rate is the fraction of 50
-episodes simultaneously meeting all four settling conditions
-($|x{-}g|, |v|, |\theta|, |\omega|$), averaged over 20 generated
-policies. Naive uses nominal PD gains; oracle scales gains by $1/\kappa$.
-$^{\dagger}$The $\kappa=0.65$ Arm~B aggregate is driven by a single
-outlier sample with 14\% per-seed success; the per-sample distribution
-is otherwise within sampling noise of the 1-turn column at $n{=}20$
-(median rewards $-57.7$ vs.\ $-76.3$). The best Arm~B sample is the
-first positive frozen-baseline mean reward observed on this task.}
-\label{tab:arm_b}
-\end{table}
 
 \paragraph{Failure modes.} If F does not beat D, the hierarchical baseline is not useful in this domain. If F $\approx$ E while both beat D, the benefit comes from branching rather than turn-level credit. If C--F do not beat A/B, the protocol is better framed as prompting rather than RL training.
 
@@ -557,9 +436,7 @@ A natural memory/variance extension is token subsampling within a turn. Since ea
 
 We present a critic-free, turn-level credit-assignment scheme for sparse-reward multi-turn RL. The method branches rollouts at chat-turn boundaries, uses the resulting Monte Carlo conditional means as per-turn baselines, and pairs with a per-turn loss decomposition that recovers the exact full-trajectory gradient one turn at a time.
 
-At this stage, frozen one- and two-turn baselines on a probe-and-adapt code-policy task establish a large reproducible gap to oracle reference policies and a more specific failure mode: prompted alone, the model writes the probe-then-adapt protocol syntactically but never transfers the probe's information into the final policy. The gap is therefore not a gap in format compliance --- it is a gap in \emph{value transfer between turns}, the exact channel that a per-turn credit signal is meant to address.
-
-The training-arm comparisons that test this directly --- flat trajectory-level optimization versus branched optimization, with and without hierarchical per-turn baselines --- are in progress. The estimator extends naturally to more turns and to stochastic rewards (Section~\ref{sec:limitations}); whether the per-turn signal closes the observed value-transfer gap is the headline empirical claim under test.
+The experiments that test this --- frozen one- and two-turn references, single-turn RL, flat trajectory-level multi-turn optimization, and branched optimization with per-turn baselines --- are pending. The estimator extends naturally to more turns and to stochastic rewards (Section~\ref{sec:limitations}); whether the per-turn signal closes the gap between a blind and an informed final policy is the headline empirical claim under test.
 
 \appendix
 
@@ -591,7 +468,7 @@ Two turn-wise passes & $400$ per pass, freed between & $\approx 3.9$\,GB \\
 The decomposition is not a new \texttt{logits\_to\_keep} trick; all regimes use the same primitive. The non-trivial point is that token-summed normalization makes the per-turn gradients sum exactly to the full-trajectory gradient. Per-row-averaged variants would require either a different normalizer or an approximation.
 
 \paragraph{Forward-side temporaries change the binding constraint.}
-Table~\ref{tab:memory} accounts for the LM-head logits tensor as it appears in the saved-for-backward computation graph. On a 24\,GB L4 we observed empirically that the binding allocation is not the gradient at backward, but the forward itself. The softmax-stability convention in TRL holds logits in fp32 rather than bf16, doubling the byte budget over a naive estimate. Worse, the temperature scaling \texttt{logits = logits / self.temperature} is not in place: a same-shape fresh tensor is allocated before the original is freed. At the divide step \emph{two} $(B, T, |V|)$ fp32 tensors are simultaneously live, $\approx 7.8$\,GiB at our production sizing. Stacked on model weights, the just-emitted turn-$n$ KV cache from generation that has not yet been reclaimed by the allocator, and the previous turn's backward residue, this allocation crosses the 22\,GiB usable budget and OOMs at step~0.
+Table~\ref{tab:memory} accounts for the LM-head logits tensor as it appears in the saved-for-backward computation graph. At production sizing on a 24\,GB card, the binding allocation is not the gradient at backward but the forward itself. The softmax-stability convention in TRL holds logits in fp32 rather than bf16, doubling the byte budget over a naive estimate. Worse, the temperature scaling \texttt{logits = logits / self.temperature} is not in place: a same-shape fresh tensor is allocated before the original is freed. At the divide step \emph{two} $(B, T, |V|)$ fp32 tensors are simultaneously live, $\approx 7.8$\,GiB at our production sizing. Stacked on model weights, the just-emitted turn-$n$ KV cache from generation that has not yet been reclaimed by the allocator, and the previous turn's backward residue, this allocation crosses the 22\,GiB usable budget and OOMs at step~0.
 
 The per-turn loss decomposition addresses peak \emph{gradient} memory but does not shrink the forward logits tensor. The remedy is row-wise chunking of the per-turn pass: split the $B$ trajectories into sub-batches of size $b\!\ll\!B$, forward each sub-batch separately, backpropagate, and accumulate. Because the token-summed loss \eqref{eq:loss} is additive over disjoint row subsets sharing the same global normalizer $N_{\rm tok}$, the chunked gradient is bit-equivalent to the single-pass gradient. The forward-time logits tensor shrinks linearly from $(B, T_n, |V|)$ to $(b, T_n, |V|)$, and the divide-step peak scales correspondingly. At $b=4$, $B=16$, $T=400$ the divide-step peak drops from $\approx 7.8$\,GiB to $\approx 2$\,GiB; the cost is $B/b$ additional LM-head kernel launches per turn (single-digit-percent wall-clock at our generation-dominated sizing). We use $b=4$ on 24\,GB L4 and run un-chunked on $\geq 40$\,GB cards.
 
@@ -627,37 +504,6 @@ Damping & $c$ & 0.06 s$^{-1}$ & fixed \\
 \bottomrule
 \end{tabular}
 \end{center}
-
-\subsection*{Empirical blind-vs-oracle gap}
-\label{app:slosh-sweep}
-
-Table~\ref{tab:slosh-sweep} and Figure~\ref{fig:slosh-sweep} show the reference sweep over 200 seeds per gain. Blind nominal PD transitions from $0\%$ to $100\%$ success across $\kappa\in[0.65,0.90]$, while the oracle controller remains at $100\%$. The V1 levels therefore give one stress case, one transitional case, and one nominal case.
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}lll@{}}
-\toprule
-$\kappa$ & Blind PD success & Oracle PD success \\
-\midrule
-0.65 & $0\%$    & $100\%$ \\
-0.70 & $0\%$    & $100\%$ \\
-0.75 & $25.5\%$ & $100\%$ \\
-0.80 & $50.5\%$ & $100\%$ \\
-0.85 & $85\%$   & $100\%$ \\
-0.90 & $100\%$  & $100\%$ \\
-\bottomrule
-\end{tabular}
-\caption{Blind nominal PD vs. oracle PD with actions divided by $\kappa$.}
-\label{tab:slosh-sweep}
-\end{table}
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.72\textwidth]{slosh_gain_sweep.png}
-\caption{Blind and oracle success vs. actuator gain over 200 seeds per level.}
-\label{fig:slosh-sweep}
-\end{figure}
 
 The two-turn protocol is useful only if a probe-aware controller can close some of this gap. The blind controller sets the no-probe baseline, the oracle sets the upper bound, and a hand-written pulse-probe controller is the achievable probe-aware reference.
 

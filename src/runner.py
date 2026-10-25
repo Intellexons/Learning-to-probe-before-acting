@@ -40,7 +40,7 @@ STDERR_TAIL_BYTES = 500
 
 # Default max env steps per scenario rollout. Matches scoring config defaults.
 DEFAULT_MAX_STEPS = 500
-DEFAULT_ENV_CLASS = "CartPoleEnv"
+DEFAULT_ENV_CLASS = "SloshTankEnv"
 
 
 # Fenced-block matcher for multi-turn dispatch. Anything that doesn't yield
