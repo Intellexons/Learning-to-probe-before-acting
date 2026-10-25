@@ -56,4 +56,262 @@ training run). None of those results is to be cited or built on. The slosh
 tank is the only environment going forward; the experiment ladder restarts
 at the environment-validity gate described in \texttt{docs/paper.tex}.
 
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-10-24 \quad Rung 0 gate: hiding the slosh sensor and the slosh
+length does not make the lab necessary}
+% ============================================================
+
+\commit{b6485c0} $\cdot$ \textit{hand-written controllers only, CPU; no model
+was run}
+
+\subsection*{Setup / motivation}
+
+The ladder restarts with a validity gate: before any model is sampled, show
+with hand-written controllers that the scored \texttt{policy(state)} cannot
+succeed without information that only the turn-1 lab can provide. Two facts
+about the env as shipped were established first (200 seeds per value). With
+the actuator gain $\kappa\in\{0.65,0.80,1.00\}$ hidden, a fixed PD controller
+with the gain constant hard-coded to $0.65$ succeeds in 100\% of episodes at
+every $\kappa$; the shipped ``blind'' reference is the same formula with the
+constant at $1.0$ (0\,/\,50.5\,/\,100\%), so the gap it exhibited was a
+tuning artifact. With the slosh length $L$ varied from 0.3 to 1.5\,m and the
+full state observed, a PD controller that knows nothing about $L$ also
+succeeds in 100\% of episodes at every $L$: feedback on $\theta$ does the
+probe's job for free.
+
+The redesign under test therefore hid the slosh state. The scored controller
+observed only $(t, x, v, \text{goal}, \text{steps\_left})$; $\theta$ and
+$\omega$ were visible only to the turn-1 lab env. The hidden parameter was
+$L$ (slosh period $T_n = 2\pi\sqrt{L/g}$), with $\kappa$ fixed at 1. Because
+$\theta$ never enters the cart update in \texttt{SloshTankEnv.step}, the
+scored controller's inputs are independent of $L$, so no controller, stateful
+or not, can identify $L$ in-episode; the only blind strategy is robustness.
+The gate measured what robustness costs. A \emph{blind} side (one controller
+for every $L$ in the set) and an \emph{informed} side (one controller per
+$L$, the upper bound on what a perfect turn-1 measurement could buy) searched
+the same five controller classes with the same budget on the same 48 search
+seeds: shaped bang-bang moves (none/ZV/ZVD/ZVDD/EI/two-mode shapers plus a
+terminal PD), free-form antisymmetric open-loop profiles with 8 segments per
+half, pure PD on $(x,v)$, shaped PD with memory, and feedforward plus
+tracking feedback. Each job ran 800 random samples and $8\times150$
+hill-climbing steps; winners were chosen on the search seeds and reported on
+200 fresh seeds per $L$. The gates were fixed beforehand: G1, informed
+$\geq 90\%$ at every $L$; G2, informed mean minus blind mean $\geq 40$
+percentage points; G3, a hand-written two-turn solution (lab measurement,
+then controller) $\geq 95\%$ on fresh seeds. Twelve configurations were run
+(1.3 CPU-hours, 7 minutes on 11 cores).
+
+\subsection*{Results}
+
+\begin{center}\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrr}
+\toprule
+$L$ set (m) & steps & blind per $L$ (\%) & blind mean & informed per $L$ (\%) & informed mean & gap (pp) \\
+\midrule
+$\{2,3,4\}$       & 80  & 100 / 100 / 0   & 67  & 100 / 100 / 99  & 100 & $+33$ \\
+$\{2,3,4\}$       & 90  & 96 / 100 / 86   & 94  & 99 / 100 / 100  & 100 & $+5$ \\
+$\{2,3,4\}$       & 105 & 100 / 100 / 100 & 100 & 99 / 100 / 100  & 100 & $0$ \\
+$\{3,4,5\}$       & 90  & 98 / 98 / 98    & 98  & 100 / 100 / 100 & 100 & $+2$ \\
+$\{3,4,5\}$       & 105, 120, 135 & 100 / 100 / 100 & 100 & 100 / 100 / 100 & 100 & $0$ \\
+$\{2.5,3.5,4.5\}$ & 105 & 99 / 100 / 100  & 100 & 100 / 100 / 100 & 100 & $0$ \\
+$\{2.5,3.5,4.5\}$ & 120 & 100 / 100 / 100 & 100 & 100 / 100 / 100 & 100 & $0$ \\
+$U[2,4]$          & 90  & 100 / 100 / 100 & 100 & 100 / 100 / 100 & 100 & $0$ \\
+$U[3,5]$          & 105 & 100 / 100 / 82  & 94  & 100 / 100 / 100 & 100 & $+6$ \\
+$U[3,5]$          & 120 & 96 / 100 / 100  & 99  & 100 / 100 / 100 & 100 & $+1$ \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+G1 passed everywhere. G2 failed in every configuration. The blind winner was
+always a free-form open-loop profile, typically a short bang-bang convolved
+with a two-frequency shaper, whose success on the continuous ranges was 100\%
+over uniformly drawn $L$. G3 passed at 100\% for every $L$ in every
+configuration with at least 90 steps: the lab code applied a four-step pulse
+and read the period off the zero crossings of $\theta$ to within 0.2\%
+(e.g.\ 4.008\,s measured against 4.012\,s true), chose the move acceleration
+on lab goals disjoint from the scoring goals, and the turn-2 controller was a
+ZV-shaped bang-bang with the two constants filled in. At 80 steps G3 fell to
+90.5\% at $L=4$.
+
+\subsection*{Interpretation}
+
+The premise of the redesign holds, but an unobservable parameter is not the
+same as a necessary measurement. Robust input shaping over $\pm20\%$ of
+frequency uncertainty costs little time, and the optimizer found profiles
+that keep the residual slosh inside the tolerance for all three periods at
+once. The $+58$\,pp gap seen in the pilot came from a controller family that
+contained only classical single-frequency shapers; once the blind side was
+allowed free-form profiles it vanished. A gap appears only when the budget is
+squeezed below what the longest period needs, and there it also hurts the
+informed side (G3 at 80 steps), so it is a budget artifact rather than an
+information gap.
+
+Three constraints on any future design follow. First, anything the scored
+controller observes that depends on the hidden quantity reveals it within a
+step or two, because the dynamics are deterministic; the hidden quantity must
+affect only variables the scored controller cannot see. Second, if the hidden
+quantity admits a robust compromise, the lab buys nothing; frequency
+uncertainty of this width admits one. Third, a scale-like parameter such as
+the actuator gain admits no compromise under a fixed horizon, but the env's
+termination on first success lets a blind open-loop plan test hypotheses in
+sequence: with $\kappa\in\{0.65,0.8,1.0\}$ a plan that stops at planned
+positions $d$, $1.25d$ and $1.54d$ succeeds under each value in turn. Success
+would have to be judged at the final step.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Run the same gate on a dead-reckoning variant: the scored controller
+  observes only $(t, \text{goal}, \text{steps\_left})$, the gain (and
+  optionally the period) is hidden, and success is evaluated at the last step
+  with no early termination. The blind side can then be right for at most one
+  gain value, so the gap exists by construction; the gate would confirm the
+  informed side reaches $\geq 90\%$ and the hand-written two-turn solution
+  $\geq 95\%$.
+\item If it passes, push the two-turn solution through the real runner with
+  the observation filter, a lab proxy that hides \texttt{env.hidden}, a lab
+  seed disjoint from the scoring seeds, and scoring on at least four goals.
+\item Check at Rung 2 that a frozen model does not already solve the lab
+  step, since measuring a gain takes one line of code.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether the no-sensor story is physically acceptable to a reviewer; whether
+judging success at the final step sparsifies the reward enough to hurt
+single-turn RL at Rung 3; whether slosh is still worth keeping once the gain
+carries the information gap.
+
+\subsection*{Reproduce}
+
+\commit{b6485c0}, \texttt{scripts/rung0\_gate.py}: \texttt{search --n-random
+800 --topk 8 --n-climb 150} over the twelve configurations listed above, and
+\texttt{two-turn --L 2 3 4 --steps 90}. Raw output:
+\texttt{docs/rung0/search\_2026-10-24.log}.
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-10-24 \quad Rung 0 gate, second pass: dead reckoning with a
+hidden gain passes, provided success is judged at the final step}
+% ============================================================
+
+\commit{3dc6581} $\cdot$ \textit{hand-written controllers only, CPU; no model
+was run}
+
+\subsection*{Setup / motivation}
+
+Following item 1 of the previous entry, the scored controller was stripped of
+every sensor: it observed only $(t, \text{goal}, \text{steps\_left})$. The
+actuator gain $\kappa$ was hidden (discrete $\{0.65, 0.8, 1.0\}$ or continuous
+$U[0.6,1.0]$), alone with the shipped slosh length $L=0.7$\,m or together
+with a hidden $L$. Nothing the scored controller sees depends on either
+value, so the lab is the only channel, and a gain admits no robust
+compromise: a plan that lands on the goal under one gain lands short or long
+under another. One loophole remained. The shipped env ends the episode at the
+first step that satisfies the success test, so a blind plan can stop at the
+goal position implied by each gain hypothesis in turn and be credited whichever
+is true. A thin subclass therefore judged success at the final step only and
+paid the bonus only there; the shipped rule was kept as a control. The
+protocol was the one of the previous entry (same classes and budget on both
+sides, 48 search seeds, 200 fresh seeds per hidden value, gates G1--G3 fixed
+in advance), restricted to the open-loop classes since there is no feedback
+to use, plus a new multi-stop class (back-to-back shaped moves through
+planned positions, with an idle dwell) so the blind side could exploit the
+loophole wherever the rules allowed it. Six configurations were run with the
+final-step rule and two as the control (126 and 24 jobs; 6 minutes on 11
+cores).
+
+\subsection*{Results}
+
+\begin{center}\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lllrrrl}
+\toprule
+hidden & steps & success rule & blind mean (\%) & informed mean (\%) & gap (pp) & G1 / G2 \\
+\midrule
+$\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 105 & final step & 33 & 100 & $+67$ & pass / pass \\
+$\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 90  & final step & 33 & 100 & $+66$ & pass / pass \\
+$\kappa\sim U[0.6,1]$, $L=0.7$           & 105 & final step & 3 (range 18) & 100 & $+97$ & pass / pass \\
+$\kappa\in\{0.65,0.8,1\}$, $L\in\{2,3,4\}$ & 105 & final step & 33 & 100 & $+67$ & pass / pass \\
+$\kappa\in\{0.65,0.8,1\}$, $L\in\{2,3,4\}$ & 120 & final step & 33 & 100 & $+66$ & pass / pass \\
+$\kappa\sim U[0.6,1]$, $L\sim U[2,4]$    & 105 & final step & 33 (range 24) & 100 & $+66$ & pass / pass \\
+\midrule
+$\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 105 & first success (control) & 71 & 99 & $+28$ & pass / FAIL \\
+$\kappa\in\{0.65,0.8,1\}$, $L=0.7$       & 135 & first success (control) & 100 & 100 & $0$ & pass / FAIL \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+Under the final-step rule the blind winner succeeded for exactly one gain
+value (100\,/\,0\,/\,0 across the three) in every discrete configuration and
+for 18\% of a continuous gain range; the informed side was at 99--100\% for
+every hidden pair, including the nine $(\kappa, L)$ pairs. Under the shipped
+rule the blind winner was always the multi-stop class with three stops at
+planned positions $d$, $1.26d$ and $1.45d$: 13\,/\,100\,/\,100 at 105 steps
+and 100\,/\,100\,/\,99 at 135 steps. G3 passed at 100\% for every hidden pair
+in all four configurations tried ($L=0.7$ and $L\in\{2,3,4\}$ at 90--120
+steps). The lab code recovered $\kappa$ exactly from the velocity after one
+full-throttle step and the slosh period to within 0.3\% from a four-step
+pulse; the turn-2 controller was the ZV-shaped bang-bang of the previous entry
+with the gain folded into its scaling and no terminal feedback.
+
+\subsection*{Interpretation}
+
+The gap now exists by construction rather than by search: with no field
+sensors the scored controller cannot learn the gain, and a gain cannot be
+hedged, so the blind side is capped at one hypothesis (a third of a
+three-value set, a tolerance-width sliver of a continuous range). The
+measurement is trivial for the lab and useless to withhold. The control
+shows that the final-step rule is load-bearing and not cosmetic: given 135
+steps the shipped first-success rule lets a blind plan reach 100\% by visiting
+three candidate positions in sequence. Hiding $L$ as well adds nothing to the
+gap (the gain already caps the blind side) but makes turn 2 harder and turn 1
+richer, two quantities to measure in one lab episode. The continuous gain
+range is preferable to the discrete set: it leaves nothing to memorize and
+drives the blind side to a few percent.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Env and runner changes for this variant: an observation filter so the
+  scored \texttt{policy(state)} receives only $(t, \text{goal},
+  \text{steps\_left})$ while the turn-1 lab env keeps the full observation; the
+  final-step success rule with the bonus paid only at the end; $L$ added to
+  \texttt{HiddenParams}; a lab proxy that exposes \texttt{reset}, \texttt{step}
+  and \texttt{observe} but not \texttt{env.hidden}; a lab seed disjoint from
+  the scoring seeds; scoring on at least four goals.
+\item Rung 0b: the hand-written two-turn solution through the real
+  \texttt{execute\_turn} path at $\geq 95\%$.
+\item Rungs 1--2 as planned, with the explicit risk that a frozen model solves
+  the one-line gain measurement from the prompt alone; if it does, the ladder
+  tests competence rather than probing, and the paper's framing follows.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether the final-step rule, which withholds the bonus until the end,
+sparsifies the reward enough to slow single-turn RL at Rung 3 (the shaping
+terms remain per step). Whether to present the task as open-loop feedforward
+actuation calibrated on a bench, and whether a reviewer accepts that
+framing. Whether $L$ should stay hidden or be fixed and known.
+
+\subsection*{Reproduce}
+
+\commit{3dc6581}, \texttt{scripts/rung0\_gate.py} with the flags
+\texttt{--obs dead} and \texttt{--fixed-horizon}: the \texttt{search}
+subcommand over the six configurations in the table, written as in
+\texttt{"k=0.65,0.8,1.0;L=0.7@105"}, with the budget \texttt{--n-random 800},
+\texttt{--topk 8}, \texttt{--n-climb 150}; the control with \texttt{--obs dead}
+alone; G3 with the \texttt{two-turn} subcommand and the same flags. Raw
+output in \texttt{docs/rung0/}: \texttt{search\_dead\_fixed\_2026-10-24.log}
+and \texttt{search\_dead\_early\_control\_2026-10-24.log}.
+
 \end{document}
