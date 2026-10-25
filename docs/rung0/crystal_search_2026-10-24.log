@@ -1,0 +1,68 @@
+
+=== config range:0.08-0.25 ===
+  blind    track   reward    91.1  success 100.0%  fast   7.5%  norm-time 0.497   [    4s]
+  blind    linear  reward    51.7  success  88.0%  fast   0.0%  norm-time 0.229   [    9s]
+  blind    power   reward    64.3  success  93.0%  fast   0.0%  norm-time 0.285   [   13s]
+  blind    pwl     reward   -60.0  success   0.0%  fast   0.0%  norm-time 0.000   [   18s]
+  blind    hybrid  reward    91.0  success 100.0%  fast   7.5%  norm-time 0.495   [   23s]
+  informed sigma_max=0.080 track   reward    91.1  success 100.0%  fast 100.0%  norm-time 1.000   [   27s]
+  informed sigma_max=0.080 linear  reward   -60.0  success   0.0%  fast   0.0%  norm-time 0.000   [   31s]
+  informed sigma_max=0.080 power   reward    38.2  success  86.0%  fast   0.0%  norm-time 0.412   [   36s]
+  informed sigma_max=0.080 pwl     reward   -60.0  success   0.0%  fast   0.0%  norm-time 0.000   [   39s]
+  informed sigma_max=0.080 hybrid  reward    91.0  success 100.0%  fast 100.0%  norm-time 0.994   [   43s]
+  informed sigma_max=0.165 track   reward   107.7  success 100.0%  fast 100.0%  norm-time 1.000   [   45s]
+  informed sigma_max=0.165 linear  reward    89.5  success  97.5%  fast   0.0%  norm-time 0.462   [   48s]
+  informed sigma_max=0.165 power   reward    96.5  success 100.0%  fast   0.0%  norm-time 0.523   [   51s]
+  informed sigma_max=0.165 pwl     reward    93.6  success 100.0%  fast   0.0%  norm-time 0.466   [   56s]
+  informed sigma_max=0.165 hybrid  reward   107.6  success 100.0%  fast 100.0%  norm-time 0.992   [   58s]
+  informed sigma_max=0.250 track   reward   110.3  success 100.0%  fast 100.0%  norm-time 1.000   [   60s]
+  informed sigma_max=0.250 linear  reward   101.8  success  97.5%  fast   0.0%  norm-time 0.702   [   61s]
+  informed sigma_max=0.250 power   reward   106.6  success 100.0%  fast   1.0%  norm-time 0.718   [   64s]
+  informed sigma_max=0.250 pwl     reward   107.2  success 100.0%  fast  10.0%  norm-time 0.751   [   69s]
+  informed sigma_max=0.250 hybrid  reward   110.2  success 100.0%  fast 100.0%  norm-time 0.989   [   71s]
+
+  best blind family by reward: track
+   sigma_max  blind fast  inf fast    gap | blind norm-t inf norm-t | blind reward inf reward
+       0.080      100.0%    100.0%    +0 |        1.000      1.000 |         91.1       91.1   (informed family: track)
+       0.165        0.0%    100.0%  +100 |        0.428      1.000 |         91.1      107.7   (informed family: track)
+       0.250        0.0%    100.0%  +100 |        0.336      1.000 |         91.1      110.3   (informed family: track)
+  over the range: blind fast 7.5%, blind norm-time 0.497, blind reward 91.1
+  G1 informed fast >= 90% at every anchor: PASS
+  G2 fast-success gap +92 pp (need >= 40): PASS
+
+=== config set:0.08,0.12,0.18,0.25 ===
+  blind    track   reward    91.1  success 100.0%  fast  25.0%  norm-time 0.580   [   75s]
+  blind    linear  reward    34.5  success  74.0%  fast   0.0%  norm-time 0.214   [   79s]
+  blind    power   reward    55.0  success  96.0%  fast   0.0%  norm-time 0.263   [   85s]
+  blind    pwl     reward    70.4  success 100.0%  fast   0.0%  norm-time 0.337   [   90s]
+  blind    hybrid  reward    91.0  success 100.0%  fast  25.0%  norm-time 0.578   [   95s]
+  informed sigma_max=0.080 track   reward    91.1  success 100.0%  fast 100.0%  norm-time 1.000   [   99s]
+  informed sigma_max=0.080 linear  reward   -60.0  success   0.0%  fast   0.0%  norm-time 0.000   [  104s]
+  informed sigma_max=0.080 power   reward    38.2  success  86.0%  fast   0.0%  norm-time 0.411   [  108s]
+  informed sigma_max=0.080 pwl     reward    60.3  success 100.0%  fast   0.0%  norm-time 0.484   [  112s]
+  informed sigma_max=0.080 hybrid  reward    90.7  success 100.0%  fast 100.0%  norm-time 0.984   [  117s]
+  informed sigma_max=0.120 track   reward   103.0  success 100.0%  fast 100.0%  norm-time 1.000   [  119s]
+  informed sigma_max=0.120 linear  reward    71.0  success  97.5%  fast   0.0%  norm-time 0.370   [  124s]
+  informed sigma_max=0.120 power   reward    83.6  success 100.0%  fast   0.0%  norm-time 0.467   [  127s]
+  informed sigma_max=0.120 pwl     reward    75.1  success 100.0%  fast   0.0%  norm-time 0.378   [  132s]
+  informed sigma_max=0.120 hybrid  reward   102.8  success 100.0%  fast 100.0%  norm-time 0.990   [  136s]
+  informed sigma_max=0.180 track   reward   108.5  success 100.0%  fast 100.0%  norm-time 1.000   [  137s]
+  informed sigma_max=0.180 linear  reward    92.9  success  97.5%  fast   0.0%  norm-time 0.500   [  140s]
+  informed sigma_max=0.180 power   reward    99.2  success 100.0%  fast   0.0%  norm-time 0.552   [  143s]
+  informed sigma_max=0.180 pwl     reward   101.7  success 100.0%  fast   0.0%  norm-time 0.630   [  148s]
+  informed sigma_max=0.180 hybrid  reward   108.4  success 100.0%  fast 100.0%  norm-time 0.990   [  151s]
+  informed sigma_max=0.250 track   reward   110.3  success 100.0%  fast 100.0%  norm-time 1.000   [  152s]
+  informed sigma_max=0.250 linear  reward   101.8  success  97.5%  fast   0.0%  norm-time 0.703   [  154s]
+  informed sigma_max=0.250 power   reward   106.4  success 100.0%  fast   0.5%  norm-time 0.712   [  156s]
+  informed sigma_max=0.250 pwl     reward   106.5  success 100.0%  fast   0.5%  norm-time 0.714   [  162s]
+  informed sigma_max=0.250 hybrid  reward   110.2  success 100.0%  fast 100.0%  norm-time 0.990   [  164s]
+
+  best blind family by reward: track
+   sigma_max  blind fast  inf fast    gap | blind norm-t inf norm-t | blind reward inf reward
+       0.080      100.0%    100.0%    +0 |        1.000      1.000 |         91.1       91.1   (informed family: track)
+       0.120        0.0%    100.0%  +100 |        0.589      1.000 |         91.1      103.0   (informed family: track)
+       0.180        0.0%    100.0%  +100 |        0.400      1.000 |         91.1      108.5   (informed family: track)
+       0.250        0.0%    100.0%  +100 |        0.336      1.000 |         91.1      110.3   (informed family: track)
+  over the range: blind fast 25.0%, blind norm-time 0.580, blind reward 91.1
+  G1 informed fast >= 90% at every anchor: PASS
+  G2 fast-success gap +75 pp (need >= 40): PASS

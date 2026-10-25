@@ -1,0 +1,33 @@
+
+=== two-turn, config range:0.08-0.25  probe one-pass  env overrides none ===
+  sigma_max=0.080: success 100.0%  fast 100.0%  norm-time 0.876  probe error <= 0.0102  bracket width <= 0.0110
+  sigma_max=0.165: success 100.0%  fast 100.0%  norm-time 0.957  probe error <= 0.0103  bracket width <= 0.0113
+  sigma_max=0.250: success 100.0%  fast 100.0%  norm-time 0.988  probe error <= 0.0094  bracket width <= 0.1594
+  whole range  : success 100.0%  fast 100.0%  norm-time 0.946  probe error <= 0.0104  bracket width <= 0.0112
+  G3 hand-written two-turn fast-success >= 95% at every anchor: PASS
+usage: rung0_gate_crystal.py two-turn [-h] [--configs CONFIGS [CONFIGS ...]]
+                                      [--workers WORKERS] [--show-source]
+                                      [--probe {three-pass,one-pass,creep}]
+                                      [--creep-step CREEP_STEP]
+                                      [--time-weight TIME_WEIGHT]
+rung0_gate_crystal.py two-turn: error: argument --probe: invalid choice: 'creep --creep-step 0.005' (choose from three-pass, one-pass, creep)
+usage: rung0_gate_crystal.py two-turn [-h] [--configs CONFIGS [CONFIGS ...]]
+                                      [--workers WORKERS] [--show-source]
+                                      [--probe {three-pass,one-pass,creep}]
+                                      [--creep-step CREEP_STEP]
+                                      [--time-weight TIME_WEIGHT]
+rung0_gate_crystal.py two-turn: error: argument --probe: invalid choice: 'creep --creep-step 0.001' (choose from three-pass, one-pass, creep)
+
+=== two-turn, config range:0.08-0.25  probe creep step 0.005  env overrides none ===
+  sigma_max=0.080: success 100.0%  fast 100.0%  norm-time 0.914  probe error <= 0.0050  bracket width <= 0.0050
+  sigma_max=0.165: success 100.0%  fast 100.0%  norm-time 0.964  probe error <= 0.0050  bracket width <= 0.0050
+  sigma_max=0.250: success 100.0%  fast 100.0%  norm-time 0.982  probe error <= 0.0285  bracket width <= 0.1785
+  whole range  : success 100.0%  fast 100.0%  norm-time 0.966  probe error <= 0.0210  bracket width <= 0.1785
+  G3 hand-written two-turn fast-success >= 95% at every anchor: PASS
+
+=== two-turn, config range:0.08-0.25  probe creep step 0.001  env overrides none ===
+  sigma_max=0.080: success 100.0%  fast 100.0%  norm-time 0.960  probe error <= 0.0010  bracket width <= 0.0010
+  sigma_max=0.165: success 100.0%  fast 100.0%  norm-time 0.964  probe error <= 0.0152  bracket width <= 0.2502
+  sigma_max=0.250: success 100.0%  fast  24.0%  norm-time 0.769  probe error <= 0.1002  bracket width <= 0.2502
+  whole range  : success 100.0%  fast  84.0%  norm-time 0.910  probe error <= 0.0961  bracket width <= 0.2502
+  G3 hand-written two-turn fast-success >= 95% at every anchor: FAIL

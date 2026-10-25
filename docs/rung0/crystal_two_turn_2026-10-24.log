@@ -1,0 +1,15 @@
+
+=== two-turn, config range:0.08-0.25 ===
+  sigma_max=0.080: success 100.0%  fast 100.0%  norm-time 0.971  probe error <= 0.0002  bracket width <= 0.0002
+  sigma_max=0.165: success 100.0%  fast 100.0%  norm-time 0.983  probe error <= 0.0002  bracket width <= 0.0002
+  sigma_max=0.250: success 100.0%  fast 100.0%  norm-time 0.993  probe error <= 0.0040  bracket width <= 0.0078
+  whole range  : success 100.0%  fast 100.0%  norm-time 0.982  probe error <= 0.0002  bracket width <= 0.0005
+  G3 hand-written two-turn fast-success >= 95% at every anchor: PASS
+
+=== two-turn, config set:0.08,0.12,0.18,0.25 ===
+  sigma_max=0.080: success 100.0%  fast 100.0%  norm-time 0.971  probe error <= 0.0002  bracket width <= 0.0002
+  sigma_max=0.120: success 100.0%  fast 100.0%  norm-time 0.975  probe error <= 0.0002  bracket width <= 0.0002
+  sigma_max=0.180: success 100.0%  fast 100.0%  norm-time 0.985  probe error <= 0.0002  bracket width <= 0.0002
+  sigma_max=0.250: success 100.0%  fast 100.0%  norm-time 0.993  probe error <= 0.0040  bracket width <= 0.0078
+  whole range  : success 100.0%  fast 100.0%  norm-time 0.981  probe error <= 0.0040  bracket width <= 0.0075
+  G3 hand-written two-turn fast-success >= 95% at every anchor: PASS
