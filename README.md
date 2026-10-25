@@ -72,6 +72,18 @@ rollout and the two-pass loss.
 For the full derivation, the ablation arms and the environment, see the
 paper.
 
+## Experiment plan
+
+The study is a ladder of stages; each one is a go-or-stop check for the next.
+Stage 0 (is the environment worth it: hand-written controllers with and
+without the hidden limit) and Stage 0b (the hand-written probe run and final
+run through the real runner) have passed. Stage 1 (frozen model, one turn)
+and Stage 2 (frozen model with a probe run) are next and need a GPU. Stages 3
+to 6 are the trained arms C to F of the paper, ending with our branched
+method with per-turn baselines. The full plan with pass criteria and status
+is the "Experiment plan" section of `docs/paper.tex`; the evidence is in
+`docs/findings.tex`.
+
 ## Prerequisites
 
 - Python 3.11+ (the project pins 3.14 via `uv`)
