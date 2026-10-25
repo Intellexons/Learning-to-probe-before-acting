@@ -1,10 +1,10 @@
-# Flat single-turn GRPO on the slosh tank (stock TRL GRPOTrainer via
-# scripts/04_train_grpo_lora.py). This is the one-turn RL reference arm:
-# the model writes `policy(state)` in a single turn with no probe.
+# Flat single-turn GRPO on the crystallizer (Stage 3, arm C; stock TRL
+# GRPOTrainer via scripts/04_train_grpo_lora.py). The model writes
+# `policy(state)` in a single turn with no probe run.
 #
-# Sizing mirrors configs/loop_grpo_branched_slosh.yaml so the two trainers
-# see the same number of scored trajectories per step (16) and the same
-# per-turn token budget (400).
+# Sizing mirrors configs/loop_grpo_branched_crystallizer.yaml so the two
+# trainers see the same number of scored trajectories per step (16) and the
+# same per-turn token budget (400).
 
 base_model:
   # Documentation only — the actual model id is read by 00_setup_env.sh
@@ -15,8 +15,8 @@ paths:
   hf_base_dir: "models/hf_base"
   lora_dir: "models/lora"
   rollouts_dir: "data/rollouts"
-  tasks_train: "scripts/seed_tasks/slosh_train.jsonl"
-  tasks_eval: "scripts/seed_tasks/slosh_eval.jsonl"
+  tasks_train: "scripts/seed_tasks/crystallizer_train.jsonl"
+  tasks_eval: "scripts/seed_tasks/crystallizer_eval.jsonl"
 
 loop:
   iterations: 23
@@ -42,9 +42,10 @@ generation:
   top_p: 0.95
   max_tokens: 600
 
+# One batch is at most 600 steps of 20 s (EnvConfig.max_steps).
 scoring:
   timeout_seconds: 30
-  max_steps: 500
+  max_steps: 600
 
 training:
   learning_rate: 1.0e-4

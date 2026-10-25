@@ -1,6 +1,6 @@
 """Evaluate current model on held-out eval tasks.
 
-Usage: python scripts/08_eval.py --iter 1 --config configs/loop_grpo_branched_slosh.yaml
+Usage: python scripts/08_eval.py --iter 1 --config configs/loop_grpo_branched_crystallizer.yaml
 
 Supports two modes via `cfg["eval"]["n_turns"]` (default 1):
   - n_turns=1: single-turn rollout (legacy DPO-loop behaviour).
@@ -41,6 +41,7 @@ from src.multi_turn import execute_turn  # noqa: E402
 from src.prompts import load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     ERROR_PENALTY_PER_SCENARIO,
+    error_floor_result,
     extract_code_with_mode,
     score_sample,
     validate_code,
@@ -116,10 +117,9 @@ def run_n_turn_rollout(
     final_mode = "invalid"
     final_raw = ""
 
-    # The single scenario the calibration env should target. Post-PR #49
-    # tasks are single-scenario, so this picks up the matching (seed, κ)
-    # automatically. The byte-identical-env invariant from issue #47
-    # carries over to eval here.
+    # The single scenario the probe-run env is built from (same hidden
+    # parameters as the final run, probe batch). Tasks are single-scenario,
+    # so this matches what the trainer's `execute_turn` resolves.
     scenario = (task.get("scenarios") or [{}])[0]
 
     for turn_idx in range(1, n_turns + 1):
@@ -319,18 +319,9 @@ def main():
                 # metric tracks the same scoring convention training does.
                 n_scenarios = max(len(task.get("scenarios", [])), 1)
                 reward = ERROR_PENALTY_PER_SCENARIO * n_scenarios
-                scenarios = task.get("scenarios", [])
-                score_result = {
-                    "reward_total": reward,
-                    "reward_per_scenario": {
-                        s["scenario_id"]: ERROR_PENALTY_PER_SCENARIO
-                        for s in scenarios
-                    },
-                    "settled_per_scenario": {s["scenario_id"]: False for s in scenarios},
-                    "n_scenarios_settled": 0,
-                    "ran_successfully": False,
-                    "errors": [sample.get("error") or "no valid final policy"],
-                }
+                score_result = error_floor_result(
+                    task, [sample.get("error") or "no valid final policy"],
+                )
 
             all_scores.append({
                 "iter": iter_num,
@@ -381,15 +372,18 @@ def main():
         1 for s in all_scores if s.get("ran_successfully", False)
     )
     all_rewards = [s["reward_total"] for s in all_scores]
-    # Task-outcome success: sum of per-scenario settle bools across all
-    # (sample × scenario) pairs. The denominator is the total number of
-    # scenario attempts (samples × scenarios per task summed over tasks),
-    # not the number of samples — distinguishes from `n_success` which
-    # is rollout-level.
-    n_settled = sum(s.get("n_scenarios_settled", 0) for s in all_scores)
-    n_settle_attempts = sum(
-        len(s.get("settled_per_scenario", {})) for s in all_scores
-    )
+    # Task-outcome metrics over all (sample × scenario) pairs: the env's own
+    # success test, fast success (within FAST_FACTOR of the time-optimal
+    # batch) and normalised time. The denominator is the number of scenario
+    # attempts, not the number of samples — `n_success` above is
+    # rollout-level ("the code ran").
+    n_task_success = sum(s.get("n_scenarios_success", 0) for s in all_scores)
+    n_fast = sum(s.get("n_scenarios_fast", 0) for s in all_scores)
+    norm_times = [
+        v for s in all_scores for v in s.get("norm_time_per_scenario", {}).values()
+    ]
+    n_attempts = len(norm_times)
+    mean_norm_time = sum(norm_times) / n_attempts if n_attempts else 0.0
     from src.progress import append_eval_progress
     append_eval_progress(
         iter_num=iter_num,
@@ -398,13 +392,17 @@ def main():
         n_success=n_success,
         mean_reward=sum(all_rewards) / len(all_rewards) if all_rewards else 0.0,
         mean_best_reward=summary["mean_best_reward"],
-        n_settled=n_settled,
-        n_settle_attempts=n_settle_attempts,
+        n_task_success=n_task_success,
+        n_fast=n_fast,
+        n_attempts=n_attempts,
+        mean_norm_time=mean_norm_time,
         run_name=args.run_name,
     )
     logger.info(
-        f"Eval summary: settle rate = {n_settled}/{n_settle_attempts} "
-        f"({100 * n_settled / max(n_settle_attempts, 1):.1f}%) "
+        f"Eval summary: task success = {n_task_success}/{n_attempts} "
+        f"({100 * n_task_success / max(n_attempts, 1):.1f}%) "
+        f"| fast = {n_fast}/{n_attempts} ({100 * n_fast / max(n_attempts, 1):.1f}%) "
+        f"| mean normalised time = {mean_norm_time:.3f} "
         f"| ran-without-crash = {n_success}/{len(all_scores)} "
         f"({100 * n_success / max(len(all_scores), 1):.1f}%)"
     )

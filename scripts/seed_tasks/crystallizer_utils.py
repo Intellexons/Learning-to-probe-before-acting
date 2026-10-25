@@ -18,8 +18,11 @@ def run_episode(
     config: Optional[EnvConfig] = None,
     return_trace: bool = False,
 ) -> Dict:
+    # Mirror the runner: construct, then reset() once before the first step.
+    # reset() without a seed continues the seeded RNG stream, so this is the
+    # batch the runner's policy template runs on (not the constructor's).
     env = CrystallizerEnv(seed=seed, hidden=hidden, config=config)
-    state = env.observe()
+    state, _ = env.reset()
     total_reward = 0.0
     trace: List[Dict] = []
     for _ in range(env.config.max_steps):

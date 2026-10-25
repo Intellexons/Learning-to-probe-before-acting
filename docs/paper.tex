@@ -39,11 +39,11 @@ Modern outcome-reward RL for LLMs samples a completion, scores it, and broadcast
 
 We study this in code-policy generation. The agent is given an environment interface, interacts for two chat turns, and emits a Python \texttt{policy(state)} function. Only this final policy is executed and scored; the deployed object is a program, not an LLM queried online. The first turn is free: scratchpad arithmetic, environment probes, draft policies. Useful first-turn behavior receives credit only through its effect on the second turn. The setting borrows the executable-artifact framing of FunSearch and AlphaEvolve and the broader motivation of AI-Scientist-style discovery loops~\cite{romera-paredes2024funsearch,novikov2025alphaevolve,lu2024aiscientist}, but isolates the credit-assignment problem inside one prompt rather than building a full discovery system.
 
-The concrete instance is probe-and-adapt control. The environment hides an actuator parameter from the policy state. A first-turn program can command a short pulse, observe the response, and infer the parameter; a second-turn policy can rescale its controller accordingly. If the final policy succeeds, a flat reward cannot say whether the probe was informative or whether the second-turn code happened to work without it.
+The concrete instance is probe-and-adapt control of a seeded batch crystallizer. The policy sets the cooling rate; the fastest safe recipe rides just below a hidden metastable limit, and crossing the limit ruins the batch. The limit leaves no trace in the readings until it is crossed, so a first-turn program can find it only by crossing it on a throwaway batch; a second-turn policy can then ride just below it. If the final policy succeeds, a flat reward cannot say whether the probe was informative or whether the second-turn code happened to work without it.
 
 We propose a critic-free Monte Carlo estimator for this situation. For each prompt the model samples a small tree: several first-turn variants, and several second-turn continuations below each variant. The mean reward over the whole tree estimates the prompt's root value; the mean below one variant estimates that prefix's value. Their difference advantages the first-turn tokens; the gap between a leaf reward and its prefix value advantages the second-turn tokens. The estimator pairs with a per-turn loss decomposition for token-summed clipped surrogates: because the loss is additive over disjoint token sets when all pieces share a global normalizer, one forward/backward per turn recovers the exact full-trajectory gradient at substantially reduced peak activation memory.
 
-We instantiate the method on a custom control task in which a first-turn probe can reveal a hidden actuator parameter that the final policy needs. Experiments are pending.
+We instantiate the method on a custom control task in which a first-turn probe can reveal a hidden safety limit that the final policy needs. Experiments are pending.
 
 The contributions are:
 \begin{enumerate}
@@ -368,10 +368,9 @@ no theoretical cost (\S\ref{sec:limitations}).
 
 \section{Experimental setup}
 
-\paragraph{Environment.} We use a custom slosh-tank control task rather than a standard benchmark whose solution may already be familiar to the base model. A cart carries liquid represented by a damped pendulum mode. The policy observes
-$\{t,x,v,\theta,\omega,g,\text{steps\_left}\}$ and outputs acceleration clipped to $[-1,1]$ m/s$^2$. Success requires reaching the goal while also settling velocity, slosh angle, and slosh velocity. In the V1 task, the only hidden parameter is actuator gain $\kappa\in\{0.65,0.80,1.00\}$; all other parameters are fixed. Full dynamics are in Appendix~\ref{app:slosh}.
+\paragraph{Environment.} We use a seeded batch cooling crystallizer rather than a standard benchmark whose solution may already be familiar to the base model. A saturated solution holding a known mass of seed crystals is cooled from $55$--$65\,^\circ$C to a target of $18$--$25\,^\circ$C. The policy observes $\{t,T,c,L,T_{\rm target},\text{steps\_left}\}$ (time, temperature, dissolved concentration, mean crystal size, target) and outputs the jacket rate as a fraction of its $1.5\,^\circ$C/min limit, clipped to $[-1,1]$, once per 20\,s step for at most 600 steps. Cooling creates supersaturation $\sigma=c/c^*(T)-1$; the seeds grow and consume it. Success requires reaching the target temperature with the solution equilibrated ($\sigma\le0.02$). If $\sigma$ ever exceeds the hidden metastable limit $\sigma_{\max}\sim U[0.08,0.25]$, a shower of new nuclei ruins the batch and the episode ends in failure. The reward is $-0.1$ per step, $+120$ on success and $-80$ on failure. Full dynamics are in Appendix~\ref{app:crystallizer}.
 
-\paragraph{Why it tests turn-level credit.} A first-turn probe can estimate $\kappa$ by commanding a short pulse and measuring $\Delta v/(a_{\rm cmd}\Delta t)$. The final policy can then rescale its controller. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a $\kappa$-aware oracle is large enough to carry the study is settled with hand-written controllers before any model is run.
+\paragraph{Why it tests turn-level credit.} The time-optimal recipe rides just below $\sigma_{\max}$, but $\sigma_{\max}$ enters the dynamics only through the shower test: the readings of a batch that never showers are identical for every value of the limit. A final policy therefore cannot learn the limit in-episode, and its best blind option is to ride at the lowest limit in the range, which costs two to three times the optimal batch time at the top of the range. A first-turn probe run, which has the same environment class, the same actions and readings and the same hidden limit on a different batch, can find the limit the only way physics allows: cool at the jacket limit until the batch showers and keep the last safe supersaturation. One batch brackets the limit to about $0.01$; three batches to $2\times10^{-4}$. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a limit-aware oracle is large enough to carry the study was settled with hand-written controllers before any model was run (Stage~0 in \texttt{docs/findings.tex}): the best blind controller reaches $7.5\%$ fast success over the range against $100\%$ for the informed one, and the hand-written probe run plus final run reaches $100\%$ fast success through the training runner (Stage~0b).
 
 \paragraph{Model and training.} We train LoRA rank $r=16$ on attention projections of \texttt{Qwen3-4B-Instruct-2507}; base weights are frozen, bf16 is used, and gradient checkpointing is enabled. Unless stated otherwise, $G_1=G_2=4$ and each turn is capped at 400 tokens. The loss is the token-summed clipped surrogate \eqref{eq:loss} with $\epsilon_{\rm lo}=0.2$, asymmetric upper clipping, $\beta=0$, no critic, no GAE, and no context truncation across turns.
 
@@ -409,14 +408,19 @@ interface.}
 \label{tab:ablation}
 \end{table}
 
-\paragraph{Primary metric.} Held-out four-condition success rate on
-a stress distribution (more extreme actuator-gain values than train,
-i.e.\ $\kappa$ further from $1$) at the best checkpoint, reported as
-median and IQR over $\geq 3$ seeds per arm, plotted against gradient
-steps and against wall-clock. Statistical
-test: paired Wilcoxon over per-seed best-checkpoint goal rates;
-report effect size, not just $p$. The minimum convincing comparison
-is F $>$ D at matched leaves.
+\paragraph{Primary metric.} Held-out \emph{fast-success} rate: the
+fraction of (sample, batch) pairs in which the final run succeeds within
+$1.25\times$ the time-optimal batch time for that batch and limit, on 12
+held-out batches whose limits are drawn from the training range. Raw
+success is not informative here, since a blind cautious policy succeeds on
+every batch by being slow; we also report normalised time (oracle steps
+over own steps, zero on failure) and mean reward. A stress set with limits
+outside the training range, where a fixed cautious policy is furthest from
+optimal, is planned. Results are taken at the best checkpoint and reported
+as median and IQR over $\geq 3$ seeds per arm, plotted against gradient
+steps and against wall-clock. Statistical test: paired Wilcoxon over
+per-seed best-checkpoint fast-success rates; report effect size, not just
+$p$. The minimum convincing comparison is F $>$ D at matched leaves.
 
 \paragraph{Diagnostic checks.}
 We track two mechanism checks. First, when turn~1 emits a \texttt{policy}, its reward should improve faster under F than under flat multi-turn training. Second, prompts with high iteration-0 signal ratio $\widehat\sigma(\widehat V_1^{(i)})/\overline{\widehat\sigma(R_{i,\cdot})}$ should show the largest F--D gain; otherwise the proposed credit-assignment explanation is weak.
@@ -472,40 +476,39 @@ Table~\ref{tab:memory} accounts for the LM-head logits tensor as it appears in t
 
 The per-turn loss decomposition addresses peak \emph{gradient} memory but does not shrink the forward logits tensor. The remedy is row-wise chunking of the per-turn pass: split the $B$ trajectories into sub-batches of size $b\!\ll\!B$, forward each sub-batch separately, backpropagate, and accumulate. Because the token-summed loss \eqref{eq:loss} is additive over disjoint row subsets sharing the same global normalizer $N_{\rm tok}$, the chunked gradient is bit-equivalent to the single-pass gradient. The forward-time logits tensor shrinks linearly from $(B, T_n, |V|)$ to $(b, T_n, |V|)$, and the divide-step peak scales correspondingly. At $b=4$, $B=16$, $T=400$ the divide-step peak drops from $\approx 7.8$\,GiB to $\approx 2$\,GiB; the cost is $B/b$ additional LM-head kernel launches per turn (single-digit-percent wall-clock at our generation-dominated sizing). We use $b=4$ on 24\,GB L4 and run un-chunked on $\geq 40$\,GB cards.
 
-\section{Slosh-tank environment}
-\label{app:slosh}
+\section{Seeded cooling crystallizer}
+\label{app:crystallizer}
 
-A one-dimensional cart carries liquid represented by one damped pendulum mode. The policy commands horizontal acceleration clipped to $[-1,1]$ m/s$^2$ and observes $\{t,x,v,\theta,\omega,g,\text{steps\_left}\}$. Hidden parameters can include actuator gain $\kappa$, delay $D$, deadband $b$, slosh length $L$, and damping $c$; V1 varies only $\kappa$.
-
-The semi-implicit dynamics use $\Delta t=0.06$ s:
+One kilogram of solvent holds dissolved solute at concentration $c$ (kg per kg solvent) and $N$ monodisperse seed crystals of size $L$. The solubility is $c^*(T)=0.20+0.006\,T+0.0001\,T^2$ with $T$ in $^\circ$C and the relative supersaturation is $\sigma=c/c^*(T)-1$. A batch starts saturated at $T_0\sim U[55,65]\,^\circ$C with a seed mass equal to $3$--$6\%$ of the theoretical yield down to the target $T_{\rm target}\sim U[18,25]\,^\circ$C. In each 20\,s step the jacket moves the temperature by the commanded fraction of $1.5\,^\circ$C/min, the shower test is evaluated at the new temperature with the current concentration, and the crystals then grow for 20\,s:
 \begin{align}
-a_{\rm true} &= \kappa\,\mathrm{deadband}(a_{{\rm cmd}[t-D]}), \notag\\
-v &\mathrel{+}= \Delta t\,a_{\rm true}, \qquad x \mathrel{+}= \Delta t\,v, \\
-\dot\omega &= -\frac{g}{L}\theta-c\omega-a_{\rm true}, \qquad \dot\theta=\omega. \notag
+\frac{dL}{dt} &= k_g\,\sigma^{g}, \qquad k_g=1.5\times10^{-6}\,\text{m/s},\quad g=1.5, \notag\\
+\frac{dc}{dt} &= -\rho N\,3L^2\,\frac{dL}{dt}, \qquad \rho=2000\,\text{kg/m}^3,
 \end{align}
-Success requires $|x-g|<\epsilon_x$, $|v|<\epsilon_v$, $|\theta|<\epsilon_\theta$, and $|\omega|<\epsilon_\omega$ simultaneously, preventing controllers that reach the goal without settling the liquid.
+with dissolution by the same law when $\sigma<0$ and the mass transfer capped so that one step cannot cross saturation. Success requires $T\le T_{\rm target}+0.25\,^\circ$C and $\sigma\le0.02$. The episode ends in failure if $\sigma>\sigma_{\max}$ at any shower test (a shower of new nuclei) or if the seeds dissolve below $30\%$ of their initial size, and by timeout after 600 steps. The reward is $-0.1$ per step, $+120$ on success and $-80$ on failure.
 
-\paragraph{Why actuator gain is the V1 unknown.}
-With goal distance $D_g\approx1.8$ m and $a_{\max}=1$ m/s$^2$, the minimum bang-bang transit time is $T_{\rm tr}=2\sqrt{D_g/a_{\max}}=2.68$ s. The episode time gives slack $\tau=T_{\rm ep}/T_{\rm tr}=2.35$. Thus low $\kappa$ does not mainly cause transit failure; it slows near-goal settling because all corrective actions are attenuated. This creates a smooth blind-vs-oracle gap while keeping the probe interpretable: for a short pulse near $\theta\approx\omega\approx0$, $\kappa\approx\Delta v/(a_{\rm cmd}\Delta t)$.
+\paragraph{Why the metastable limit is the hidden quantity.}
+$\sigma_{\max}$ appears nowhere except in the shower test, so two batches with different limits produce identical readings under identical actions until one of them showers; no in-episode estimator exists. The time-optimal controller tracks $\sigma=\sigma_{\max}$ with a one-step lookahead on the solubility curve and accelerates as the crystals grow (classical programmed cooling). A controller that does not know the limit must ride at the bottom of the range ($\sigma\approx0.077$), which succeeds on every batch but takes $2$--$3$ times longer at the top of the range. The probe run finds the limit by crossing it: cooling at the jacket limit until the shower brackets $\sigma_{\max}$ to the supersaturation gained in one step, about $0.01$; two further batches that creep up from the last safe level tighten this to $2\times10^{-4}$. A slow single-batch creep is worse, not better: at high limits the growing crystals consume supersaturation faster than the creep adds it, and the batch equilibrates without ever reaching the limit.
 
-\paragraph{Confirmed V1 configuration.}
+\paragraph{Configuration.}
 \begin{center}
 \small
 \begin{tabular}{@{}llll@{}}
 \toprule
-Parameter & Symbol & V1 value & Status \\
+Parameter & Symbol & Value & Status \\
 \midrule
-Episode steps & $N_{\rm steps}$ & 105 ($\tau=2.35$) & fixed \\
-Actuator gain & $\kappa$ & $\{0.65,0.80,1.00\}$ & varied \\
-Action delay & $D$ & 0 & fixed \\
-Deadband & $b$ & 0 & fixed \\
-Slosh length & $L$ & 0.70 m & fixed \\
-Damping & $c$ & 0.06 s$^{-1}$ & fixed \\
+Step length, horizon & $\Delta t$, $N_{\rm steps}$ & 20\,s, 600 steps & fixed \\
+Metastable limit & $\sigma_{\max}$ & $U[0.08,0.25]$, one draw per task & hidden \\
+Jacket rate limit & $\dot T_{\max}$ & $1.5\,^\circ$C/min & fixed \\
+Growth constant, order & $k_g$, $g$ & $1.5\times10^{-6}$\,m/s, $1.5$ & fixed \\
+Seed size, loading & $L_0$ & $100\,\mu$m, $3$--$6\%$ of yield & per batch \\
+Start, target temperature & $T_0$, $T_{\rm target}$ & $U[55,65]$, $U[18,25]\,^\circ$C & per batch \\
+Success tolerances & $\epsilon_T$, $\epsilon_\sigma$ & $0.25\,^\circ$C, $0.02$ & fixed \\
+Reward & & $-0.1$ per step, $+120$, $-80$ & fixed \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The two-turn protocol is useful only if a probe-aware controller can close some of this gap. The blind controller sets the no-probe baseline, the oracle sets the upper bound, and a hand-written pulse-probe controller is the achievable probe-aware reference.
+Each training task is one batch (its seed) with its own hidden limit; the probe run uses the same limit on a different batch, and the probe-run environment exposes every method and reading of the final-run environment but not the hidden parameters. The time-optimal number of steps for the scoring batch is stored with the task and defines the fast-success and normalised-time metrics. The two-turn protocol is useful only if a probe-aware controller can close the gap: the blind cautious controller sets the no-probe reference, the oracle sets the upper bound, and the hand-written probe run plus final run is the achievable probe-aware reference.
 
 \begin{thebibliography}{99}
 \bibitem{shao2024deepseekmath} Z.~Shao et~al.

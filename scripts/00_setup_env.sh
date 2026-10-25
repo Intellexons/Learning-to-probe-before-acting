@@ -35,8 +35,8 @@ echo "=== 3/3 Creating directory structure ==="
 mkdir -p data/rollouts
 mkdir -p models/hf_base models/lora
 
-# No task seeding: slosh is the only environment, and its configs read
-# tasks straight from scripts/seed_tasks/slosh_*.jsonl.
+# No task seeding: the crystallizer is the only environment, and its configs read
+# tasks straight from scripts/seed_tasks/crystallizer_*.jsonl.
 
 echo ""
-echo "Setup complete. Run the loop with: uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_slosh.yaml"
+echo "Setup complete. Run the loop with: uv run python scripts/09_run_loop.py --config configs/loop_grpo_branched_crystallizer.yaml"

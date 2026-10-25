@@ -83,8 +83,8 @@ def _final_turn_rejected_text(mode: str) -> str:
     )
 
 
-# When turn 1 emits no recognized mode directive, eval surfaces this exact
-# string (`scripts/eval_frozen_baseline.py:195`); training mirrors it.
+# When turn 1 emits no recognized mode directive, eval and training surface
+# this exact string.
 _INTERMEDIATE_INVALID_TEXT = "[turn 1 produced no recognized code block]"
 
 
@@ -156,12 +156,13 @@ def execute_turn(
         _, text = _score_policy(code, task, timeout_policy, max_steps)
         return ToolResult(mode=MODE_POLICY, reward=None, text=text)
     if mode == MODE_MAIN:
+        # The probe run uses the task's (single) scenario: same hidden
+        # parameters as the final run, on the scenario's probe batch.
         cal = scenario or (task.get("scenarios") or [{}])[0]
         out = score_main_turn(
             code,
             env_code=task.get("env_code", ""),
-            kappa=cal.get("kappa", 1.0),
-            seed=cal.get("seed", 0),
+            scenario=cal,
             env_class=task.get("env_class", DEFAULT_ENV_CLASS),
             timeout=timeout_main,
         )
