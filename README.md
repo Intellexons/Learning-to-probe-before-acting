@@ -126,7 +126,7 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
 | `eval_frozen_baseline.py` | Stages 1 and 2: frozen model, one turn or probe run + final run, next to the blind and oracle references |
-| `rung0_gate_crystal.py` | Stage 0: blind vs informed hand-written controllers on the crystallizer (the env-validity gate) |
+| `stage0_gate_crystal.py` | Stage 0: blind vs informed hand-written controllers on the crystallizer (the env-validity gate) |
 | `stage0b_two_turn.py` | Stage 0b: the hand-written probe run and final run through the real execution path |
 | `seed_tasks/build_crystallizer_tasks.py` | Regenerates the task files from the env source |
 
@@ -161,7 +161,7 @@ docs/
   paper.tex                       # method write-up
   findings.tex                    # dated experiment log
   methodology.tex
-  rung0/, stage0b/                # raw logs behind the Stage 0 and Stage 0b entries
+  stage0/, stage0b/               # raw logs behind the Stage 0 and Stage 0b entries
 models/
   hf_base/iter_000/               # base weights downloaded by 00_setup_env.sh
   lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
@@ -173,7 +173,7 @@ scripts/
   09_run_loop.py                  # orchestrator
   01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
   eval_frozen_baseline.py         # Stages 1-2: frozen model, one or two turns
-  rung0_gate_crystal.py           # Stage 0: env-validity gate (blind vs informed controllers)
+  stage0_gate_crystal.py           # Stage 0: env-validity gate (blind vs informed controllers)
   stage0b_two_turn.py             # Stage 0b: hand-written two-turn solution through the runner
   gcp_*.sh                        # VM lifecycle + train/eval wrappers
   seed_tasks/

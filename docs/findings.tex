@@ -31,7 +31,11 @@
 A dated log of experiments run on the LoRA4VR multi-turn RL loop. Each entry
 records what was tried, what happened, and how to reproduce it. Entries are
 added as experiments complete. Reproduction references a git commit; the code
-at that commit is the exact code that produced the result.
+at that commit is the exact code that produced the result. The paths
+\texttt{docs/rung0/} and \texttt{scripts/rung0\_gate\_crystal.py} named in
+entries up to 2026-10-25 are now \texttt{docs/stage0/} and
+\texttt{scripts/stage0\_gate\_crystal.py}; a level of the experiment plan is
+called a stage.
 
 \noindent\textbf{System.} \texttt{Qwen3-4B-Instruct-2507} with a LoRA adapter
 trained by branched multi-turn GRPO (\texttt{src/branched\_trainer.py}). The
