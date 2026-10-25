@@ -211,3 +211,24 @@ def test_dpo_config_missing_dpo_pairs_section() -> None:
     with pytest.raises(ValidationError) as exc:
         validate_config(cfg)
     assert "dpo_pairs" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Optional `prompt` section
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_example_section_is_optional_and_validated() -> None:
+    cfg = yaml.safe_load((CONFIGS_DIR / "loop_grpo_branched_crystallizer.yaml").read_text())
+    # The shipped default is the "format" example (Stage 2 ablation, 2026-10-26).
+    assert validate_config(cfg).prompt.example == "format"
+    del cfg["prompt"]
+    assert validate_config(cfg).prompt is None  # omitted section -> renderers fall back to "full"
+    cfg["prompt"] = {"example": "full"}
+    assert validate_config(cfg).prompt.example == "full"
+    cfg["prompt"] = {"example": "bogus"}
+    with pytest.raises(ValidationError):
+        validate_config(cfg)
+    cfg["prompt"] = {"exmaple": "none"}  # misspelt key must not pass silently
+    with pytest.raises(ValidationError):
+        validate_config(cfg)

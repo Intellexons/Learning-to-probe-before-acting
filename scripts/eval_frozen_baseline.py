@@ -41,7 +41,7 @@ from src.hf_generator import (  # noqa: E402
     load_model_for_generation,
 )
 from src.multi_turn import execute_turn  # noqa: E402
-from src.prompts import load_template, render_prompt  # noqa: E402
+from src.prompts import EXAMPLE_STYLES, load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     DEFAULT_MAX_STEPS,
     FAST_FACTOR,
@@ -88,9 +88,10 @@ def reference_rows(task: dict) -> dict:
 
 
 def one_turn_rollout(model, tokenizer, template: str, task: dict, *,
-                     temperature: float, top_p: float, max_tokens: int) -> dict:
+                     temperature: float, top_p: float, max_tokens: int,
+                     example: str = "full") -> dict:
     """Stage 1: a single turn, `policy(state)` straight from the task prompt."""
-    prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
+    prompt = render_prompt(template, task, turn_idx=1, total_turns=1, example=example)
     sample = generate_code(model, tokenizer, prompt, temperature=temperature,
                            top_p=top_p, max_tokens=max_tokens)
     raw = sample.get("raw_response", "")
@@ -107,14 +108,14 @@ def one_turn_rollout(model, tokenizer, template: str, task: dict, *,
 
 def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
                      temperature: float, top_p: float, max_tokens: int,
-                     timeout: int, max_steps: int) -> dict:
+                     timeout: int, max_steps: int, example: str = "full") -> dict:
     """Stage 2: probe run (turn 1, unscored), then the final run's policy (turn 2).
 
     Mirrors `08_eval.run_n_turn_rollout` for n_turns=2 and keeps the turn-1
     details: mode, code and the tool output the model read before turn 2.
     """
     scenario = task["scenarios"][0]
-    prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
+    prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2, example=example)
     t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature,
                        top_p=top_p, max_tokens=max_tokens)
     t1_raw = t1.get("raw_response", "")
@@ -128,7 +129,7 @@ def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
     t1_mode, t1_code = extract_code_with_mode(t1_raw)
     tool = execute_turn(t1_raw, task, is_last_turn=False, scenario=scenario,
                         timeout_policy=timeout, max_steps=max_steps)
-    prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
+    prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2, example=example)
     transcript.append({"role": "user",
                        "content": f"{prompt_t2}\n\n[Tool output from turn 1]\n{tool.text}"})
     t2 = generate_code_from_messages(model, tokenizer, transcript, temperature=temperature,
@@ -173,12 +174,15 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=600)
     parser.add_argument("--timeout", type=int, default=POLICY_DEFAULT_TIMEOUT)
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--example", default="full", choices=list(EXAMPLE_STYLES),
+                        help="what the prompt's multi-turn format example shows (see src/prompts.py)")
     parser.add_argument("--out-dir", default=None,
-                        help="default data/frozen/stage<turns>")
+                        help="default data/frozen/stage<turns>[_example-<style>]")
     args = parser.parse_args()
 
     stage = args.turns
-    out_dir = Path(args.out_dir or f"data/frozen/stage{stage}")
+    suffix = "" if args.example == "full" else f"_example-{args.example}"
+    out_dir = Path(args.out_dir or f"data/frozen/stage{stage}{suffix}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tasks = load_jsonl(args.task_file)
@@ -202,12 +206,12 @@ def main() -> None:
             if stage == 1:
                 roll = one_turn_rollout(model, tokenizer, template, task,
                                         temperature=args.temperature, top_p=args.top_p,
-                                        max_tokens=args.max_tokens)
+                                        max_tokens=args.max_tokens, example=args.example)
             else:
                 roll = two_turn_rollout(model, tokenizer, template, task,
                                         temperature=args.temperature, top_p=args.top_p,
                                         max_tokens=args.max_tokens, timeout=args.timeout,
-                                        max_steps=args.max_steps)
+                                        max_steps=args.max_steps, example=args.example)
             if roll["success"] and roll["code"]:
                 score = score_sample(roll["code"], task, timeout=args.timeout,
                                      max_steps=args.max_steps)
@@ -250,7 +254,7 @@ def main() -> None:
         per_task.append(summary)
 
     overall = {
-        "stage": stage, "turns": stage, "model": args.model_path,
+        "stage": stage, "turns": stage, "model": args.model_path, "example": args.example,
         "task_file": args.task_file, "n_tasks": len(tasks), "n_samples_per_task": args.n_samples,
         "generated_rate": _mean(t["generated_rate"] for t in per_task),
         "ran_rate": _mean(t["ran_rate"] for t in per_task),
@@ -278,7 +282,7 @@ def main() -> None:
         json.dump(overall, f, indent=2)
 
     # Table
-    print(f"\n=== Stage {stage}: frozen model, {stage} turn(s), "
+    print(f"\n=== Stage {stage}: frozen model, {stage} turn(s), prompt example '{args.example}', "
           f"{len(tasks)} tasks x {args.n_samples} samples ===")
     head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
             f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s}")

@@ -44,32 +44,54 @@ The final turn (turn {total_turns}) MUST start with `# MODE: policy`; a `main` f
 """
 
 
-def _build_multi_turn_example(turn_idx: int, total_turns: int) -> str:
+# What the format example shows for the probe run (turn 1):
+#   full    the original: reset the env and print the state, then a no-op policy.
+#           In Stage 2 (2026-10-25) the frozen model copied that turn-1 code in
+#           83 of 96 probe runs, so the example planted a probe that learns nothing.
+#   format  the same two blocks and mode directives, but the turn-1 body is a
+#           comment: nothing to copy.
+#   none    no example section; the protocol text alone describes the format.
+EXAMPLE_STYLES = ("full", "format", "none")
+
+
+def _build_multi_turn_example(turn_idx: int, total_turns: int, style: str = "full") -> str:
     """A minimal format-demonstration example for multi-turn prompts.
 
     Goals:
-      1. Show the model that `# MODE: main` lets it call `env.reset()` and
-         read the actual state dict, before committing to a policy.
-      2. Reinforce the (state, info) reset signature.
-      3. Avoid prescribing a control law (the policy body is `return 0.0`),
+      1. Show the fence-and-directive format of a `# MODE: main` turn and a
+         `# MODE: policy` turn.
+      2. Avoid prescribing a control law (the policy body is `return 0.0`),
          so GRPO is not anchored to a memorised fixed point.
+      3. With style "format" or "none", avoid prescribing a probe run either;
+         see EXAMPLE_STYLES.
 
     Rendered only on the FIRST turn — the chat history carries it forward
     on later turns, so re-emitting wastes tokens on every continuation.
     Empty for single-turn — the section only makes sense when `# MODE: main`
     is available.
     """
-    if total_turns <= 1 or turn_idx != 1:
+    if style not in EXAMPLE_STYLES:
+        raise ValueError(f"unknown example style {style!r}; expected one of {EXAMPLE_STYLES}")
+    if total_turns <= 1 or turn_idx != 1 or style == "none":
         return ""
+    if style == "full":
+        turn1_body = (
+            f"# `env` is pre-instantiated with the same hidden params as the turn-{total_turns} evaluation.\n"
+            "state, _ = env.reset()\n"
+            'print("state keys:", sorted(state.keys()))\n'
+            'print("initial state:", state)'
+        )
+    else:
+        turn1_body = (
+            f"# Your code. `env` is pre-instantiated with the same hidden params as the turn-{total_turns}\n"
+            "# evaluation; whatever you print is returned to you in the next turn."
+        )
     return f"""## Example (format demonstration; not a useful controller)
 
 Turn 1 — probe with `# MODE: main`:
 ```python
 # MODE: main
-# `env` is pre-instantiated with the same hidden params as the turn-{total_turns} evaluation.
-state, _ = env.reset()
-print("state keys:", sorted(state.keys()))
-print("initial state:", state)
+{turn1_body}
 ```
 
 [Tool output from turn 1]
@@ -148,13 +170,16 @@ def render_prompt(
     task: dict,
     turn_idx: int = 1,
     total_turns: int = 1,
+    example: str = "full",
 ) -> str:
     """Fill in template with task fields and (optionally) multi-turn protocol.
 
     Env source code is included only on the first turn — subsequent turns
     already have it in the chat history context.
     Single-turn callers can omit `turn_idx` / `total_turns` and the rendered
-    output matches the pre-multi-turn prompt exactly.
+    output matches the pre-multi-turn prompt exactly. `example` picks the
+    multi-turn format example (see EXAMPLE_STYLES); it is read from the
+    config's `prompt.example` by the trainer and eval scripts.
     """
     if turn_idx == 1:
         env_section = f"## Environment source\n\n```python\n{task['env_code']}\n```\n"
@@ -166,7 +191,7 @@ def render_prompt(
         action_spec=task["action_spec"],
         goal=task["goal"],
         multi_turn_protocol=_build_multi_turn_protocol(turn_idx, total_turns),
-        multi_turn_example=_build_multi_turn_example(turn_idx, total_turns),
+        multi_turn_example=_build_multi_turn_example(turn_idx, total_turns, example),
         requirements=_build_requirements(turn_idx, total_turns),
         response_format=_build_response_format(turn_idx, total_turns),
     )

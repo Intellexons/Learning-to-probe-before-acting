@@ -66,6 +66,7 @@ def run_n_turn_rollout(
     max_tokens: int,
     scoring_timeout: int,
     scoring_max_steps: int,
+    example: str = "full",
 ) -> dict:
     """Run an `n_turns`-turn rollout for one task; never short-circuit.
 
@@ -126,7 +127,8 @@ def run_n_turn_rollout(
         is_last = (turn_idx == n_turns)
 
         if turn_idx == 1:
-            prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=n_turns)
+            prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=n_turns,
+                                      example=example)
             transcript.append({"role": "user", "content": prompt_t1})
             sample = generate_code(
                 model, tokenizer, prompt_t1,
@@ -183,7 +185,7 @@ def run_n_turn_rollout(
         # matching the convention used by eval_frozen_baseline.py:198-203
         # and BranchedGRPOTrainer post-PR-#50.
         next_prompt = render_prompt(
-            template, task, turn_idx=turn_idx + 1, total_turns=n_turns,
+            template, task, turn_idx=turn_idx + 1, total_turns=n_turns, example=example,
         )
         user_content = (
             f"{next_prompt}\n\n[Tool output from turn {turn_idx}]\n{tool_result.text}"
@@ -225,6 +227,7 @@ def main():
     score_cfg = cfg["scoring"]
     eval_cfg = cfg.get("eval", {}) or {}
     n_turns = int(eval_cfg.get("n_turns", 1))
+    prompt_example = (cfg.get("prompt") or {}).get("example", "full")
 
     # Load model with all adapters merged up to this iteration
     base_model_path = str(Path(cfg["paths"]["hf_base_dir"]) / "iter_000")
@@ -286,6 +289,7 @@ def main():
                     max_tokens=gen_cfg["max_tokens"],
                     scoring_timeout=score_cfg["timeout_seconds"],
                     scoring_max_steps=score_cfg["max_steps"],
+                    example=prompt_example,
                 ))
 
         best_reward = 0.0
