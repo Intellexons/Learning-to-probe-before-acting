@@ -596,7 +596,7 @@ workers. Raw output in \texttt{docs/stage0b/}, file
 of the range and uses the probe run as a ritual}
 % ============================================================
 
-\commit{HASH} $\cdot$ \textit{frozen \texttt{Qwen3-4B-Instruct-2507}, no
+\commit{ebba137} $\cdot$ \textit{frozen \texttt{Qwen3-4B-Instruct-2507}, no
 training; one A30 per stage on the HPI cluster, 18 and 21 minutes}
 
 \subsection*{Setup / motivation}
@@ -692,7 +692,7 @@ persist under training, where the mismatch is punished every time.
 
 \subsection*{Reproduce}
 
-\commit{HASH}: \texttt{jobs/hpi/stage1.sbatch} and \texttt{stage2.sbatch} on
+\commit{ebba137}: \texttt{jobs/hpi/stage1.sbatch} and \texttt{stage2.sbatch} on
 the HPI cluster (A30, jobs 2782187 and 2782188), which run
 \texttt{scripts/eval\_frozen\_baseline.py} with 8 samples per task. Raw
 output in \texttt{docs/stage1/} and \texttt{docs/stage2/}: the job log, the
