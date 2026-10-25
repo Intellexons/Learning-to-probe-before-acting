@@ -403,6 +403,12 @@ from src.progress import print_progress_table
 print_progress_table(run_name="my_experiment")
 ```
 
+## Stale branches
+
+Branches named `stale/...` predate the clean slate of 2026-10-15 and the
+switch to the crystallizer. They are kept for reference only; nothing on
+`main` depends on them, and their pull requests are closed.
+
 ## References
 
 - Paper: `docs/paper.tex`
