@@ -35,10 +35,13 @@ at that commit is the exact code that produced the result.
 
 \noindent\textbf{System.} \texttt{Qwen3-4B-Instruct-2507} with a LoRA adapter
 trained by branched multi-turn GRPO (\texttt{src/branched\_trainer.py}). The
-model writes \texttt{policy(state) -> action} Python for the slosh-tank
-environment (\texttt{scripts/seed\_tasks/slosh\_tank\_env.py}); the policy is
-scored in a sandboxed subprocess. Method and experimental design:
-\texttt{docs/paper.tex}.
+model writes \texttt{policy(state) -> action} Python for a seeded cooling
+crystallizer with a hidden metastable limit
+(\texttt{scripts/seed\_tasks/crystallizer\_env.py}); the final run is scored
+in a sandboxed subprocess, after an optional unscored probe run on the same
+environment. The two Stage~0 entries dated 2026-10-24 concern the earlier
+slosh-tank environment, which was dropped that day. Method and experimental
+design: \texttt{docs/paper.tex}.
 
 \bigskip
 \hrule
