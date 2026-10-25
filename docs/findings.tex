@@ -62,8 +62,8 @@ Stage & What it asks & Status & Entry \\
 \midrule
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed & 2026-10-24, crystallizer \\
 0b & Does the hand-written probe run + final run survive the real runner? & passed & 2026-10-25 \\
-1  & Frozen model, one turn, no probe run (arm A) & pending & \\
-2  & Frozen model with a probe run (arm B) & pending & \\
+1  & Frozen model, one turn, no probe run (arm A) & done & 2026-10-25, Stages 1 and 2 \\
+2  & Frozen model with a probe run (arm B) & done & 2026-10-25, Stages 1 and 2 \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -586,5 +586,116 @@ as well, where the slowest safe batch no longer fits the 600-step horizon.
 workers. Raw output in \texttt{docs/stage0b/}, file
 \texttt{two\_turn\_runner\_2026-10-25.log}.
 \end{sloppypar}
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-10-25 \quad Stages 1 and 2: the frozen model gambles at the top
+of the range and uses the probe run as a ritual}
+% ============================================================
+
+\commit{ebba137} $\cdot$ \textit{frozen \texttt{Qwen3-4B-Instruct-2507}, no
+training; one A30 per stage on the HPI cluster, 18 and 21 minutes}
+
+\subsection*{Setup / motivation}
+
+Stage~1 asks whether the frozen base model can write a working cooling policy
+from the prompt alone and how fast it is without a probe run; Stage~2 asks
+whether it already writes a useful probe run and uses its output. Both ran
+with \texttt{scripts/eval\_frozen\_baseline.py} on the 12 held-out batches
+(hidden limits 0.095 to 0.247), 8 samples per batch at temperature 0.8, 600
+tokens per turn, scored exactly as the trainer scores: the final run on the
+scoring batch, success being the env's own test (at the target temperature,
+equilibrated, never showered), fast success within $1.25\times$ the oracle
+time. In Stage~2 the probe run saw the probe-run env (same limit, a different
+batch, the limit masked) and the final turn had to be a policy; the turn-1
+mode, code and tool output were kept per sample. The references on the same
+12 batches: the blind cautious controller (rides at supersaturation 0.077,
+safe for every limit in the range) and the oracle (tracks the true limit).
+
+\subsection*{Results}
+
+\begin{center}\small
+\begin{tabular}{lrrrrr}
+\toprule
+ & ran & success & fast & norm.\ time & reward \\
+\midrule
+Stage 1: frozen model, one turn            & 99.0\%  & 12.5\% & 1.0\% & 0.075 & $-61.2$ \\
+Stage 2: frozen model, probe run + final run & 100.0\% & 3.1\%  & 0.0\% & 0.013 & $-75.7$ \\
+blind cautious controller                   & --      & 100\%  & 0.0\% & 0.430 & $89.0$ \\
+oracle (knows the limit)                    & --      & 100\%  & 100\% & 1.000 & $106.8$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Outcomes of the 96 Stage~1 final runs: 79 ruined (the batch showered or the
+seeds dissolved), 11 successes that were slow, 1 fast success, 4 timeouts, 1
+sample without a valid policy. The ruined runs end after a median of 22 steps:
+the policy cools far too hard from the start. Of the 96 policies, 92 contain
+the constant $0.25$, the top of the range the prompt states for the hidden
+limit, and 68 command full cooling somewhere. Success appears only at limits
+above 0.14 and reaches 50\% on the batch with the highest limit (0.247); the
+12 successful runs average a normalised time of 0.60.
+
+In Stage~2 the model chose \texttt{\# MODE: main} in all 96 first turns, but
+83 of the 96 probe runs only reset the environment and print its initial
+state, the shape of the format example in the prompt; 9 step the environment
+a few times at full cooling, on an environment they construct themselves with
+a random limit rather than the one provided; 4 step gently. Only 12 tool
+outputs mention supersaturation, a limit or a shower at all, and none brackets
+the limit. The final policies then hard-code numbers read from the probe
+output (the probe batch's target temperature, for instance) in 93 of 96
+cases, and all 96 contain the constant $0.25$. Outcomes: 81 ruined, 12
+timeouts, 3 slow successes, no fast success. Blind fast success is 0\% on
+this set because its lowest limit is 0.095, above the level the cautious
+controller rides at.
+
+\subsection*{Interpretation}
+
+The frozen model is far below the blind reference, not between blind and
+oracle: it reads the stated range and gambles at its top, so the batch is
+ruined on almost every limit. The probe run does not help because the model
+treats it as a format to follow, not as an experiment to run: it copies the
+prompt's example (reset, print the state), and the few samples that do step
+the environment probe a copy with a limit of their own choosing. Reading the
+probe output then makes things worse, since numbers from the probe batch are
+pasted into a policy that runs on a different batch. The risk named in the
+2026-10-24 entry, that the frozen model already writes the one-batch probe,
+did not materialise: none of 96 found the limit. Two things are left to
+learn, in order, and the scale is large: caution first (the blind optimum is
+worth $+89$ against $-61$ now), then the probe ($+107$). The prompt's example
+is an attractor for the probe run as it was for the policy in the discarded
+runs; whether to change it is a design decision, not a result.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Decide the time weight (0.1 as shipped, or 0.3) before Stage~3. At 0.1
+  the gap between caution and the probe is 18 reward points; the gap between
+  the frozen model and caution is 150.
+\item Decide whether the prompt's format example should step the environment
+  rather than only print the initial state, knowing that an opinionated
+  example becomes an attractor under training.
+\item Stage~3: single-turn GRPO; the first thing it must learn is to stop
+  gambling at 0.25. Expected ceiling: the blind optimum.
+\item Stage~4 to 6 as planned.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether stating the range of the hidden limit in the prompt is right: it is
+what makes the cautious strategy derivable, and also what the frozen model
+anchors on. Whether the probe-batch numbers pasted into final policies will
+persist under training, where the mismatch is punished every time.
+
+\subsection*{Reproduce}
+
+\commit{ebba137}: \texttt{jobs/hpi/stage1.sbatch} and \texttt{stage2.sbatch} on
+the HPI cluster (A30, jobs 2782187 and 2782188), which run
+\texttt{scripts/eval\_frozen\_baseline.py} with 8 samples per task. Raw
+output in \texttt{docs/stage1/} and \texttt{docs/stage2/}: the job log, the
+summary, and the samples with code, probe output and outcome per sample.
 
 \end{document}
