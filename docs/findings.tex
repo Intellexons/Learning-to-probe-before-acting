@@ -63,7 +63,7 @@ Stage & What it asks & Status & Entry \\
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed & 2026-10-24, crystallizer \\
 0b & Does the hand-written probe run + final run survive the real runner? & passed & 2026-10-25 \\
 1  & Frozen model, one turn, no probe run (arm A) & done & 2026-10-25, Stages 1 and 2 \\
-2  & Frozen model with a probe run (arm B) & done & 2026-10-25, Stages 1 and 2 \\
+2  & Frozen model with a probe run (arm B) & done & 2026-10-25, Stages 1 and 2; 2026-10-26, example ablation \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -697,5 +697,135 @@ the HPI cluster (A30, jobs 2782187 and 2782188), which run
 \texttt{scripts/eval\_frozen\_baseline.py} with 8 samples per task. Raw
 output in \texttt{docs/stage1/} and \texttt{docs/stage2/}: the job log, the
 summary, and the samples with code, probe output and outcome per sample.
+
+% ============================================================
+\section*{2026-10-26 \quad Stage 2 example ablation: the example planted the
+ritual, and without one the model never probes}
+% ============================================================
+
+\commit{65bfcab} $\cdot$ \textit{frozen \texttt{Qwen3-4B-Instruct-2507}, no
+training; three A30 jobs on the HPI cluster, 20 to 30 minutes each}
+
+\subsection*{Setup / motivation}
+
+The Stage~2 entry of 2026-10-25 found that 83 of 96 probe runs only reset the
+environment and print its state, the shape of the format example in the
+prompt. This entry asks whether the example caused that, and what replaces
+it. The example became a config option (\texttt{prompt.example}) with three
+styles: \emph{full}, the original (reset the env, print the state, then a
+no-op policy); \emph{format}, the same two blocks and mode directives with a
+comment in place of the probe code, so there is nothing to copy; \emph{none},
+no example section, the protocol text alone. Everything else is Stage~2 as
+run before: 12 held-out batches, 8 samples each, temperature 0.8, 600 tokens
+per turn, the probe run on the probe-run env, the final turn a policy. The
+\emph{full} run is a replication of Stage~2 with fresh sampling.
+
+\subsection*{Results}
+
+\begin{center}\small
+\begin{tabular}{lrrr}
+\toprule
+out of 96 samples & full & format & none \\
+\midrule
+took the probe run                                   & 96 & 79 & 0 \\
+turn 1 rejected (no recognised block)                & 0  & 17 & 59 \\
+valid final policy                                   & 95 & 96 & 37 \\
+probe copies the example (reset and print, no step)  & 80 & 31 & 0 \\
+probe announces it will find the limit               & 19 & 61 & 0 \\
+probe steps an env in a loop and checks the end flag & 8  & 44 & 0 \\
+\quad on the given env                               & 5  & 0  & 0 \\
+\quad on a fresh env of its own                      & 3  & 44 & 0 \\
+probe constructs a fresh env                         & 5  & 55 & 0 \\
+\quad with a limit the model chose                   & 5  & 39 & 0 \\
+\quad and prints the limit it set                    & 1  & 20 & 0 \\
+probe heats while talking about cooling              & 1  & 5  & 0 \\
+probe failed at execution                            & 0  & 10 & 0 \\
+tool output shows a shower                           & 0  & 18 & 0 \\
+final policy keeps the constant 0.25                 & 94 & 92 & 37 \\
+final policy with another setpoint                   & 1  & 0  & 0 \\
+final policy pastes probe-batch numbers              & 91 & 22 & 0 \\
+success / fast success                               & 5 / 0 & 7 / 1 & 2 / 0 \\
+normalised time                                      & 0.025 & 0.040 & 0.013 \\
+mean reward                                          & $-73.8$ & $-69.7$ & $-150.2$ \\
+probe length, median lines                           & 9 & 24.5 & 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The 17 rejected first turns of \emph{format} are probe runs cut off by the
+600-token budget before the closing fence: the model writes long comment
+preambles about what it intends to do. The 10 probe runs that failed at
+execution all tried \texttt{import env}. The 59 rejected first turns of
+\emph{none} are correct policies written without the fence, the habit the
+single-turn prompt teaches; they were scored at the error floor. In
+\emph{format}, 39 of the 55 fresh environments were constructed with a limit
+the model picked itself (0.15 is typical), 20 print the limit they set, and
+the fresh env is bound to the name \texttt{env}, shadowing the one provided.
+The 18 showers in the tool output all happened on fresh environments.
+
+\subsection*{Interpretation}
+
+The example did plant the ritual: without probe code to copy, the share of
+reset-and-print probes fell from 80 to 31. It also does something else: it is
+the only reason the model takes the probe turn at all. With no example the
+model answered with a policy in all 96 first turns, although the protocol
+offered the probe run and the goal text says the limit is hidden. The model
+does not feel the need for an experiment; it runs one when shown one being
+run. Given room, it does try to measure the limit, and the experiments have
+the right shape (cool in a loop, watch for the end flag), but they run on the
+wrong object: a fresh crystallizer whose limit the model set or drew at
+random, which can only confirm a guess. The model does not know that a fresh
+env has a different limit from the one it will be scored on. And even where
+its probe showed a shower, no final policy took a number from the output;
+the setpoint stayed at 0.25. The two missing pieces are both about the given
+environment: that the probe must run on it, and that the number found there
+becomes the setpoint. Neither needs more cleverness; both can be said in the
+prompt without saying how to find the limit. The \emph{format} example is the
+default from this commit on: it keeps the format (96 of 96 valid final
+policies) and removes the copying. Two operational findings: \emph{format}
+probes are three times longer, and the branched trainer's 400-token turn
+budget would cut 45 of these 96; and the fence rule rejected 59 correct
+policies.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item A wording arm, same three-run protocol: say what the probe run is for
+  and what not to do (``\texttt{sigma\_max} is unknown to you; the probe run
+  is your only chance to learn it. Use the given \texttt{env}; a new
+  \texttt{CrystallizerEnv} draws a different random limit and tells you
+  nothing about this task''), and replace the requirements line ``run env
+  instances, compute gains'', which invites exactly the wrong experiment.
+  Measure probes on the given env, showers on the given env, and setpoints
+  taken from the output.
+\item Accept an unfenced answer whose first non-blank line is the mode
+  directive, in the parser \texttt{extract\_code\_with\_mode} of
+  \texttt{src/runner.py}, so training does not lose samples to a formality.
+\item Decide the per-turn token budget for training: raise
+  \texttt{max\_turn\_tokens} from 400 to the 600 used here, or let
+  truncation pressure shorten the probes.
+\item Then the time-weight decision and Stage~3.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether telling the model what the probe run is for changes the paper's
+claim: RL would then learn how to probe, not that it should. Whether the sign
+error (heating while meaning to cool) and the \texttt{import env} attempts
+persist under training. Whether the long comment preambles survive a tighter
+budget or the model learns to drop them.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{65bfcab}: \texttt{jobs/hpi/stage2\_example.sbatch} with
+\texttt{--export=ALL,EXAMPLE=<style>} on the HPI cluster (A30, jobs 2782452
+full, 2782453 format, 2782454 none), which runs
+\texttt{scripts/eval\_frozen\_baseline.py --turns 2 --example <style>}.
+Compact results in \texttt{docs/stage2/} with the suffix
+\texttt{example-<style>}: job log, summary, samples with probe code, tool
+output and outcome. \texttt{docs/reproducibility/65bfcab.py} computes every
+number in the table from those sample files.
+\end{sloppypar}
 
 \end{document}
