@@ -395,13 +395,13 @@ The experiments form a ladder of stages. Each stage asks one question and is a g
 \textbf{Question.} Can the base model write a working cooling policy from the prompt alone, and how fast is it without a probe run?
 \textbf{Protocol.} $N$ one-turn samples per held-out task, scored exactly as in training; fast success, normalised time and reward next to the blind and oracle references.
 \textbf{Decides.} The floor of the study. A rate near the blind reference shows the headroom a probe run can buy. A model that cannot write a running controller at all is a prompt problem to fix before anything else.
-\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+\textbf{Status.} Done on 2026-10-25 (12 held-out batches, 8 samples each, temperature 0.8). \textbf{Result.} The code runs in 99\% of samples, but the batch is ruined in 79 of 96: the model takes the top of the stated range as its target (the constant 0.25 appears in 92 of 96 policies) and cools too hard from the first step. Success 12.5\%, fast success 1\%, normalised time 0.075, mean reward $-61$, against $+89$ for the blind cautious controller and $+107$ for the oracle. The frozen model sits far below the blind reference, so the headroom is the whole scale: caution first, then the probe.
 
 \subsection{Stage 2: the frozen model with a probe run (arm B)}
 \textbf{Question.} Does the frozen model already write a useful probe run and use its output?
 \textbf{Protocol.} As Stage~1, with two turns under the training protocol: the final turn must be a policy, and an early policy does not end the rollout. The turn-1 mode and code are kept per sample, so the record shows which probe the model writes: none, a slow creep, or a fast one.
 \textbf{Decides.} If arm B is already near the informed ceiling, RL has nothing left to teach about probing and the environment must get harder before any training run (hide the growth constant too, or add a jacket lag). If arm B is near arm A, the gap between them is the training target.
-\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+\textbf{Status.} Done on 2026-10-25. \textbf{Result.} The model used the probe run in all 96 samples, but 83 probe runs only reset the environment and print its initial state, the shape of the prompt's format example; 9 step a few times at full cooling, on an environment they construct themselves with a random limit; none brackets the limit. The final policies paste numbers from the probe batch into code that runs on a different batch (93 of 96) and all contain the constant 0.25: success 3 of 96, no fast success, normalised time 0.013, mean reward $-76$, below arm A. The probe run is a ritual, not an experiment, and the risk that the frozen model already writes the one-batch probe did not materialise. The gap to the informed ceiling is the training target.
 
 \subsection{Stage 3: single-turn GRPO (arm C)}
 \textbf{Question.} Does RL fine-tuning help without a probe run?
