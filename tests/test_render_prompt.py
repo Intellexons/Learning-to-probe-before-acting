@@ -141,3 +141,48 @@ def test_multi_turn_example_only_on_first_turn():
     t2 = render_prompt(template, _toy_task(), turn_idx=2, total_turns=2)
     assert "## Example" in t1
     assert "## Example" not in t2
+
+
+# ---------------------------------------------------------------------------
+# Example styles (src.prompts.EXAMPLE_STYLES)
+# ---------------------------------------------------------------------------
+
+
+def _example_turn1_block(rendered: str) -> str:
+    """The turn-1 code block of the example section only (the protocol text
+    above it mentions env.reset() in prose, which is fine)."""
+    section = rendered.split("## Example", 1)[1]
+    return section.split("[Tool output from turn 1]", 1)[0]
+
+
+def test_example_style_default_is_full():
+    template = load_template(str(TEMPLATE_PATH))
+    a = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
+    b = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="full")
+    assert a == b
+    assert "state, _ = env.reset()" in _example_turn1_block(a)
+
+
+def test_example_style_format_keeps_the_fences_but_gives_nothing_to_copy():
+    template = load_template(str(TEMPLATE_PATH))
+    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="format")
+    assert "## Example" in rendered
+    block = _example_turn1_block(rendered)
+    assert "# MODE: main" in block
+    assert "env.reset()" not in block and "print(" not in block
+    # The policy half is unchanged: directive and the no-op body.
+    assert "# MODE: policy" in rendered and "return 0.0" in rendered
+
+
+def test_example_style_none_drops_the_section_but_not_the_protocol():
+    template = load_template(str(TEMPLATE_PATH))
+    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="none")
+    assert "## Example" not in rendered
+    assert "## Multi-Turn Protocol" in rendered
+    assert "# MODE: main" in rendered  # the protocol text still names both directives
+
+
+def test_unknown_example_style_raises():
+    template = load_template(str(TEMPLATE_PATH))
+    with pytest.raises(ValueError):
+        render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="bogus")
