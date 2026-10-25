@@ -370,11 +370,60 @@ no theoretical cost (\S\ref{sec:limitations}).
 
 \paragraph{Environment.} We use a seeded batch cooling crystallizer rather than a standard benchmark whose solution may already be familiar to the base model. A saturated solution holding a known mass of seed crystals is cooled from $55$--$65\,^\circ$C to a target of $18$--$25\,^\circ$C. The policy observes $\{t,T,c,L,T_{\rm target},\text{steps\_left}\}$ (time, temperature, dissolved concentration, mean crystal size, target) and outputs the jacket rate as a fraction of its $1.5\,^\circ$C/min limit, clipped to $[-1,1]$, once per 20\,s step for at most 600 steps. Cooling creates supersaturation $\sigma=c/c^*(T)-1$; the seeds grow and consume it. Success requires reaching the target temperature with the solution equilibrated ($\sigma\le0.02$). If $\sigma$ ever exceeds the hidden metastable limit $\sigma_{\max}\sim U[0.08,0.25]$, a shower of new nuclei ruins the batch and the episode ends in failure. The reward is $-0.1$ per step, $+120$ on success and $-80$ on failure. Full dynamics are in Appendix~\ref{app:crystallizer}.
 
-\paragraph{Why it tests turn-level credit.} The time-optimal recipe rides just below $\sigma_{\max}$, but $\sigma_{\max}$ enters the dynamics only through the shower test: the readings of a batch that never showers are identical for every value of the limit. A final policy therefore cannot learn the limit in-episode, and its best blind option is to ride at the lowest limit in the range, which costs two to three times the optimal batch time at the top of the range. A first-turn probe run, which has the same environment class, the same actions and readings and the same hidden limit on a different batch, can find the limit the only way physics allows: cool at the jacket limit until the batch showers and keep the last safe supersaturation. One batch brackets the limit to about $0.01$; three batches to $2\times10^{-4}$. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a limit-aware oracle is large enough to carry the study was settled with hand-written controllers before any model was run (Stage~0 in \texttt{docs/findings.tex}): the best blind controller reaches $7.5\%$ fast success over the range against $100\%$ for the informed one, and the hand-written probe run plus final run reaches $100\%$ fast success through the training runner (Stage~0b).
+\paragraph{Why it tests turn-level credit.} The time-optimal recipe rides just below $\sigma_{\max}$, but $\sigma_{\max}$ enters the dynamics only through the shower test: the readings of a batch that never showers are identical for every value of the limit. A final policy therefore cannot learn the limit in-episode, and its best blind option is to ride at the lowest limit in the range, which costs two to three times the optimal batch time at the top of the range. A first-turn probe run, which has the same environment class, the same actions and readings and the same hidden limit on a different batch, can find the limit the only way physics allows: cool at the jacket limit until the batch showers and keep the last safe supersaturation. One batch brackets the limit to about $0.01$; three batches to $2\times10^{-4}$. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a limit-aware oracle is large enough to carry the study was settled with hand-written controllers before any model was run (Stage~0, \S\ref{sec:plan}): the best blind controller reaches $7.5\%$ fast success over the range against $100\%$ for the informed one, and the hand-written probe run plus final run reaches $100\%$ fast success through the training runner (Stage~0b).
 
 \paragraph{Model and training.} We train LoRA rank $r=16$ on attention projections of \texttt{Qwen3-4B-Instruct-2507}; base weights are frozen, bf16 is used, and gradient checkpointing is enabled. Unless stated otherwise, $G_1=G_2=4$ and each turn is capped at 400 tokens. The loss is the token-summed clipped surrogate \eqref{eq:loss} with $\epsilon_{\rm lo}=0.2$, asymmetric upper clipping, $\beta=0$, no critic, no GAE, and no context truncation across turns.
 
 \paragraph{Diagnostics.} We log $\widehat V_0$, the between-prefix and within-prefix reward standard deviations, their ratio, per-turn advantage scales, error-floor rate, and generate calls per prompt. The between/within ratio is also used diagnostically: values above one indicate that first-turn choice dominates continuation noise, where per-turn credit should help most.
+
+\section{Experiment plan}
+\label{sec:plan}
+
+The experiments form a ladder of stages. Each stage asks one question and is a go-or-stop check for the next, so that no result is built on a step that failed. Stages 0 and 0b use hand-written controllers only; Stages 1 and 2 run the frozen base model; Stages 3 to 6 train, and correspond to arms C to F of Table~\ref{tab:ablation}. Throughout, \emph{fast success} means that the final run succeeds within $1.25\times$ the time-optimal batch time (\S\ref{sec:eval}), the \emph{blind} reference is the best hand-written controller that does not know the hidden limit, and the \emph{oracle} is the controller that does. Each subsection records the stage's question, what decides its outcome, and its status; results are filled in as stages complete, with the evidence in the dated log \texttt{docs/findings.tex}.
+
+\subsection{Stage 0: is the environment worth it?}
+\textbf{Question.} Does knowing the hidden limit buy anything that a controller without it cannot get from the final run's own readings?
+\textbf{Protocol.} A blind side (one hand-written controller for every limit in the range) and an informed side (one controller per limit) search the same controller families with the same optimizer budget on the same seeds, and are scored on fresh seeds. Three gates were fixed beforehand: the informed side reaches $\ge 90\%$ fast success at every limit (G1); it beats the blind side by $\ge 40$ percentage points of fast success over the range (G2); a hand-written probe run plus final run reaches $\ge 95\%$ fast success (G3).
+\textbf{Status.} Passed on 2026-10-24. The best blind controller rides at the lowest limit in the range and reaches $7.5\%$ fast success (normalised time $0.50$); the informed side reaches $100\%$ at every limit; the hand-written two-turn solution reaches $100\%$, recovering the limit to $2\times10^{-4}$. The same gate had failed for the earlier slosh-tank environment, which was dropped.
+
+\subsection{Stage 0b: the hand-written solution through the training runner}
+\textbf{Question.} Does the Stage~0 solution survive the real execution path: the sandbox subprocess, the probe-run environment with the limit masked, and a probe batch different from the scoring batch?
+\textbf{Protocol.} The Stage~0 probe source is pushed through the runner's turn executor, its printed bracket is pasted into the final-run template, and the final policy is scored as the trainer scores it, on the 36 task-file batches plus 200 fresh ones. Gate: fast success $\ge 95\%$.
+\textbf{Status.} Passed on 2026-10-25: $100\%$ fast success on 236 batches, no probe failures, probe error $2\times10^{-4}$, normalised time $0.97$--$0.99$.
+
+\subsection{Stage 1: the frozen model in one turn (arm A)}
+\textbf{Question.} Can the base model write a working cooling policy from the prompt alone, and how fast is it without a probe run?
+\textbf{Protocol.} $N$ one-turn samples per held-out task, scored exactly as in training; fast success, normalised time and reward next to the blind and oracle references.
+\textbf{Decides.} The floor of the study. A rate near the blind reference shows the headroom a probe run can buy. A model that cannot write a running controller at all is a prompt problem to fix before anything else.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+\subsection{Stage 2: the frozen model with a probe run (arm B)}
+\textbf{Question.} Does the frozen model already write a useful probe run and use its output?
+\textbf{Protocol.} As Stage~1, with two turns under the training protocol: the final turn must be a policy, and an early policy does not end the rollout. The turn-1 mode and code are kept per sample, so the record shows which probe the model writes: none, a slow creep, or a fast one.
+\textbf{Decides.} If arm B is already near the informed ceiling, RL has nothing left to teach about probing and the environment must get harder before any training run (hide the growth constant too, or add a jacket lag). If arm B is near arm A, the gap between them is the training target.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+\subsection{Stage 3: single-turn GRPO (arm C)}
+\textbf{Question.} Does RL fine-tuning help without a probe run?
+\textbf{Decides.} The ceiling is the blind optimum, so the stage checks the training plumbing and the reward rather than the thesis. It also shows whether the time weight tempts the model to gamble on low-limit batches; the weight ($0.1$ as shipped, or $0.3$) is fixed before this stage.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+\subsection{Stage 4: flat multi-turn training (arm D)}
+\textbf{Question.} Does multi-turn training with a trajectory-level advantage beat single-turn training?
+\textbf{Decides.} The baseline the headline claim is measured against.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+\subsection{Stage 5: branched rollouts with a flat advantage (arm E)}
+\textbf{Question.} Does the rollout tree alone help, independent of the per-turn credit?
+\textbf{Decides.} Separates the effect of more leaves per generate call from the effect of the per-turn baseline.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+\subsection{Stage 6: branched rollouts with per-turn baselines, ours (arm F)}
+\textbf{Question.} Does the per-turn baseline help?
+\textbf{Decides.} F above D at matched leaves is the minimum convincing result. F equal to E while both beat D means the gain comes from branching, not from credit. C to F not beating A and B means the protocol is better framed as prompting than as training.
+\textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
+
+Stages 3 to 6 share the protocol of \S\ref{sec:eval}: at least three seeds per arm, median and interquartile range at the best checkpoint, curves against gradient steps and against wall-clock, and a paired Wilcoxon test with effect size.
 
 \section{Evaluating the per-turn credit assignment}
 \label{sec:eval}

@@ -47,6 +47,31 @@ environment. The two Stage~0 entries dated 2026-10-24 concern the earlier
 slosh-tank environment, which was dropped that day. Method and experimental
 design: \texttt{docs/paper.tex}.
 
+
+\noindent\textbf{Experiment plan and status.} The plan is a ladder of stages;
+each stage is a go-or-stop check for the next, and the dated entries below
+hold the evidence. This table is kept current as stages complete; the entries
+themselves are never edited. The full plan with pass criteria is the section
+\emph{Experiment plan} of \texttt{docs/paper.tex}.
+
+\begin{center}\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}llll@{}}
+\toprule
+Stage & What it asks & Status & Entry \\
+\midrule
+0  & Is the environment worth it: does the hidden limit need a probe run? & passed & 2026-10-24, crystallizer \\
+0b & Does the hand-written probe run + final run survive the real runner? & passed & 2026-10-25 \\
+1  & Frozen model, one turn, no probe run (arm A) & pending & \\
+2  & Frozen model with a probe run (arm B) & pending & \\
+3  & Single-turn GRPO (arm C) & pending & \\
+4  & Flat multi-turn training, StarPO (arm D) & pending & \\
+5  & Branched rollouts, flat advantage (arm E) & pending & \\
+6  & Branched rollouts, per-turn baselines, ours (arm F) & pending & \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
 \bigskip
 \hrule
 \bigskip
