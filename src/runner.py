@@ -15,6 +15,17 @@ DANGEROUS_MODULES = {
     "http", "urllib", "ftplib", "smtplib", "ctypes", "signal",
     "multiprocessing", "threading", "importlib", "builtins",
     "pickle", "shelve", "marshal",
+    # introspection: the model's code must not reach the env object or the script source
+    "gc", "inspect", "dis", "weakref", "linecache", "tracemalloc", "faulthandler",
+    "code", "codeop", "pdb", "trace", "atexit",
+}
+
+# Builtins the model's code may not name: they are the ways round the probe-run
+# wrapper and the sandbox (reading attributes by string, reaching globals, running
+# source, reading files).
+_FORBIDDEN_NAMES = {
+    "getattr", "setattr", "delattr", "vars", "globals", "locals", "eval", "exec",
+    "compile", "__import__", "breakpoint", "open", "input",
 }
 
 # Per-scenario penalty for a sample that fails validation or errors at runtime.
@@ -22,18 +33,19 @@ DANGEROUS_MODULES = {
 # env, so GRPO's advantage ranks "broken code" strictly below "code that runs
 # and does badly." Otherwise errored samples score 0.0 (no reward accumulated)
 # and end up *higher* than running-but-failing samples, and GRPO rewards the
-# model for producing errors. The crystallizer's worst running trajectory is
-# -0.1 * 600 - 80 = -140.
-ERROR_PENALTY_PER_SCENARIO = -200.0
+# model for producing errors. The crystallizer's worst running trajectory is a
+# failure on the last step: -0.3 * 600 - 80 = -260.
+ERROR_PENALTY_PER_SCENARIO = -300.0
 
 # Cap on bytes of stdout returned from a `main` turn. Prevents a runaway
 # print-loop from blowing the chat context.
 MAIN_STDOUT_TRUNCATE = 2000
 
 # Default subprocess timeouts (seconds). A final run may take the full
-# 600-step horizon; a probe run may run a few full batches of its own.
+# 600-step horizon; a probe run may run many batches of its own. The brief
+# tells the model the probe-run budget, so keep it in step with the prompt.
 POLICY_DEFAULT_TIMEOUT = 30
-MAIN_DEFAULT_TIMEOUT = 10
+MAIN_DEFAULT_TIMEOUT = 30
 
 # How many trailing bytes of stderr to surface in error messages.
 STDERR_TAIL_BYTES = 500
@@ -48,50 +60,45 @@ DEFAULT_ENV_CLASS = "CrystallizerEnv"
 FAST_FACTOR = 1.25
 
 
-# Fenced-block matcher for multi-turn dispatch. Anything that doesn't yield
-# a recognized mode is treated as `mode = "invalid"` and rejected at the floor.
+# Fenced-block matcher. A completion is one code block, fenced or bare; the turn
+# position decides what it is (probe code on every turn but the last, the
+# controller on the last), so no directive is needed.
 _FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```(?!\w)", re.DOTALL)
-_MODE_DIRECTIVE_RE = re.compile(
-    r"^\s*#\s*MODE\s*:\s*(policy|main)\b", re.IGNORECASE
-)
-# Code-language tags we accept as a generic Python fence; mode is then read
-# from a `# MODE: policy|main` directive on the first non-blank line.
-_PY_TAGS = {"python", "py", ""}
+_OPEN_FENCE_RE = re.compile(r"```\w*\s*\n(.*)\Z", re.DOTALL)
 
 
-def extract_code_with_mode(text: str) -> tuple[str, str]:
-    """Parse a model completion into (mode, code).
+def extract_code(text: str) -> str:
+    """The code in a model completion.
 
-    Modes:
-      - "policy":  block whose first non-blank line is `# MODE: policy`
-                   (or, for backward compat, a fence tagged ```policy```)
-      - "main":    block whose first non-blank line is `# MODE: main`
-                   (or, for backward compat, a fence tagged ```main```)
-      - "invalid": no recognized fence, or a python/untagged fence without
-                   a mode directive on its first non-blank line.
-
-    The first matching fenced block wins. If multiple fences are present, only
-    the first is considered — the runner does NOT execute multiple code blocks
-    per turn.
+    The first fenced block if there is one; the text after an unclosed fence
+    (a completion cut off by the token budget); otherwise the whole text,
+    which is what a model that answers with bare code produces. A leading
+    `# MODE: ...` line from the old protocol is just a comment and stays.
     """
     if not text:
-        return "invalid", ""
-    match = _FENCE_RE.search(text)
-    if match is None:
-        return "invalid", ""
-    tag = (match.group(1) or "").lower()
-    code = (match.group(2) or "").strip()
-    if tag in ("policy", "main"):
-        return tag, code
-    if tag in _PY_TAGS:
-        for line in code.splitlines():
-            if not line.strip():
-                continue
-            m = _MODE_DIRECTIVE_RE.match(line)
-            if m:
-                return m.group(1).lower(), code
-            break
-    return "invalid", ""
+        return ""
+    m = _FENCE_RE.search(text)
+    if m:
+        return (m.group(2) or "").strip()
+    m = _OPEN_FENCE_RE.search(text)
+    if m:
+        return (m.group(1) or "").strip()
+    return text.strip()
+
+
+def _check_sandbox_ast(tree: ast.AST) -> str | None:
+    """Static checks shared by policy and probe code: no dangerous imports, none
+    of the forbidden builtins, no dunder attribute or name access (the routes to
+    the env object behind the probe-run wrapper, or to the script's constants)."""
+    bad = _check_dangerous_imports(tree)
+    if bad is not None:
+        return bad
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and (node.id in _FORBIDDEN_NAMES or node.id.startswith("__")):
+            return f"Forbidden name: {node.id}"
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            return f"Dunder attribute access is not allowed: {node.attr}"
+    return None
 
 
 def _check_dangerous_imports(tree: ast.AST) -> str | None:
@@ -129,7 +136,7 @@ def validate_code(code: str) -> tuple[bool, str]:
     if not _has_function_def(tree, "policy"):
         return False, "No 'def policy(...)' function found"
 
-    bad = _check_dangerous_imports(tree)
+    bad = _check_sandbox_ast(tree)
     if bad is not None:
         return False, bad
 
@@ -147,7 +154,7 @@ def validate_main_code(code: str) -> tuple[bool, str]:
     except SyntaxError as e:
         return False, f"Syntax error: {e}"
 
-    bad = _check_dangerous_imports(tree)
+    bad = _check_sandbox_ast(tree)
     if bad is not None:
         return False, bad
 
@@ -161,19 +168,36 @@ def validate_main_code(code: str) -> tuple[bool, str]:
 
 _RUNNER_TEMPLATE_POLICY = '''\
 import json
-import sys
 import math
 import random
 
-# --- Environment code ---
-{env_code}
+# --- Environment, built in a private namespace. The policy code below sees its
+#     own names, `math`, `random` and nothing of the environment's source. ---
+def _build_env_factory(env_src, env_class, hidden):
+    ns = {{}}
+    exec(compile(env_src, "<env>", "exec"), ns)
+    cls = ns[env_class]
+    hidden_params = ns["HiddenParams"](**hidden)
+    def make(seed):
+        return cls(seed=seed, hidden=hidden_params)
+    return make
 
-# --- Policy code ---
+_make_env = _build_env_factory({env_code!r}, {env_class!r}, {hidden!r})
+del _build_env_factory
+try:
+    del __file__
+except NameError:
+    pass
+import builtins as _builtins
+_builtins.open = None
+del _builtins
+
+# --- Policy code (the model's) ---
 {policy_code}
 
 # --- Runner ---
-def run_episode(seed, max_steps):
-    env = {env_class}(seed=seed, hidden=HiddenParams(**{hidden!r}))
+def _run_episode(seed, max_steps):
+    env = _make_env(seed)
     state, _ = env.reset()
     total_reward = 0.0
     steps = 0
@@ -199,51 +223,46 @@ def run_episode(seed, max_steps):
         success = None
     return {{"reward": total_reward, "steps": steps, "success": success, "error": None}}
 
-seed = {seed}
-max_steps = {max_steps}
-result = run_episode(seed, max_steps)
-print(json.dumps(result))
+print(json.dumps(_run_episode({seed}, {max_steps})))
 '''
 
 
-# The probe-run env. The model's `# MODE: main` code sees `env`: the same env
-# class with the SAME hidden parameters as the final run (the one that is
-# scored), on a different random batch. The hidden parameters are masked: the
-# way to learn about them is to run the env and watch what happens, which is
-# also all a real plant would allow.
+# The probe-run env. The model's probe code sees `env`: the same env class with
+# the SAME hidden parameters as the final run (the one that is scored), on a
+# different random batch, behind a wrapper that offers exactly what the brief
+# promises (reset, step, the outcome flags) and nothing else. The env source is
+# executed in a private namespace, so the model's code has no class to
+# instantiate and no constants to read: the way to learn about the hidden
+# parameters is to run the env and watch what happens, as in a real plant.
 _PROBE_ENV_SECTION = '''\
-# --- Environment code ---
-{env_code}
-
-# --- Probe-run env ---
-# `env` is the same env class with the SAME hidden parameters as the final run
-# (the one that is scored), on a different random batch. The hidden parameters
-# are not readable; learn about them by running the env and watching what
-# happens. Anything else you build (new env instances with hidden values of
-# your own choosing, helper functions) is up to you.
-def _make_probe_env(_inner):
-    _blocked = {{"hidden"}}
-    _allowed = {{"__class__", "__doc__", "__repr__", "__str__", "__dir__",
-                "__init__", "__init_subclass__", "__subclasshook__"}}
+# --- Probe-run env, built in a private namespace ---
+def _build_probe_env(env_src, env_class, seed, hidden):
+    ns = {{}}
+    exec(compile(env_src, "<env>", "exec"), ns)
+    inner = ns[env_class](seed=seed, hidden=ns["HiddenParams"](**hidden))
+    offered = ("reset", "step", "done", "showered", "failure_reason", "is_success", "is_unsafe")
+    allowed_dunders = {{"__class__", "__doc__", "__repr__", "__str__", "__dir__",
+                       "__init__", "__init_subclass__", "__subclasshook__"}}
 
     class ProbeEnv:
-        """Same class and hidden parameters as the final run; the hidden parameters themselves are not readable."""
+        # The probe-run env: same hidden parameters as the scored batch, a different batch.
         def __getattribute__(self, name):
-            if name in _allowed:
+            if name in allowed_dunders:
                 return object.__getattribute__(self, name)
-            if name in _blocked or name.startswith("_"):
-                raise AttributeError(f"{{name!r}} is not available in the probe run")
-            return getattr(_inner, name)
+            if name in offered:
+                return getattr(inner, name)
+            raise AttributeError(
+                f"{{name!r}} is not available in the probe run; env offers " + ", ".join(offered))
         def __setattr__(self, name, value):
             raise AttributeError("the probe-run env is read-only; use its methods")
         def __dir__(self):
-            return sorted(n for n in dir(_inner) if not n.startswith("_") and n not in _blocked)
+            return list(offered)
         def __repr__(self):
-            return "ProbeEnv(" + type(_inner).__name__ + ")"
+            return "ProbeEnv(" + ", ".join(offered) + ")"
     return ProbeEnv()
 
-env = _make_probe_env({env_class}(seed={seed}, hidden=HiddenParams(**{hidden!r})))
-del _make_probe_env
+env = _build_probe_env({env_code!r}, {env_class!r}, {seed}, {hidden!r})
+del _build_probe_env
 # The script text holds the hidden values as a literal; keep the model's code
 # from reading its own source.
 try:

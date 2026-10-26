@@ -1,5 +1,10 @@
 """Stage 0 validity gate for the seeded cooling crystallizer.
 
+NOTE (2026-10-26): this script is the record of the Stage 0 gate as run on 2026-10-24,
+against the env as it was then (shower test before growth, no sigma reading, time
+weight 0.1, env source in the prompt). The env has changed since; the current
+hand-written solution from the brief alone is scripts/stage0b_two_turn.py.
+
 Question: does knowing the hidden metastable limit (sigma_max) buy anything that a
 controller without it cannot get from the final run's own readings?
 

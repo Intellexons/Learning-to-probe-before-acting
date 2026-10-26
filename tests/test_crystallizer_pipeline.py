@@ -1,13 +1,14 @@
 """The hand-written probe run and final run through the real execution path.
 
 On the held-out task with the highest hidden limit (where a blind policy
-loses the most time): the probe source from the Stage 0 gate goes through
-`execute_turn` (sandbox subprocess, probe-run env with the limit masked, probe
-batch), its printed bracket is pasted into the final-run template, and the
-final policy is scored with `score_sample`. This is the smallest end-to-end
-check that the runner carries the crystallizer: the hidden limit reaches the
-env, the probe sees the failure flag and nothing else, and the time metrics
-come out right. The full Stage 0b measurement is scripts/stage0b_two_turn.py.
+loses the most time): the readings-only probe from scripts/stage0b_two_turn.py
+goes through `execute_turn` (sandbox subprocess, probe-run env with the limit
+masked, probe batch), its printed bracket is pasted into the controller
+template, and the controller is scored with `score_sample`. This is the
+smallest end-to-end check that the runner carries the crystallizer: the hidden
+limit reaches the env, the probe sees the readings and the outcome flags and
+nothing else, and the time metrics come out right. The full Stage 0b
+measurement is scripts/stage0b_two_turn.py.
 """
 import json
 import sys
@@ -19,8 +20,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "seed_tasks"))
 
 from src.multi_turn import execute_turn  # noqa: E402
-from src.runner import extract_code_with_mode, score_main_turn, score_sample  # noqa: E402
-from stage0_gate_crystal import FINAL_TEMPLATE, PROBE_SOURCE  # noqa: E402
+from src.runner import extract_code, score_main_turn, score_sample  # noqa: E402
+from stage0b_two_turn import CONTROLLER_TEMPLATE, PROBE_SOURCE  # noqa: E402
 from crystallizer_env import HiddenParams  # noqa: E402
 from crystallizer_utils import cautious_policy, run_episode  # noqa: E402
 
@@ -47,10 +48,10 @@ def test_hand_written_probe_and_final_run_through_execute_turn():
     assert "SIGMA_MAX_LOW=" in tr.text, tr.text
     lo = float(tr.text.split("SIGMA_MAX_LOW=")[1].split()[0])
     assert 0.0 < lo <= smax + 1e-9
-    assert smax - lo < 0.01, f"probe bracket too loose: lo={lo} sigma_max={smax}"
+    assert smax - lo < 0.012, f"probe bracket too loose: lo={lo} sigma_max={smax}"
 
     # Turn 2: final run, scored the way the trainer scores it.
-    _, code = extract_code_with_mode(_fence(FINAL_TEMPLATE.format(sigma_hat=lo)))
+    code = extract_code(_fence(CONTROLLER_TEMPLATE.format(sigma_hat=lo)))
     res = score_sample(code, task, max_steps=600)
     sid = sc["scenario_id"]
     assert res["errors"] == []
@@ -73,6 +74,19 @@ def test_probe_run_cannot_read_the_hidden_limit_of_the_real_env():
     assert out["error"] is not None
     assert "not available in the probe run" in out["error"]
     assert str(sc["hidden"]["sigma_max"]) not in out["stdout"]
+
+
+def test_probe_run_cannot_build_its_own_crystallizer_or_read_the_constants():
+    """With the source out of the prompt and out of the probe's namespace, the
+    only crystallizer the probe code can study is `env`."""
+    task = _hardest_eval_task()
+    sc = task["scenarios"][0]
+    out = score_main_turn("print(CrystallizerEnv)\n", env_code=task["env_code"], scenario=sc,
+                          env_class=task["env_class"])
+    assert out["error"] is not None and "NameError" in out["error"]
+    out = score_main_turn("print(env.config)\n", env_code=task["env_code"], scenario=sc,
+                          env_class=task["env_class"])
+    assert out["error"] is not None and "not available in the probe run" in out["error"]
 
 
 def test_probe_run_sees_a_different_batch_than_the_final_run():

@@ -14,10 +14,13 @@ Physics (T in degC, c in kg solute per kg solvent, monodisperse seeds):
     mass balance     dc/dt = -rho * N * 3 * L**2 * dL/dt   (deposited mass goes onto the N seeds)
     shower           sigma > sigma_max  -> unsafe, episode over
 
-Order inside one step: the jacket moves T by the commanded amount; sigma is
-evaluated at the new T with the current c and compared with the hidden limit;
-then the crystals grow for dt seconds. Everything is deterministic given the
-seed, so a controller that knows sigma_max can predict the next sigma exactly.
+Order inside one step: the jacket moves T by the commanded amount; the
+crystals grow for dt seconds, driven by the supersaturation at the new T; the
+supersaturation at the end of the step, the value the state reports, is
+compared with the hidden limit. Everything is deterministic given the seed,
+so a controller that knows sigma_max and the growth law can predict the next
+sigma exactly; one that knows only the readings can hold sigma just under the
+limit by feedback, since the tested value is the reported one.
 
 sigma_max is the hidden parameter. It appears nowhere except in the shower
 test, so the observation carries no information about it until it is crossed.
@@ -65,7 +68,7 @@ class EnvConfig:
     dissolved_frac: float = 0.3       # seeds shrunk below this fraction of their size = lost
     success_bonus: float = 120.0
     fail_penalty: float = 80.0
-    time_weight: float = 0.10         # per step
+    time_weight: float = 0.30         # per step; makes speed worth about three times a 0.10 weight
 
 
 def solubility(T: float, c: EnvConfig) -> float:
@@ -132,6 +135,7 @@ class CrystallizerEnv:
             "L": float(self.crystal_size()),
             "T_target": float(self.T_target),
             "steps_left": float(self.config.max_steps - self.t),
+            "sigma": float(self.sigma()),
         }
 
     def step(self, action):
@@ -149,12 +153,9 @@ class CrystallizerEnv:
         # 1. jacket moves the temperature (a < 0 cools, a > 0 heats)
         self.T = max(c.T_min, min(c.T_max, self.T + self.rate_cmd * c.max_rate * c.dt / 60.0))
 
-        # 2. supersaturation at the new temperature, before any growth: the shower test
+        # 2. growth or dissolution for dt seconds, driven by the supersaturation at the
+        #    new temperature (mass-conserving, cannot cross saturation)
         sigma = self.sigma()
-        if sigma > self.hidden.sigma_max:
-            self.showered = True
-
-        # 3. growth or dissolution for dt seconds (mass-conserving, cannot cross saturation)
         L = self.crystal_size()
         area_mass = c.rho * self.N * 3.0 * L * L            # d(m_c)/dL
         rate = c.k_g * abs(sigma) ** c.g
@@ -166,6 +167,10 @@ class CrystallizerEnv:
         self.m_c += dm
         self.c -= dm
         self.t += 1
+
+        # 3. the shower test, on the supersaturation the state reports
+        if self.sigma() > self.hidden.sigma_max:
+            self.showered = True
 
         reward = -c.time_weight
         success = self.is_success()

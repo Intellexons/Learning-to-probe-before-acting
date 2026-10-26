@@ -50,6 +50,7 @@ from trl import GRPOTrainer
 from trl.models.utils import disable_gradient_checkpointing
 from trl.trainer.utils import pad, use_adapter
 
+from src.prompts import compose_turn_message
 from src.multi_turn import (
     ToolResult,
     assemble_per_token_advantages,
@@ -337,15 +338,15 @@ class BranchedGRPOTrainer(GRPOTrainer):
         t_phase = time.monotonic()
         rewards_grid: list[list[float]] = []
         trajectories: list[_Trajectory] = []
-        # Eval (`scripts/eval_frozen_baseline.py:198-203`) builds the turn-2
-        # user message as `{prompt_t2}\n\n[Tool output from turn 1]\n{body}`.
-        # Mirror that here. With an empty prompt_turn2 (legacy / non-branched
-        # callers that don't provide it), fall back to body-only — which
-        # was the previous behaviour.
+        # The turn-2 user message is the probe output followed by the final-turn
+        # instructions, composed by the same helper eval uses
+        # (`src.prompts.compose_turn_message`), so training and eval see
+        # byte-identical messages. With an empty prompt_turn2 (legacy callers
+        # that don't provide it), fall back to the body only.
         prompt_turn2 = self.prompt_turn2_map.get(task["task_id"], "")
         for i, ((p_ids, t1_ids, t1_text), tr1) in enumerate(zip(turn1_outputs, turn1_results)):
             if prompt_turn2:
-                user_content = f"{prompt_turn2}\n\n[Tool output from turn 1]\n{tr1.text}"
+                user_content = compose_turn_message(prompt_turn2, tr1.text)
             else:
                 user_content = tr1.text
             tool_msg = format_tool_message(user_content)

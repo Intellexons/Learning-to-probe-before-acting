@@ -82,23 +82,22 @@ def test_env_code_is_the_shipped_env_source():
             assert task["env_code"] == src, f"{task['task_id']} embeds a different env source"
 
 
-def test_oracle_steps_match_the_tracking_controller():
+def test_oracle_steps_match_the_informed_controller():
     """`oracle_steps` is what the time-optimal controller needs on the
-    scoring batch; the fast-success metric is relative to it."""
+    scoring batch when it knows the limit; the fast-success metric is
+    relative to it."""
     from crystallizer_env import HiddenParams
-    from crystallizer_utils import make_tracking_policy, run_episode
+    from crystallizer_utils import run_oracle_episode
 
     for task in _load(EVAL)[:3]:
         sc = task["scenarios"][0]
-        smax = sc["hidden"]["sigma_max"]
-        res = run_episode(make_tracking_policy(smax * (1 - 1e-9)), seed=sc["seed"],
-                          hidden=HiddenParams(sigma_max=smax))
+        res = run_oracle_episode(sc["seed"], HiddenParams(sigma_max=sc["hidden"]["sigma_max"]))
         assert res["success"]
         assert res["steps"] == sc["oracle_steps"]
 
 
 def test_probe_scenario_shares_the_hidden_limit_with_the_scoring_scenario():
-    """What `execute_turn` resolves for `# MODE: main` is the task's single
+    """What `execute_turn` resolves for the probe run is the task's single
     scenario, so the probe run and the final run share the hidden limit while
     running on different batches."""
     task = _load(TRAIN)[0]
@@ -108,9 +107,14 @@ def test_probe_scenario_shares_the_hidden_limit_with_the_scoring_scenario():
     assert cal["probe_seed"] != scoring["seed"]
 
 
-def test_prompt_text_names_the_hidden_limit_and_its_range():
+def test_brief_text_is_physics_in_words_with_the_limit_named_as_unobserved():
     task = _load(TRAIN)[0]
-    assert "sigma_max" in task["goal"]
-    assert "0.08" in task["goal"] and "0.25" in task["goal"]
-    for key in ("T", "c", "L", "T_target", "steps_left"):
+    for key in ("intro", "goal", "state_spec", "action_spec", "unobserved", "probe_spec", "final_spec"):
+        assert task[key].strip(), key
+    assert "sigma_max" in task["unobserved"]
+    assert "0.08" in task["unobserved"] and "0.25" in task["unobserved"]
+    assert "shower" in task["goal"] and "supersaturation" in task["goal"]
+    # no equation: the solubility curve stays inside the instrument
+    assert "0.006" not in task["goal"] and "c*(T)" not in task["goal"]
+    for key in ("T", "c", "L", "T_target", "steps_left", "sigma"):
         assert key in task["state_spec"]

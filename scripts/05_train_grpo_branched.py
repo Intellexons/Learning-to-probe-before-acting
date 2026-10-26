@@ -59,7 +59,6 @@ def main():
     grpo_cfg = cfg["grpo"]
     branched_cfg = cfg["branched"]
     scoring_cfg = cfg["scoring"]
-    prompt_example = (cfg.get("prompt") or {}).get("example", "full")
 
     base_model_path = str(Path(cfg["paths"]["hf_base_dir"]) / "iter_000")
     lora_base = Path(cfg["paths"]["lora_dir"])
@@ -93,13 +92,11 @@ def main():
         tid = task["task_id"]
         prompt_text = render_prompt(
             template, task, turn_idx=1, total_turns=TOTAL_TURNS_FOR_BRANCHED,
-            example=prompt_example,
         )
         prompt_turn2_map[tid] = render_prompt(
             template, task,
             turn_idx=TOTAL_TURNS_FOR_BRANCHED,
             total_turns=TOTAL_TURNS_FOR_BRANCHED,
-            example=prompt_example,
         )
         task_map[tid] = task
         dataset_rows.append({

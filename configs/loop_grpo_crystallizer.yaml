@@ -69,8 +69,3 @@ lora:
   alpha: 32
   dropout: 0.05
   task_type: "CAUSAL_LM"
-
-# Multi-turn prompt (only used by a multi-turn eval of this single-turn loop).
-# Same default as the branched configs; see the Stage 2 ablation of 2026-10-26.
-prompt:
-  example: format

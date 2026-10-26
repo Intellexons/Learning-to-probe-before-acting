@@ -145,10 +145,10 @@ class TinyEnv:
     }
 
 
-def test_execute_turn_policy_last_turn_returns_real_reward():
+def test_execute_turn_last_turn_scores_the_controller():
     task = _tiny_task_one_scenario()
     completion = """Here goes:
-```policy
+```python
 def policy(state):
     return (1.0, 0.0)
 ```
@@ -160,33 +160,35 @@ def policy(state):
     assert "total_reward" in tr.text
 
 
-def test_execute_turn_main_on_last_turn_is_rejected():
+def test_execute_turn_last_turn_accepts_bare_code():
     task = _tiny_task_one_scenario()
-    completion = """```main
-print('thinking')
-```"""
-    tr = execute_turn(completion, task, is_last_turn=True, timeout_policy=10, max_steps=10)
-    assert tr.mode == "main"
-    assert tr.reward == error_floor_reward(1)
-    assert "rejected" in tr.text
+    tr = execute_turn("def policy(state):\n    return (1.0, 0.0)\n", task,
+                      is_last_turn=True, timeout_policy=10, max_steps=10)
+    assert tr.mode == "policy"
+    assert tr.reward == pytest.approx(-5.0, abs=0.01)
 
 
-def test_execute_turn_invalid_last_turn_is_rejected_at_floor():
+def test_execute_turn_last_turn_without_a_controller_is_at_the_floor():
+    """Probe-style code on the last turn is a controller without `def policy`:
+    validation fails and the trajectory sits at the error floor."""
     task = _tiny_task_one_scenario()
-    tr = execute_turn(
-        "no fenced block here, just text",
-        task,
-        is_last_turn=True,
-        timeout_policy=10,
-        max_steps=10,
-    )
-    assert tr.mode == "invalid"
+    tr = execute_turn("```python\nprint('thinking')\n```", task, is_last_turn=True,
+                      timeout_policy=10, max_steps=10)
+    assert tr.mode == "policy"
     assert tr.reward == error_floor_reward(1)
 
 
-def test_execute_turn_main_on_intermediate_turn_returns_stdout_no_reward():
+def test_execute_turn_last_turn_junk_is_at_the_floor():
     task = _tiny_task_one_scenario()
-    completion = """```main
+    tr = execute_turn("no code here, just text", task, is_last_turn=True,
+                      timeout_policy=10, max_steps=10)
+    assert tr.mode == "policy"
+    assert tr.reward == error_floor_reward(1)
+
+
+def test_execute_turn_probe_turn_returns_stdout_no_reward():
+    task = _tiny_task_one_scenario()
+    completion = """```python
 import math
 print('answer:', math.sqrt(16))
 ```
@@ -194,20 +196,23 @@ print('answer:', math.sqrt(16))
     tr = execute_turn(completion, task, is_last_turn=False, timeout_policy=10, max_steps=10)
     assert tr.mode == "main"
     assert tr.reward is None
-    assert "answer:" in tr.text
-    assert "4.0" in tr.text
+    assert "answer:" in tr.text and "4.0" in tr.text
 
 
-def test_execute_turn_invalid_intermediate_turn_is_floor():
-    """Even mid-trajectory, an invalid turn carries a floor penalty so the
-    branched-rollout V̂_1 estimate reflects the bad turn-1."""
+def test_execute_turn_probe_turn_sees_the_probe_env():
     task = _tiny_task_one_scenario()
-    tr = execute_turn(
-        "junk text",
-        task,
-        is_last_turn=False,
-        timeout_policy=10,
-        max_steps=10,
-    )
-    assert tr.mode == "invalid"
-    assert tr.reward == error_floor_reward(1)
+    tr = execute_turn("s, _ = env.reset()\nprint(sorted(s))\n", task, is_last_turn=False,
+                      timeout_policy=10, max_steps=10)
+    assert tr.mode == "main" and tr.reward is None
+    assert "['gx', 'px']" in tr.text
+
+
+def test_execute_turn_probe_turn_junk_yields_a_rejection_message_not_a_reward():
+    """A probe run that does not parse still produces a tool message, so the
+    chat stays well-formed; its credit comes from the continuations, not from
+    an immediate penalty."""
+    task = _tiny_task_one_scenario()
+    tr = execute_turn("junk text", task, is_last_turn=False, timeout_policy=10, max_steps=10)
+    assert tr.mode == "main"
+    assert tr.reward is None
+    assert "[main rejected" in tr.text

@@ -1,14 +1,10 @@
-"""Tests for the multi-turn-aware render_prompt path.
+"""The brief: what the model is told, and nothing else.
 
-Goals:
-1. Default args produce a prompt byte-identical to the pre-multi-turn
-   single-turn prompt, so existing single-turn pipelines (probe, generate,
-   train, eval) are not behaviorally affected.
-2. total_turns >= 2 produces a prompt with a Multi-Turn Protocol section
-   that mentions the turn counter, the mode-fence rules, and the
-   last-turn-must-be-policy clause.
-3. Edge cases: turn_idx out of range raises; final-turn rendering
-   includes the FINAL-turn marker.
+The prompt is a briefing (goal and physics in words, what is observed, what is
+not, what the probe run is for, how the final run is scored, the format). No
+environment source, no format example, no mode directives. Turn kinds are
+positional, so turn 1 of a two-turn rollout asks for probe code and the last
+turn asks for the controller.
 """
 import sys
 from pathlib import Path
@@ -16,7 +12,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.prompts import load_template, render_prompt  # noqa: E402
+from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
+from src.runner import MAIN_DEFAULT_TIMEOUT, MAIN_STDOUT_TRUNCATE  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = REPO_ROOT / "configs" / "prompt_template.txt"
@@ -25,164 +22,93 @@ TEMPLATE_PATH = REPO_ROOT / "configs" / "prompt_template.txt"
 def _toy_task() -> dict:
     return {
         "env_code": "class FakeEnv: pass",
+        "intro": "You run a toy cart.",
+        "goal": "drive the cart to the goal.",
         "state_spec": "- px (float): x position",
         "action_spec": "(ax, ay) — 2-tuple of floats",
-        "goal": "drive the cart to the goal.",
+        "unobserved": "the goal position wobbles.",
+        "probe_spec": "the same cart, a different start",
+        "final_spec": "the same cart as your probe run",
     }
 
 
-def test_default_args_match_single_turn_layout():
-    """No `## Multi-Turn Protocol` section should appear when total_turns=1."""
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task())
-    assert "## Multi-Turn Protocol" not in rendered
-    # Single-turn must keep the original "no fences" instruction so the
-    # existing extract_code path (raw def policy) keeps working.
-    assert "Do NOT include markdown fences" in rendered
+def _render(**kw) -> str:
+    return render_prompt(load_template(str(TEMPLATE_PATH)), _toy_task(), **kw)
+
+
+def test_single_turn_is_the_brief_asking_for_the_controller():
+    rendered = _render()
+    assert rendered.startswith("You run a toy cart.")
+    assert "## Goal" in rendered and "drive the cart to the goal." in rendered
+    assert "## What you observe" in rendered and "- px (float): x position" in rendered
+    assert "(ax, ay) — 2-tuple of floats" in rendered
+    assert "## What you do not observe" in rendered and "the goal position wobbles." in rendered
+    assert "## The final run (this message)" in rendered
+    assert "## Your probe run" not in rendered
+    assert rendered.rstrip().endswith("the controller, defining `def policy(state)`.")
 
 
 def test_default_args_match_explicit_single_turn():
-    """render_prompt() == render_prompt(total_turns=1, turn_idx=1)."""
-    template = load_template(str(TEMPLATE_PATH))
-    a = render_prompt(template, _toy_task())
-    b = render_prompt(template, _toy_task(), turn_idx=1, total_turns=1)
-    assert a == b
+    assert _render() == _render(turn_idx=1, total_turns=1)
 
 
-def test_multi_turn_first_turn_prompt():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
-    assert "## Multi-Turn Protocol" in rendered
-    assert "Turn 1 of 2" in rendered
-    assert "1 turn remains" in rendered
-    # First turn (not last) — not the FINAL marker
-    assert "FINAL turn" not in rendered
-    # Both mode directives available on a non-final turn
-    assert "# MODE: policy" in rendered
-    assert "# MODE: main" in rendered
-    # last-turn-must-be-policy clause is always visible in the protocol
-    assert "final turn (turn 2) MUST" in rendered
+def test_the_env_source_is_not_in_the_prompt():
+    for kw in ({}, {"turn_idx": 1, "total_turns": 2}, {"turn_idx": 2, "total_turns": 2}):
+        assert "class FakeEnv" not in _render(**kw)
 
 
-def test_multi_turn_final_turn_prompt():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=2, total_turns=2)
-    assert "FINAL turn" in rendered
-    assert "Turn 2 of 2" in rendered
-    # Final turn requires policy block specifically — the response_format
-    # narrows to policy-only.
-    final_section = rendered.split("## Response Format", 1)[1]
-    assert "# MODE: policy" in final_section
-    assert "# MODE: main" not in final_section
+def test_no_mode_directives_or_example_anywhere():
+    for kw in ({}, {"turn_idx": 1, "total_turns": 2}, {"turn_idx": 2, "total_turns": 2}):
+        rendered = _render(**kw)
+        assert "# MODE" not in rendered and "## Example" not in rendered
 
 
-def test_multi_turn_three_turns_middle():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=2, total_turns=3)
-    assert "Turn 2 of 3" in rendered
-    assert "1 turn remains" in rendered
-    assert "FINAL turn" not in rendered
+def test_two_turn_first_turn_asks_for_probe_code_and_states_the_interface():
+    rendered = _render(turn_idx=1, total_turns=2)
+    assert "## Your probe run (this message)" in rendered
+    assert "the same cart, a different start" in rendered
+    for line in ("env.reset()", "env.step(action)", "env.failure_reason", "env.showered, env.done"):
+        assert line in rendered
+    assert f"within {MAIN_DEFAULT_TIMEOUT} seconds" in rendered
+    assert f"beyond {MAIN_STDOUT_TRUNCATE} characters" in rendered
+    assert "## The final run (the last message)" in rendered
+    assert rendered.rstrip().endswith("the probe code.")
 
 
-def test_multi_turn_three_turns_first():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=3)
-    assert "Turn 1 of 3" in rendered
-    assert "2 turns remain" in rendered
+def test_two_turn_final_turn_is_the_short_instruction():
+    rendered = _render(turn_idx=2, total_turns=2)
+    assert rendered.startswith("Now the final run.")
+    assert "def policy(state)" in rendered
+    assert "the same cart as your probe run" in rendered
+    assert "## Goal" not in rendered  # the brief is already in the chat history
+
+
+def test_compose_turn_message_puts_the_output_first():
+    msg = compose_turn_message(_render(turn_idx=2, total_turns=2), "LIMIT=0.18")
+    assert msg.startswith("Output of your probe run:\nLIMIT=0.18\n\n")
+    assert msg.endswith(_render(turn_idx=2, total_turns=2))
+
+
+def test_three_turns_middle_turn_offers_another_probe():
+    rendered = _render(turn_idx=2, total_turns=3)
+    assert "another probe" in rendered and "the probe code." in rendered
+    assert "def policy" not in rendered
+    first = _render(turn_idx=1, total_turns=3)
+    assert "## Your probe run (this message and the next 1)" in first
 
 
 def test_turn_idx_out_of_range_raises():
-    template = load_template(str(TEMPLATE_PATH))
     with pytest.raises(ValueError):
-        render_prompt(template, _toy_task(), turn_idx=3, total_turns=2)
+        _render(turn_idx=3, total_turns=2)
     with pytest.raises(ValueError):
-        render_prompt(template, _toy_task(), turn_idx=0, total_turns=2)
-
-
-def test_task_fields_are_substituted():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task())
-    assert "class FakeEnv: pass" in rendered
-    assert "drive the cart to the goal." in rendered
-    assert "(ax, ay) — 2-tuple of floats" in rendered
-
-
-def test_single_turn_prompt_has_no_example_section():
-    """The format-demonstration example only makes sense for total_turns >= 2."""
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task())
-    assert "## Example" not in rendered
-
-
-def test_multi_turn_prompt_includes_format_example():
-    """An example showing main-then-policy is rendered for total_turns >= 2,
-    so the model has at least one demonstration of the probe-then-adapt
-    contract before having to write its own."""
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
-    assert "## Example" in rendered
-    # Both modes are demonstrated
-    assert "# MODE: main" in rendered
-    assert "# MODE: policy" in rendered
-    # The example uses the (state, info) Gymnasium reset signature
-    assert "state, _ = env.reset()" in rendered
-    # The example deliberately ships a no-op controller body (return 0.0) —
-    # the run-5 collapse showed that an opinionated example becomes a GRPO
-    # attractor.
-    assert "return 0.0" in rendered
-
-
-def test_multi_turn_example_only_on_first_turn():
-    """The example renders only on turn 1 — chat history carries it forward
-    to later turns, so re-emitting it would waste tokens on every continuation
-    (matches the existing `env_section` pattern)."""
-    template = load_template(str(TEMPLATE_PATH))
-    t1 = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
-    t2 = render_prompt(template, _toy_task(), turn_idx=2, total_turns=2)
-    assert "## Example" in t1
-    assert "## Example" not in t2
-
-
-# ---------------------------------------------------------------------------
-# Example styles (src.prompts.EXAMPLE_STYLES)
-# ---------------------------------------------------------------------------
-
-
-def _example_turn1_block(rendered: str) -> str:
-    """The turn-1 code block of the example section only (the protocol text
-    above it mentions env.reset() in prose, which is fine)."""
-    section = rendered.split("## Example", 1)[1]
-    return section.split("[Tool output from turn 1]", 1)[0]
-
-
-def test_example_style_default_is_full():
-    template = load_template(str(TEMPLATE_PATH))
-    a = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2)
-    b = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="full")
-    assert a == b
-    assert "state, _ = env.reset()" in _example_turn1_block(a)
-
-
-def test_example_style_format_keeps_the_fences_but_gives_nothing_to_copy():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="format")
-    assert "## Example" in rendered
-    block = _example_turn1_block(rendered)
-    assert "# MODE: main" in block
-    assert "env.reset()" not in block and "print(" not in block
-    # The policy half is unchanged: directive and the no-op body.
-    assert "# MODE: policy" in rendered and "return 0.0" in rendered
-
-
-def test_example_style_none_drops_the_section_but_not_the_protocol():
-    template = load_template(str(TEMPLATE_PATH))
-    rendered = render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="none")
-    assert "## Example" not in rendered
-    assert "## Multi-Turn Protocol" in rendered
-    assert "# MODE: main" in rendered  # the protocol text still names both directives
-
-
-def test_unknown_example_style_raises():
-    template = load_template(str(TEMPLATE_PATH))
+        _render(turn_idx=0, total_turns=2)
     with pytest.raises(ValueError):
-        render_prompt(template, _toy_task(), turn_idx=1, total_turns=2, example="bogus")
+        _render(turn_idx=1, total_turns=0)
+
+
+def test_optional_fields_have_defaults():
+    task = {"goal": "g", "state_spec": "s", "action_spec": "a"}
+    rendered = render_prompt(load_template(str(TEMPLATE_PATH)), task, turn_idx=1, total_turns=2)
+    assert "## What you do not observe" not in rendered
+    assert "the same environment, with the same hidden parameters" in rendered
+    assert rendered.startswith("Write a Python controller for the process below.")

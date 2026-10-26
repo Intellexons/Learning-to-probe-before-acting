@@ -1,14 +1,13 @@
-"""Last-policy-wins semantics for `08_eval.py:run_n_turn_rollout`.
+"""Positional-turn semantics for `08_eval.py:run_n_turn_rollout`.
 
 Mocks the generator so the rollout logic can be exercised on CPU. The
 training side is already covered by `test_multi_turn.py`; here we lock
 down the eval-specific contract:
 
-  - Never short-circuit on intermediate `# MODE: policy`.
-  - Among the policies emitted, the LAST one wins.
-  - If the final turn doesn't emit a valid policy, reject (error floor)
-    even when an earlier turn did — matching the training-side
-    `is_last_turn=True` rule.
+  - Every turn but the last is probe code, run through `execute_turn`;
+    a controller emitted early is just probe code that prints nothing.
+  - The last turn is the controller and must validate; otherwise the
+    rollout is rejected, matching the training-side `is_last_turn=True` rule.
 """
 import importlib.util
 import sys
@@ -18,6 +17,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from src.prompts import load_template  # noqa: E402
+
+TEMPLATE = load_template(str(REPO_ROOT / "configs" / "prompt_template.txt"))
 
 # `08_eval.py` starts with a digit so a normal import won't work; load
 # it as a module by spec.
@@ -113,19 +115,16 @@ def _patch_generators(monkeypatch, completions: list[str]):
 # completes its 5-step horizon — sufficient for the scoring path to
 # return a non-None reward and exercise the eval's accept/reject branch.
 _POLICY_A = """```python
-# MODE: policy
 def policy(state):
     return (0.5, 0.0)  # marker A
 ```"""
 
 _POLICY_B = """```python
-# MODE: policy
 def policy(state):
     return (0.5, 0.0)  # marker B
 ```"""
 
 _MAIN_BLOCK = """```python
-# MODE: main
 print("probe")
 ```"""
 
@@ -133,10 +132,11 @@ _INVALID_BLOCK = """no fenced block here, model output garbage"""
 
 
 def test_two_turns_both_policy_picks_the_second(monkeypatch):
-    """User-stated invariant: 'we don't stop at the first policy.'"""
+    """A controller emitted on turn 1 is probe code that prints nothing; the
+    turn-2 controller is the one scored."""
     _patch_generators(monkeypatch, [_POLICY_A, _POLICY_B])
     out = run_n_turn_rollout(
-        model=None, tokenizer=None, template="{multi_turn_protocol}{state_spec}{action_spec}{goal}{env_section}{multi_turn_example}{requirements}{response_format}",  # template body unused — render_prompt sees a dummy task
+        model=None, tokenizer=None, template=TEMPLATE,
         task=_tiny_task(),
         n_turns=2,
         temperature=0.0, top_p=1.0, max_tokens=128,
@@ -154,7 +154,7 @@ def test_main_then_policy_uses_final_policy(monkeypatch):
     _patch_generators(monkeypatch, [_MAIN_BLOCK, _POLICY_B])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
-        template="{multi_turn_protocol}{state_spec}{action_spec}{goal}{env_section}{multi_turn_example}{requirements}{response_format}",
+        template=TEMPLATE,
         task=_tiny_task(),
         n_turns=2,
         temperature=0.0, top_p=1.0, max_tokens=128,
@@ -165,13 +165,13 @@ def test_main_then_policy_uses_final_policy(monkeypatch):
 
 
 def test_policy_then_main_is_rejected(monkeypatch):
-    """Final turn must be policy (training-side rule). Even though turn 1
-    emitted a valid policy, the rollout is rejected because the final
-    turn was main."""
+    """The final turn must be a controller. Even though turn 1 emitted a
+    valid one, the rollout is rejected because the final turn has no
+    `def policy`."""
     _patch_generators(monkeypatch, [_POLICY_A, _MAIN_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
-        template="{multi_turn_protocol}{state_spec}{action_spec}{goal}{env_section}{multi_turn_example}{requirements}{response_format}",
+        template=TEMPLATE,
         task=_tiny_task(),
         n_turns=2,
         temperature=0.0, top_p=1.0, max_tokens=128,
@@ -179,22 +179,22 @@ def test_policy_then_main_is_rejected(monkeypatch):
     )
     assert out["success"] is False
     assert out["code"] == ""
-    assert "main" in out["error"]
+    assert "not a valid controller" in out["error"]
 
 
 def test_final_turn_invalid_is_rejected(monkeypatch):
-    """Turn 2 emits no recognized fence → reject, regardless of turn 1."""
+    """Turn 2 emits text that is not code → reject, regardless of turn 1."""
     _patch_generators(monkeypatch, [_POLICY_A, _INVALID_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
-        template="{multi_turn_protocol}{state_spec}{action_spec}{goal}{env_section}{multi_turn_example}{requirements}{response_format}",
+        template=TEMPLATE,
         task=_tiny_task(),
         n_turns=2,
         temperature=0.0, top_p=1.0, max_tokens=128,
         scoring_timeout=10, scoring_max_steps=10,
     )
     assert out["success"] is False
-    assert "invalid" in out["error"]
+    assert "not a valid controller" in out["error"]
 
 
 def test_n_turns_one_path_unchanged(monkeypatch):
@@ -203,7 +203,7 @@ def test_n_turns_one_path_unchanged(monkeypatch):
     _patch_generators(monkeypatch, [_POLICY_A])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
-        template="{multi_turn_protocol}{state_spec}{action_spec}{goal}{env_section}{multi_turn_example}{requirements}{response_format}",
+        template=TEMPLATE,
         task=_tiny_task(),
         n_turns=1,
         temperature=0.0, top_p=1.0, max_tokens=128,
