@@ -1,163 +1,78 @@
+"""Prompt rendering: the task brief.
+
+The model is briefed the way an engineer would be: the goal and the physics in
+words, what the readings are, what cannot be observed, what the probe run is
+for, how the final run is scored, and the reply format. No environment source,
+no format example, no mode directives: the probe run is turn 1 by construction
+and the final run is the last turn, so the runner reads the turn position.
+
+Task fields used: `intro`, `goal`, `state_spec`, `action_spec`, `unobserved`,
+`probe_spec`, `final_spec` (see scripts/seed_tasks/build_crystallizer_tasks.py).
+"""
 from pathlib import Path
 
+from src.runner import MAIN_DEFAULT_TIMEOUT, MAIN_STDOUT_TRUNCATE
 
-_SINGLE_TURN_RESPONSE = (
-    "Respond ONLY with valid Python code. Do NOT include markdown fences, "
-    "explanations, or any text besides the code itself."
+# What the controller may and may not do. Stated once in the brief and again in
+# the final-turn message.
+CONTROLLER_RULES = (
+    "It is called once per step with the state dict and returns the action. It "
+    "may keep state between calls (module-level variables are fine); it runs on "
+    "one batch. Import only `math` and `random`. Read only the state keys listed above."
 )
 
+_DEFAULT_PROBE_SPEC = "the same environment, with the same hidden parameters, on a different episode"
+_DEFAULT_FINAL_SPEC = "the same hidden parameters as your probe run, a different episode"
 
-def _build_multi_turn_protocol(turn_idx: int, total_turns: int) -> str:
-    """Build the protocol section that explains the multi-turn contract.
 
-    Returns an empty string for single-turn (total_turns == 1) so the prompt
-    layout is byte-identical to the pre-multi-turn template — existing
-    single-turn runs and probes are unaffected.
-    """
-    if total_turns <= 1:
-        return ""
+def _probe_section(task: dict, total_turns: int) -> str:
+    n_probe = total_turns - 1
+    when = "this message" if n_probe == 1 else f"this message and the next {n_probe - 1}"
+    probe_spec = task.get("probe_spec", _DEFAULT_PROBE_SPEC)
+    return f"""## Your probe run ({when})
 
-    if turn_idx < 1 or turn_idx > total_turns:
-        raise ValueError(
-            f"turn_idx={turn_idx} out of range for total_turns={total_turns}"
-        )
+Before the scored batch you get a probe run on {probe_spec}. It is the object `env`, already constructed:
 
-    remaining_after = total_turns - turn_idx
-    if remaining_after == 0:
-        budget_note = "**FINAL turn — must be `policy`.**"
-    elif remaining_after == 1:
-        budget_note = "1 turn remains after this."
-    else:
-        budget_note = f"{remaining_after} turns remain after this."
+    state, info = env.reset()                                # starts a fresh probe batch
+    state, reward, done, truncated, info = env.step(action)  # one step; `state` has the keys above
+    env.failure_reason                                       # None, "shower", "seeds_dissolved" or "timeout"
+    env.showered, env.done                                   # True once the batch has showered / has ended
 
-    return f"""
-## Multi-Turn Protocol
-
-Turn {turn_idx} of {total_turns}. {budget_note}
-
-Each turn must output ONE Python fenced code block (use the python language tag). The first non-blank line inside the fence is a mode directive comment, exactly one of:
-
-  # MODE: policy    -> block defines `def policy(state)`. Tool returns total reward across all scenarios.
-  # MODE: main      -> arbitrary Python. A pre-instantiated `env` is available (same class as in `## Environment source` above, with the SAME hidden parameters as the turn-{total_turns} evaluation); call its methods (e.g. `env.reset()`, `env.step(a)`) to probe partially-observable properties. `print(...)` whatever you want returned. Tool returns stdout.
-
-The final turn (turn {total_turns}) MUST start with `# MODE: policy`; a `main` final turn is rejected at the error floor. A block whose first non-blank line is not one of the two directives above is also rejected.
+Drive it however you like, as many batches as you want, within {MAIN_DEFAULT_TIMEOUT} seconds of compute. Print what you learn: only your printed output reaches the next step, and output beyond {MAIN_STDOUT_TRUNCATE} characters is cut off. The controller you write afterwards has no access to `env`, to this code or to its variables.
 """
 
 
-# What the format example shows for the probe run (turn 1):
-#   full    the original: reset the env and print the state, then a no-op policy.
-#           In Stage 2 (2026-10-25) the frozen model copied that turn-1 code in
-#           83 of 96 probe runs, so the example planted a probe that learns nothing.
-#   format  the same two blocks and mode directives, but the turn-1 body is a
-#           comment: nothing to copy.
-#   none    no example section; the protocol text alone describes the format.
-EXAMPLE_STYLES = ("full", "format", "none")
-
-
-def _build_multi_turn_example(turn_idx: int, total_turns: int, style: str = "full") -> str:
-    """A minimal format-demonstration example for multi-turn prompts.
-
-    Goals:
-      1. Show the fence-and-directive format of a `# MODE: main` turn and a
-         `# MODE: policy` turn.
-      2. Avoid prescribing a control law (the policy body is `return 0.0`),
-         so GRPO is not anchored to a memorised fixed point.
-      3. With style "format" or "none", avoid prescribing a probe run either;
-         see EXAMPLE_STYLES.
-
-    Rendered only on the FIRST turn — the chat history carries it forward
-    on later turns, so re-emitting wastes tokens on every continuation.
-    Empty for single-turn — the section only makes sense when `# MODE: main`
-    is available.
-    """
-    if style not in EXAMPLE_STYLES:
-        raise ValueError(f"unknown example style {style!r}; expected one of {EXAMPLE_STYLES}")
-    if total_turns <= 1 or turn_idx != 1 or style == "none":
-        return ""
-    if style == "full":
-        turn1_body = (
-            f"# `env` is pre-instantiated with the same hidden params as the turn-{total_turns} evaluation.\n"
-            "state, _ = env.reset()\n"
-            'print("state keys:", sorted(state.keys()))\n'
-            'print("initial state:", state)'
-        )
+def _final_section(total_turns: int) -> str:
+    if total_turns == 1:
+        when, lead = "this message", "Write `def policy(state)`, the controller."
     else:
-        turn1_body = (
-            f"# Your code. `env` is pre-instantiated with the same hidden params as the turn-{total_turns}\n"
-            "# evaluation; whatever you print is returned to you in the next turn."
-        )
-    return f"""## Example (format demonstration; not a useful controller)
+        when = "the last message"
+        lead = "You will receive your printed output and then write `def policy(state)`, the controller."
+    return f"""## The final run ({when})
 
-Turn 1 — probe with `# MODE: main`:
-```python
-# MODE: main
-{turn1_body}
-```
-
-[Tool output from turn 1]
-(stdout from your code is returned here as the next user message)
-
-Turn {total_turns} — final `# MODE: policy`:
-```python
-# MODE: policy
-def policy(state):
-    # Only read the state keys listed in `## Interface` above.
-    return 0.0  # replace with your control logic
-```
+{lead} It runs on the scored batch from its first step. {CONTROLLER_RULES}
 """
 
 
-def _build_response_format(turn_idx: int, total_turns: int) -> str:
-    """Build the `## Response Format` section that closes the prompt.
-
-    Single-turn keeps the original "no fences" instruction so `extract_code`'s
-    existing path (raw def policy + python-tagged fence) keeps working.
-    Multi-turn uses tagged fences so the runner can dispatch on mode.
-    """
-    if total_turns <= 1:
-        return _SINGLE_TURN_RESPONSE
-
-    is_last = (turn_idx == total_turns)
-    if is_last:
-        body = (
-            "Output exactly one Python fenced code block. Its first non-blank "
-            "line must be `# MODE: policy`. Inside, define `def policy(state)`. "
-            "Do not output any text outside the single fenced block."
-        )
-    else:
-        body = (
-            "Output exactly one Python fenced code block. Its first non-blank "
-            "line must be either `# MODE: policy` (define `def policy(state)`) "
-            "or `# MODE: main` (arbitrary code; stdout is returned to you).\n"
-            "Do not output any text outside the single fenced block."
-        )
-    return f"## Response Format\n\n{body}"
+def _format_section(total_turns: int) -> str:
+    what = "the controller, defining `def policy(state)`" if total_turns == 1 else "the probe code"
+    return f"Reply with one Python code block and nothing else: {what}."
 
 
-def _build_requirements(turn_idx: int, total_turns: int) -> str:
-    """Build the Requirements bullet list.
-
-    Single-turn and the final turn of a multi-turn sequence both require a
-    def policy. Non-final turns can output either main or policy, so the
-    requirement to define a policy function is conditional rather than absolute
-    — otherwise the model skips the scratchpad turn and jumps straight to code.
-    """
-    common = (
-        "- Only import `math` and `random`. No global variables or state between calls.\n"
-        "- Only read the state keys listed above."
-    )
-    if total_turns <= 1 or turn_idx == total_turns:
+def _followup(task: dict, turn_idx: int, total_turns: int) -> str:
+    """The instructions for a turn after the first (the probe output is prepended by
+    `compose_turn_message`)."""
+    if turn_idx < total_turns:
         return (
-            "- Define exactly one function `def policy(state)` returning a valid action.\n"
-            + common
+            "You may run another probe on a fresh `env` (same hidden parameters, a new batch; "
+            "nothing from your previous code carries over). Reply with one Python code block "
+            "and nothing else: the probe code."
         )
-    # Non-final turn: model may choose main or policy
+    final_spec = task.get("final_spec", _DEFAULT_FINAL_SPEC)
     return (
-        "- If `# MODE: policy`: define `def policy(state)` returning a valid action.\n"
-        "- If `# MODE: main`: use `print()` to probe or derive — run env instances, "
-        "compute gains, whatever helps. stdout is returned to you next turn. "
-        "No `def policy` needed here.\n"
-        + common
+        "Now the final run. Reply with one Python code block and nothing else: the controller, "
+        f"defining `def policy(state)`. It runs on the scored batch ({final_spec}) from its first "
+        f"step and has no access to `env` or to your probe code. {CONTROLLER_RULES}"
     )
 
 
@@ -165,36 +80,35 @@ def load_template(template_path: str = "configs/prompt_template.txt") -> str:
     return Path(template_path).read_text()
 
 
-def render_prompt(
-    template: str,
-    task: dict,
-    turn_idx: int = 1,
-    total_turns: int = 1,
-    example: str = "full",
-) -> str:
-    """Fill in template with task fields and (optionally) multi-turn protocol.
+def render_prompt(template: str, task: dict, turn_idx: int = 1, total_turns: int = 1) -> str:
+    """The user message for one turn.
 
-    Env source code is included only on the first turn — subsequent turns
-    already have it in the chat history context.
-    Single-turn callers can omit `turn_idx` / `total_turns` and the rendered
-    output matches the pre-multi-turn prompt exactly. `example` picks the
-    multi-turn format example (see EXAMPLE_STYLES); it is read from the
-    config's `prompt.example` by the trainer and eval scripts.
+    Turn 1 is the brief (the template filled with the task's text). Later turns
+    are the short instruction that follows the probe output; callers prepend
+    the output with `compose_turn_message`. Single-turn callers can omit
+    `turn_idx` and `total_turns`.
     """
-    if turn_idx == 1:
-        env_section = f"## Environment source\n\n```python\n{task['env_code']}\n```\n"
-    else:
-        env_section = ""
+    if total_turns < 1 or turn_idx < 1 or turn_idx > total_turns:
+        raise ValueError(f"turn_idx={turn_idx} out of range for total_turns={total_turns}")
+    if turn_idx > 1:
+        return _followup(task, turn_idx, total_turns)
+    unobserved = (task.get("unobserved") or "").strip()
+    unobserved_section = f"## What you do not observe\n\n{unobserved}\n\n" if unobserved else ""
+    turn_section = (_probe_section(task, total_turns) + "\n" if total_turns > 1 else "") + _final_section(total_turns)
     return template.format(
-        env_section=env_section,
-        state_spec=task["state_spec"],
-        action_spec=task["action_spec"],
-        goal=task["goal"],
-        multi_turn_protocol=_build_multi_turn_protocol(turn_idx, total_turns),
-        multi_turn_example=_build_multi_turn_example(turn_idx, total_turns, example),
-        requirements=_build_requirements(turn_idx, total_turns),
-        response_format=_build_response_format(turn_idx, total_turns),
+        intro=(task.get("intro") or "Write a Python controller for the process below.").strip(),
+        goal=task["goal"].strip(),
+        state_spec=task["state_spec"].strip(),
+        action_spec=task["action_spec"].strip(),
+        unobserved_section=unobserved_section,
+        turn_section=turn_section,
+        format=_format_section(total_turns),
     )
+
+
+def compose_turn_message(turn_prompt: str, tool_text: str) -> str:
+    """The user message after a probe run: what it printed, then this turn's instructions."""
+    return f"Output of your probe run:\n{tool_text}\n\n{turn_prompt}"
 
 
 def format_dpo_example(

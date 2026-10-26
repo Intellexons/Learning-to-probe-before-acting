@@ -1,26 +1,10 @@
-"""Evaluate current model on held-out eval tasks.
+"""Evaluate the current model on the held-out tasks.
 
-Usage: python scripts/08_eval.py --iter 1 --config configs/loop_grpo_branched_crystallizer.yaml
-
-Supports two modes via `cfg["eval"]["n_turns"]` (default 1):
-  - n_turns=1: single-turn rollout (legacy DPO-loop behaviour).
-  - n_turns>=2: full N-turn rollout matching the training protocol —
-    intermediate `# MODE: main` turns are executed in the sandbox and
-    their stdout fed back as a tool message; intermediate `# MODE: policy`
-    turns are scored too (their reward returned as the tool message) but
-    do NOT short-circuit the rollout. The policy that gets evaluated for
-    the W&B reward curve is the LAST `# MODE: policy` block emitted across
-    the whole rollout — typically the final-turn one. If the final turn
-    is not policy (i.e. the model emits `main` or invalid as its last
-    turn) the trajectory is rejected at the error floor, matching the
-    training-side `is_last_turn=True` rule in `src/multi_turn.execute_turn`.
-
-Why "last policy" and not "first policy": the trained model is being
-optimised to refine its draft across turns, so an early commit is not
-representative of what the model produced at the end of an N-turn
-rollout. This intentionally diverges from `eval_frozen_baseline.py`,
-which short-circuits on turn-1 policy because the frozen baseline
-isn't trained to use later turns.
+Single-turn (eval.n_turns = 1): the model writes the controller from the brief.
+Multi-turn (eval.n_turns = N): every turn but the last is a probe run, executed
+in the sandbox with its stdout returned to the model; the last turn is the
+controller, which is scored. Turn kinds are positional, exactly as in training
+(`src/multi_turn.execute_turn`), so eval and training see the same messages.
 """
 import argparse
 import json
@@ -38,11 +22,11 @@ from src.hf_generator import (  # noqa: E402
     load_model_for_generation,
 )
 from src.multi_turn import execute_turn  # noqa: E402
-from src.prompts import load_template, render_prompt  # noqa: E402
+from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     ERROR_PENALTY_PER_SCENARIO,
     error_floor_result,
-    extract_code_with_mode,
+    extract_code,
     score_sample,
     validate_code,
 )
@@ -66,7 +50,6 @@ def run_n_turn_rollout(
     max_tokens: int,
     scoring_timeout: int,
     scoring_max_steps: int,
-    example: str = "full",
 ) -> dict:
     """Run an `n_turns`-turn rollout for one task; never short-circuit.
 
@@ -74,9 +57,9 @@ def run_n_turn_rollout(
     result so the surrounding loop can consume it identically:
 
       {
-        "code":          last `# MODE: policy` block emitted (or "" if
-                         the rollout ended without a valid final policy),
-        "success":       True iff the final turn emitted a valid policy,
+        "code":          the final turn's controller (or "" if the rollout
+                         ended without a valid one),
+        "success":       True iff the final turn is a valid controller,
         "error":         None on success, otherwise a short reason string,
         "raw_response":  raw text of the FINAL turn (matches single-turn
                          semantics; the full transcript is available via
@@ -85,12 +68,11 @@ def run_n_turn_rollout(
                          chat history the model saw, for debug logging.
       }
 
-    Selection rule: among all turns 1..N, the LAST turn whose extracted
-    mode is "policy" (and whose code passes `validate_code`) wins. If
-    the final turn (turn N) is not a valid policy, the rollout is
-    rejected even if an earlier turn emitted one — matching the
-    "final turn must be `# MODE: policy`" protocol rule that training
-    enforces in `src/multi_turn.execute_turn` (`is_last_turn=True`).
+    The turn position decides what each completion is: every turn but the
+    last is probe code (executed via `execute_turn`, stdout returned to the
+    model), the last is the controller. The controller must pass
+    `validate_code`; otherwise the rollout is rejected, matching the rule
+    training enforces in `src/multi_turn.execute_turn` (`is_last_turn=True`).
     """
     if n_turns < 1:
         raise ValueError(f"n_turns must be >= 1, got {n_turns}")
@@ -111,11 +93,9 @@ def run_n_turn_rollout(
             ],
         }
 
-    # Multi-turn path. Build chat history incrementally; track last
-    # valid policy across all turns; never short-circuit.
+    # Multi-turn path. Build the chat history incrementally; never short-circuit.
     transcript: list[dict] = []
-    last_policy_code = ""
-    final_mode = "invalid"
+    final_code = ""
     final_raw = ""
 
     # The single scenario the probe-run env is built from (same hidden
@@ -127,8 +107,7 @@ def run_n_turn_rollout(
         is_last = (turn_idx == n_turns)
 
         if turn_idx == 1:
-            prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=n_turns,
-                                      example=example)
+            prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=n_turns)
             transcript.append({"role": "user", "content": prompt_t1})
             sample = generate_code(
                 model, tokenizer, prompt_t1,
@@ -154,25 +133,12 @@ def run_n_turn_rollout(
         final_raw = raw
         transcript.append({"role": "assistant", "content": raw})
 
-        mode, code = extract_code_with_mode(raw)
-        final_mode = mode
-
-        if mode == "policy":
-            is_valid, _ = validate_code(code)
-            if is_valid:
-                # Track but never stop. Even if turn 1 is policy and we're
-                # in a 2-turn rollout, we keep going to give the model the
-                # chance to refine in turn 2.
-                last_policy_code = code
-
         if is_last:
+            final_code = extract_code(raw)
             break
 
-        # Intermediate turn: dispatch via the same execute_turn used in
-        # training so the tool-message text is byte-identical to the
-        # training rollout. For mode==main: stdout. For mode==policy
-        # (intermediate, non-final): scored; reward returned as text.
-        # For mode==invalid: rejection text.
+        # Probe turn: dispatch via the same execute_turn used in training so
+        # the tool-message text is byte-identical to the training rollout.
         tool_result = execute_turn(
             raw, task,
             is_last_turn=False,
@@ -180,26 +146,13 @@ def run_n_turn_rollout(
             timeout_policy=scoring_timeout,
             max_steps=scoring_max_steps,
         )
+        next_prompt = render_prompt(template, task, turn_idx=turn_idx + 1, total_turns=n_turns)
+        transcript.append({"role": "user", "content": compose_turn_message(next_prompt, tool_result.text)})
 
-        # Render the next-turn prompt and prepend it to the tool message,
-        # matching the convention used by eval_frozen_baseline.py:198-203
-        # and BranchedGRPOTrainer post-PR-#50.
-        next_prompt = render_prompt(
-            template, task, turn_idx=turn_idx + 1, total_turns=n_turns, example=example,
-        )
-        user_content = (
-            f"{next_prompt}\n\n[Tool output from turn {turn_idx}]\n{tool_result.text}"
-        )
-        transcript.append({"role": "user", "content": user_content})
-
-    # Decide acceptance. Final turn must be a valid policy; otherwise the
-    # protocol rejects the trajectory even if an earlier turn produced
-    # one. last_policy_code is the LAST valid policy emitted across the
-    # rollout, which is the same thing as the final-turn policy when
-    # that turn is policy.
-    if final_mode == "policy" and last_policy_code:
+    ok, err = validate_code(final_code)
+    if ok:
         return {
-            "code": last_policy_code,
+            "code": final_code,
             "success": True,
             "error": None,
             "raw_response": final_raw,
@@ -208,11 +161,10 @@ def run_n_turn_rollout(
     return {
         "code": "",
         "success": False,
-        "error": f"final turn (turn {n_turns}) emitted mode={final_mode!r}, not policy",
+        "error": f"final turn (turn {n_turns}) is not a valid controller: {err}",
         "raw_response": final_raw,
         "transcript": transcript,
     }
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -227,7 +179,6 @@ def main():
     score_cfg = cfg["scoring"]
     eval_cfg = cfg.get("eval", {}) or {}
     n_turns = int(eval_cfg.get("n_turns", 1))
-    prompt_example = (cfg.get("prompt") or {}).get("example", "full")
 
     # Load model with all adapters merged up to this iteration
     base_model_path = str(Path(cfg["paths"]["hf_base_dir"]) / "iter_000")
@@ -289,7 +240,6 @@ def main():
                     max_tokens=gen_cfg["max_tokens"],
                     scoring_timeout=score_cfg["timeout_seconds"],
                     scoring_max_steps=score_cfg["max_steps"],
-                    example=prompt_example,
                 ))
 
         best_reward = 0.0

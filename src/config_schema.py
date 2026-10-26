@@ -92,13 +92,6 @@ class EvalSection(_PermissiveBase):
     n_turns: int = Field(gt=0)
 
 
-class PromptSection(_StrictBase):
-    """`prompt` section: what the multi-turn format example shows. Strict,
-    so a misspelt key cannot silently leave the default in place."""
-
-    example: Literal["full", "format", "none"] = "full"
-
-
 # ---------------------------------------------------------------------------
 # Strict trainer-coupled sections
 # ---------------------------------------------------------------------------
@@ -212,8 +205,6 @@ class _TopLevelBase(_StrictBase):
     loop: LoopSection
     scoring: ScoringSection
     lora: LoRASection
-    # Optional: omitted means the "full" example (the original prompt).
-    prompt: PromptSection | None = None
 
 
 class DPOConfig(_TopLevelBase):

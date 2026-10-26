@@ -1,19 +1,16 @@
-Write a Python policy function that controls an agent in the environment below.
-{multi_turn_protocol}
-## Interface
+{intro}
 
-`policy(state)` is called once per step. `state` is a dict with exactly these keys:
+## Goal
+
+{goal}
+
+## What you observe
 
 {state_spec}
 
-Action: {action_spec}
+{action_spec}
 
-## Goal
-{goal}
+{unobserved_section}{turn_section}
+## Format
 
-{env_section}
-{multi_turn_example}
-## Requirements
-{requirements}
-
-{response_format}
+{format}

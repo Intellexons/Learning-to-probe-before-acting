@@ -1,13 +1,13 @@
-"""Stage 0b: the hand-written probe run and final run through the real execution path.
+"""Stage 0b: a hand-written probe run and final run, from the brief alone, through the real path.
 
-Stage 0 (scripts/stage0_gate_crystal.py) ran the hand-written probe source
-in-process. Here the same probe source goes through `execute_turn`, i.e. the
-sandbox subprocess with the probe-run env (hidden limit masked, probe batch
-different from the scoring batch), and the final policy it produces is scored
-with `score_sample`, exactly as training and eval do (`execute_turn`'s
-last-turn path is `score_policy_turn`, an alias of `score_sample`).
-Pre-registered gate: fast success >= 95%, the Stage 0 bar for the hand-written
-solution.
+The proof that the task is solvable with what the model is told. The probe code
+uses only what the brief offers (`env.reset()`, `env.step(a)`, the `done` flag,
+`env.failure_reason` and the `sigma` reading); the controller uses only the
+state and may keep memory, as the brief allows. Both go through
+`execute_turn`, i.e. the sandbox subprocess with the probe-run env (hidden
+limit masked, probe batch different from the scoring batch) and `score_sample`
+for the final run, exactly as training and eval do. Pre-registered gate: fast
+success >= 95%.
 
 usage:
   uv run python scripts/stage0b_two_turn.py                      # train + eval task files
@@ -27,13 +27,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "seed_tasks"))
 
 from src.dataset import load_jsonl  # noqa: E402
 from src.multi_turn import execute_turn  # noqa: E402
-from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR, extract_code_with_mode, score_sample  # noqa: E402
-from stage0_gate_crystal import FINAL_TEMPLATE, GATE_TWO_TURN_MIN, PROBE_SOURCE  # noqa: E402
+from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR, extract_code, score_sample  # noqa: E402
 from build_crystallizer_tasks import task_entry  # noqa: E402
 from crystallizer_env import HiddenParams  # noqa: E402
 from crystallizer_utils import cautious_policy, run_episode  # noqa: E402
@@ -43,6 +41,57 @@ DEFAULT_TASK_FILES = [
     "scripts/seed_tasks/crystallizer_eval.jsonl",
 ]
 RANDOM_SEED_BASE = 1_000
+GATE_FAST_MIN = 0.95
+
+# The probe run: find the shower limit by crossing it, on three batches. Readings only.
+PROBE_SOURCE = '''
+# Probe run: find the level of sigma at which this crystallizer showers, by crossing it.
+lo, hi = 0.0, 0.40          # sigma_max is above lo (a reading seen safe) and below hi (a reading at a shower)
+G = 0.016                   # cautious guess at how much sigma rises per full-cooling step
+for npass in range(3):
+    s, _ = env.reset()
+    if npass == 0:
+        while True:         # first batch: cool at the jacket limit until the shower
+            s, r, done, _, _ = env.step(-1.0)
+            if done:
+                break
+            lo = max(lo, s["sigma"])
+        if env.failure_reason == "shower":
+            hi = min(hi, s["sigma"])
+        continue
+    target, inc = lo, (hi - lo) / 8.0      # later batches: go to the last safe level, then creep up
+    while True:
+        a = max(-1.0, min(0.0, -(target - s["sigma"]) / G))
+        s, r, done, _, _ = env.step(a)
+        if done:
+            break
+        lo = max(lo, s["sigma"])
+        if s["sigma"] >= target - inc / 2:
+            target = min(target + inc, hi)
+    if env.failure_reason == "shower":
+        hi = min(hi, s["sigma"])
+print(f"SIGMA_MAX_LOW={lo:.5f} SIGMA_MAX_HIGH={hi:.5f}")
+'''
+
+# The final run: hold the sigma reading just under the level the probe found.
+CONTROLLER_TEMPLATE = '''
+SETPOINT = {sigma_hat:.5f} - 0.003
+G = 0.014                       # about how much sigma rises per full-cooling step
+mem = {{"sigma_prev": None, "a_prev": 0.0, "eaten": 0.0}}
+def policy(state):
+    sigma, T, T_target = state["sigma"], state["T"], state["T_target"]
+    if mem["sigma_prev"] is not None:
+        # what the crystals ate last step: what cooling should have added, minus what we got
+        eaten = mem["sigma_prev"] - mem["a_prev"] * G - sigma
+        mem["eaten"] = 0.5 * mem["eaten"] + 0.5 * max(0.0, eaten)
+    if T <= T_target:
+        a = 0.0
+    else:
+        a = max(-1.0, min(0.0, -(SETPOINT - sigma + mem["eaten"]) / G))
+        a = max(a, -(T - T_target) / 0.5)      # do not overshoot the target temperature
+    mem["sigma_prev"], mem["a_prev"] = sigma, a
+    return a
+'''
 
 
 def _fence(src: str) -> str:
@@ -60,13 +109,13 @@ def run_task(task: dict) -> dict:
 
     # Turn 1: the probe run through the real path.
     tr = execute_turn(_fence(PROBE_SOURCE), task, is_last_turn=False, max_steps=DEFAULT_MAX_STEPS)
-    if tr.mode != "main" or "SIGMA_MAX_LOW=" not in tr.text:
+    if "SIGMA_MAX_LOW=" not in tr.text:
         row.update({"probe_error": tr.text[:300], "lo": None, "success": False, "fast": False,
                     "norm_time": 0.0, "reward": None, "steps": 0, "errors": ["probe run failed"]})
     else:
         lo = float(tr.text.split("SIGMA_MAX_LOW=")[1].split()[0])
         # Turn 2: the final run, scored exactly as the trainer scores it.
-        _, code = extract_code_with_mode(_fence(FINAL_TEMPLATE.format(sigma_hat=lo)))
+        code = extract_code(_fence(CONTROLLER_TEMPLATE.format(sigma_hat=lo)))
         res = score_sample(code, task, max_steps=DEFAULT_MAX_STEPS)
         row.update({
             "probe_error": None, "lo": lo, "probe_abs_error": smax - lo,
@@ -145,8 +194,8 @@ def main() -> None:
               f"{s['min_norm_time']:6.3f} {s['mean_reward'] if s['mean_reward'] is not None else float('nan'):7.1f} "
               f"{s['max_probe_abs_error'] if s['max_probe_abs_error'] is not None else float('nan'):9.4f} | "
               f"{100 * s['blind_fast_rate']:9.1f}% {s['blind_mean_norm_time']:12.3f} {s['blind_mean_reward']:9.1f}")
-    verdict = "PASS" if overall["fast_rate"] >= GATE_TWO_TURN_MIN and overall["probe_failures"] == 0 else "FAIL"
-    print(f"\nGate: fast success >= {100 * GATE_TWO_TURN_MIN:.0f}% through the real path: "
+    verdict = "PASS" if overall["fast_rate"] >= GATE_FAST_MIN and overall["probe_failures"] == 0 else "FAIL"
+    print(f"\nGate: fast success >= {100 * GATE_FAST_MIN:.0f}% through the real path: "
           f"{100 * overall['fast_rate']:.1f}% ({overall['probe_failures']} probe failures) -> {verdict}")
     print(f"wall time {elapsed:.1f}s, {elapsed / max(len(rows), 1):.2f}s per task")
 
@@ -154,7 +203,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w") as f:
         json.dump({"overall": overall, "groups": {n: _summarise(g) for n, g in groups if g},
-                   "gate_fast_min": GATE_TWO_TURN_MIN, "verdict": verdict, "rows": rows}, f, indent=2)
+                   "gate_fast_min": GATE_FAST_MIN, "verdict": verdict, "rows": rows}, f, indent=2)
     print(f"wrote {out}")
 
 

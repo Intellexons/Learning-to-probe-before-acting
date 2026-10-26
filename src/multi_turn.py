@@ -2,12 +2,13 @@
 
 The training-loop trick designed in the 2026-04-26 conversation:
 
-  For each prompt, generate G_1 first-turn variants. For each first-turn
-  variant i, execute the tool (run policy or capture main stdout) to get
-  the tool-result message, then generate G_2 second-turn continuations.
-  Each second-turn continuation must be a `policy` block — anything else
-  is rejected and scored at the error floor. The final reward of the
-  trajectory (i, j) is the policy reward of turn 2.
+  For each prompt, generate G_1 first-turn variants (probe runs). For each
+  first-turn variant i, execute it in the sandbox and capture what it printed
+  to get the tool-result message, then generate G_2 second-turn continuations
+  (controllers). The turn position decides what a completion is: every turn
+  but the last is probe code, the last is the controller, so no mode
+  directive is needed. The final reward of the trajectory (i, j) is the
+  controller's reward in turn 2.
 
   Empirical values (no learned critic, all MC):
     V̂_0     = grand mean over all G_1 G_2 final rewards (initial-state baseline)
@@ -35,15 +36,16 @@ from src.runner import (
     ERROR_PENALTY_PER_SCENARIO,
     MAIN_DEFAULT_TIMEOUT,
     POLICY_DEFAULT_TIMEOUT,
-    extract_code_with_mode,
+    extract_code,
     score_main_turn,
     score_policy_turn,
 )
 
-# Mode constants — defined here once so callers don't sprinkle string literals.
+# Turn kinds, decided by position: every turn but the last is a probe run
+# ("main", arbitrary code whose stdout is returned), the last is the
+# controller ("policy"). Kept as constants so callers don't sprinkle literals.
 MODE_POLICY = "policy"
 MODE_MAIN = "main"
-MODE_INVALID = "invalid"
 
 
 # ---------------------------------------------------------------------------
@@ -59,33 +61,16 @@ def error_floor_reward(n_scenarios: int) -> float:
 
 
 def _policy_tool_text(reward_total: float, n_scenarios: int) -> str:
-    return (
-        f"Turn-1 policy was scored across {n_scenarios} scenarios. "
-        f"total_reward = {reward_total:.2f}"
-    )
+    return f"Final run scored across {n_scenarios} scenario(s): total_reward = {reward_total:.2f}"
 
 
 def _main_tool_text(stdout: str) -> str:
-    """Body of the tool-result message for an intermediate `# MODE: main` turn.
-
-    Returns the captured stdout verbatim (or "[empty output]" if blank), with
-    no extra prefix — eval (`scripts/eval_frozen_baseline.py`) wraps the body
-    with `[Tool output from turn 1]\n...` at message-construction time and
-    training does the same in `BranchedGRPOTrainer._branched_rollout_one_prompt`.
+    """Body of the tool-result message for a probe run: the captured stdout
+    verbatim, or "[empty output]" if blank. Callers wrap it with
+    `src.prompts.compose_turn_message`, which prepends "Output of your probe
+    run:" and appends the next turn's instructions.
     """
     return stdout or "[empty output]"
-
-
-def _final_turn_rejected_text(mode: str) -> str:
-    return (
-        f"Final-turn rejected: final turn must start with `# MODE: policy` "
-        f"(got mode={mode!r}). Trajectory scored at error floor."
-    )
-
-
-# When turn 1 emits no recognized mode directive, eval and training surface
-# this exact string.
-_INTERMEDIATE_INVALID_TEXT = "[turn 1 produced no recognized code block]"
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +82,8 @@ _INTERMEDIATE_INVALID_TEXT = "[turn 1 produced no recognized code block]"
 class ToolResult:
     """Result of executing a single turn's code.
 
-    `mode` is the parsed code-fence tag ("policy", "main", or "invalid").
-    `reward` is the policy-reward total (only meaningful when mode=="policy").
+    `mode` is the turn kind by position ("main" for a probe run, "policy" for
+    the final run). `reward` is the policy-reward total (only for "policy").
     `text` is the body of the user-role message that gets fed back to the
     model as the next-turn prompt context.
     """
@@ -128,46 +113,32 @@ def execute_turn(
 ) -> ToolResult:
     """Run the code from one turn's completion and return a ToolResult.
 
-    On the **last turn**, only `policy` mode is allowed — `main` and
-    `invalid` are scored at the error floor and surfaced as a rejection
-    message in the chat. On non-last turns, all three modes are valid:
-    policy yields a reward, main yields stdout, invalid yields a rejection
-    message AND a floor-reward penalty so the model still gets a learning
-    signal not to emit malformed turns mid-trajectory (the advantage at
-    turn 1 will reflect that).
-
-    For non-final `policy` and `main` turns the returned `reward` is None
-    (it has no direct meaning — turn-1 credit comes from the branched
-    V̂_1 estimate, not from the immediate tool result).
+    The turn position decides what the code is. On the **last turn** it is the
+    controller: validated and scored as the final run, with a validation
+    failure or runtime error at the error floor (see `score_sample`). On every
+    other turn it is probe code: executed in the sandbox against the probe-run
+    env and its stdout returned as the tool text, `reward` None (turn-1 credit
+    comes from the branched V̂_1 estimate, not from the immediate tool result).
+    A probe run that fails to validate or errors still yields a tool message
+    ("[main rejected: ...]" / "[main error: ...]"), so the chat stays well-formed.
     """
-    floor = error_floor_reward(max(len(task.get("scenarios", [])), 1))
-    mode, code = extract_code_with_mode(raw_completion)
+    code = extract_code(raw_completion)
 
     if is_last_turn:
-        if mode != MODE_POLICY:
-            return ToolResult(mode=mode, reward=floor, text=_final_turn_rejected_text(mode))
         reward, text = _score_policy(code, task, timeout_policy, max_steps)
         return ToolResult(mode=MODE_POLICY, reward=reward, text=text)
 
-    # Non-final turn — every mode produces a tool message; only invalid
-    # carries a forward reward signal (a floor penalty that propagates
-    # through the V̂_1 estimate and turn-1 advantage).
-    if mode == MODE_POLICY:
-        _, text = _score_policy(code, task, timeout_policy, max_steps)
-        return ToolResult(mode=MODE_POLICY, reward=None, text=text)
-    if mode == MODE_MAIN:
-        # The probe run uses the task's (single) scenario: same hidden
-        # parameters as the final run, on the scenario's probe batch.
-        cal = scenario or (task.get("scenarios") or [{}])[0]
-        out = score_main_turn(
-            code,
-            env_code=task.get("env_code", ""),
-            scenario=cal,
-            env_class=task.get("env_class", DEFAULT_ENV_CLASS),
-            timeout=timeout_main,
-        )
-        return ToolResult(mode=MODE_MAIN, reward=None, text=_main_tool_text(out["stdout"]))
-    return ToolResult(mode=MODE_INVALID, reward=floor, text=_INTERMEDIATE_INVALID_TEXT)
+    # The probe run uses the task's (single) scenario: same hidden parameters
+    # as the final run, on the scenario's probe batch.
+    cal = scenario or (task.get("scenarios") or [{}])[0]
+    out = score_main_turn(
+        code,
+        env_code=task.get("env_code", ""),
+        scenario=cal,
+        env_class=task.get("env_class", DEFAULT_ENV_CLASS),
+        timeout=timeout_main,
+    )
+    return ToolResult(mode=MODE_MAIN, reward=None, text=_main_tool_text(out["stdout"]))
 
 
 # ---------------------------------------------------------------------------

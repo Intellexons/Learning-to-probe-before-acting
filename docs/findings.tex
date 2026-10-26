@@ -61,9 +61,9 @@ themselves are never edited. The full plan with pass criteria is the section
 Stage & What it asks & Status & Entry \\
 \midrule
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed & 2026-10-24, crystallizer \\
-0b & Does the hand-written probe run + final run survive the real runner? & passed & 2026-10-25 \\
-1  & Frozen model, one turn, no probe run (arm A) & done & 2026-10-25, Stages 1 and 2 \\
-2  & Frozen model with a probe run (arm B) & done & 2026-10-25, Stages 1 and 2; 2026-10-26, example ablation \\
+0b & Does the hand-written probe run + final run survive the real runner? & passed; redone from the brief 2026-10-26 & 2026-10-25; 2026-10-26, the brief \\
+1  & Frozen model, one turn, no probe run (arm A) & done (protocol prompt); redone under the brief & 2026-10-25, Stages 1 and 2; 2026-10-26, the brief \\
+2  & Frozen model with a probe run (arm B) & done (protocol prompt); redone under the brief & 2026-10-25, Stages 1 and 2; 2026-10-26, example ablation; 2026-10-26, the brief \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -826,6 +826,149 @@ Compact results in \texttt{docs/stage2/} with the suffix
 \texttt{example-<style>}: job log, summary, samples with probe code, tool
 output and outcome. \texttt{docs/reproducibility/65bfcab.py} computes every
 number in the table from those sample files.
+\end{sloppypar}
+
+% ============================================================
+\section*{2026-10-26 \quad The brief: physics in words, sigma as a reading, no
+source, no directives; the probe run becomes an experiment that mostly dies
+before it runs}
+% ============================================================
+
+\commit{f4d95ac} $\cdot$ \textit{frozen \texttt{Qwen3-4B-Instruct-2507}, no
+training; Stage 0b in-process, Stages 1 and 2 on one A30 each, 24 and 42
+minutes}
+
+\subsection*{Setup / motivation}
+
+The example ablation (entry above) showed that the frozen model takes the
+probe turn only because the example shows one being taken, and that given
+room it experiments on a crystallizer of its own making. The user's
+diagnosis was that the prompt had become protocol engineering, and the
+decision was to brief the model as an engineer would be briefed: the goal
+and the physics in words, no equation; what it observes and what it does
+not; what the probe run is for and what it offers; how the final run is
+scored. Three consequences followed. Without the solubility equation the
+model cannot compute the supersaturation, so $\sigma$ became a reading in
+the state. With $\sigma$ a reading, the shower test had to move to the
+reported end-of-step value: the mid-step value it used before is up to
+$0.03$ above the reading late in a batch, so a controller that sees only
+readings could never have ridden the limit. And with the source out of the
+prompt, the probe-run object became a whitelist (reset, step, the end flag,
+the failure reason, the two outcome tests), the environment's source runs in
+a private namespace, and the static checks reject introspection, so the
+only crystallizer the probe code can study is the one it is given. Mode
+directives and the format example are gone; turn kinds are positional and
+the parser accepts a fenced, bare or cut-off block. The time weight is
+$0.3$ (a good probe is worth $+53$ over the blind controller, against $+18$
+at $0.1$); the error floor is $-300$. The oracle is now the greedy
+controller that holds the reading at the limit (130 steps on the 36 task
+batches; the blind controller takes 306). Task files were rebuilt, the
+hand-written solution was rewritten from the brief alone, and Stages 0b, 1
+and 2 were run again. The brief is reproduced in the paper's
+Appendix~\emph{The brief}.
+
+\subsection*{Results}
+
+\textbf{Stage 0b from the brief.} A three-batch probe that only resets,
+steps and reads $\sigma$ (cool at the jacket limit until the shower, then
+creep up from the last safe level on two more batches) and a feedback
+controller with memory that holds the reading $0.003$ under the level
+found: through the real runner, $100\%$ fast success on 136 batches (36 from
+the task files, 100 fresh), normalised time $0.95$ (min $0.80$), median
+probe error $0.004$, at most $0.011$, mean reward $+76$ against $+28$ for the
+blind controller, which is fast on $4\%$. Simpler controllers written from
+the same number: full cooling until the reading hits it, then hold, showers
+on 21 of 36 batches with a thin margin and is fast on 33 with one step of
+margin; proportional control without memory is fast on 34.
+
+\textbf{Stages 1 and 2 under the brief} (12 held-out batches, 8 samples
+each, temperature 0.8, 600 tokens per turn):
+
+\begin{center}\small
+\begin{tabular}{lrrrr}
+\toprule
+out of 96 samples & Stage 1, one turn & Stage 2, probe + final & blind & oracle \\
+\midrule
+valid controller                          & 68 & 84 & -- & -- \\
+cut off by the 600-token budget           & 28 & 12 & -- & -- \\
+success                                   & 14 & 24 & 100\% & 100\% \\
+fast success                              & 0  & 2  & 0\% & 100\% \\
+ruined (median steps)                     & 27 (23) & 24 (20) & -- & -- \\
+timeout                                   & 24 & 33 & -- & -- \\
+normalised time                           & 0.068 & 0.144 & 0.414 & 1.000 \\
+mean reward                               & $-160$ & $-116$ & $+27$ & $+82$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The probe runs of Stage 2, out of 96, against the protocol prompt's Stage 2
+of 2026-10-25: step the environment 87 (16 before); cool at the jacket limit
+61 (13); check the end flag or the failure reason 92 (16); run several
+batches 30; build a crystallizer of their own 0 (5); copy an example 0 (80).
+But 44 are cut off by the token budget before they can run (all end mid-code
+without a closing fence, at about 2400 characters, after a long commented
+plan), 22 crash on \texttt{state['done']} or \texttt{state['showered']},
+reading the flags listed next to the state keys as state keys, and 15 print
+nothing. Thirteen outputs mention a shower; 5 hold the limit to within
+$0.01$. Of the controllers, 7 reuse a number the probe printed (5 of them
+near the limit); when the probe had failed, several state invented results
+(``from probe results, shower occurred at sigma 0.22'' after a probe that
+never ran); the one fast success is of that kind, on the batch with the
+highest limit. The ruined controllers cool at full rate towards a setpoint
+of $0.18$--$0.20$ with no margin; most timed-out controllers never cool, or
+stop far above the target. Controllers read the $\sigma$ reading in 68 and
+83 of 96 and keep state in 68 and 49; none computes the solubility curve.
+
+\subsection*{Interpretation}
+
+The brief did what the protocol prompt could not: nearly every probe is now
+an experiment of the right shape on the right object, and the two
+behaviours that defeated the earlier prompt, copying the example and
+building a private crystallizer, are gone. What remains is mechanical and
+local. Two of three probes die before producing output, from the token
+budget and from one misreading of the interface; the number that does get
+found rarely travels into the controller; and the controllers that are
+written either ride the setpoint with no margin or never cool. These are
+the things reinforcement learning is for, but half the samples of every
+iteration would be spent on truncation and a wording accident, so both are
+worth fixing in the brief first. Rewards are not comparable with the
+entries of 2026-10-25 (time weight, floor and physics all changed); the
+counts are.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Raise the per-turn token budget from 600 to about 1000 for evaluation
+  and training (check the smoke config on the A30), and add one sentence to
+  the brief: \texttt{done} is returned by \texttt{env.step}; \texttt{env.done},
+  \texttt{env.showered} and \texttt{env.failure\_reason} are attributes of
+  \texttt{env}, not keys of \texttt{state}. Then Stages 1 and 2 again.
+\item Then Stage 3 (single-turn GRPO): the first things to learn are to
+  stop cooling at full rate into the setpoint and to cool at all.
+\item Watch, under training, whether the model keeps inventing probe results
+  when the probe fails; the branched baseline should punish it, since the
+  continuations of a failed probe are no better than blind.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether the prior range in the brief should stay (it anchors the setpoints
+at $0.18$--$0.25$ but also makes the cautious strategy derivable). Whether the
+hand-written controller's growth correction is something a 4B model can
+learn or whether proportional control with a margin (fast on 34 of 36) is
+the realistic ceiling.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{f4d95ac}: \texttt{scripts/stage0b\_two\_turn.py --n-random 100}
+(result in \texttt{docs/stage0b/two\_turn\_brief\_2026-10-26.json});
+\texttt{jobs/hpi/stage1.sbatch} and \texttt{stage2.sbatch} on the HPI
+cluster (A30, jobs 2782627 and 2782628), which run
+\texttt{scripts/eval\_frozen\_baseline.py --turns 1|2 --n-samples 8}. Compact
+results in \texttt{docs/stage1/} and \texttt{docs/stage2/} with the suffix
+\texttt{brief\_2026-10-26}: job log, summary, samples with probe code, tool
+output, controller and outcome.
 \end{sloppypar}
 
 \end{document}
