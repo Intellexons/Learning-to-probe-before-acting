@@ -454,6 +454,10 @@ The experiments form a ladder of stages. Each stage asks one question and is a g
 
 Stages 3 to 6 share the protocol of \S\ref{sec:eval}: at least three seeds per arm, median and interquartile range at the best checkpoint, curves against gradient steps and against wall-clock, and a paired Wilcoxon test with effect size.
 
+\subsection{Planned extensions: how much of the brief is needed}
+\label{sec:plan-extensions}
+The brief tells the model that the shower level is not observable, gives the range it lies in, shows the batch record, and offers the probe run. That is the premise of the study, chosen because without it the frozen model never probed (0 of 96 first turns, \S\ref{sec:protocol}). How much of the premise is needed is a question in its own right, and the measurements that answer it are the probe rate (does the model choose to probe), the estimate error (what the probe found against the true limit) and the ride ratio (how close to the limit the controller then rides). Three frozen-model arms remove what the model is told, in order, each a Stage~2 run: (1) drop the paragraph on what is not observed, keeping the logs and the range: the two logs still show different shower levels, so the model has to infer that this batch's level is unknown from data; (2) drop the stated range as well, so the logs alone carry the prior; (3) drop the logs, leaving the physics in words, the version that produced no probes. A step that keeps the probe rate above about ten percent is trainable, and a training arm on it supports the stronger claim that the model learns that it needs to probe; a step that drives the rate to zero marks where the premise has to stay. A second extension gives the probe run a price, a sacrificed batch, so that whether to probe becomes a judgement rather than a habit: at a cost of 20 against a gain of about 53 probing still pays, at 60 it does not, and varying the cost across tasks asks the model to tell the two apart. Both extensions are prompt and reward changes only; the code supports the first already.
+
 \section{Evaluating the per-turn credit assignment}
 \label{sec:eval}
 
@@ -513,6 +517,8 @@ The implementation and experiments use $N=2$. Extending to more turns is concept
 The method also assumes deterministic rewards given the seed. In stochastic environments, the same estimator applies but $G_2$ must grow to separate prefix quality from environment noise. The current implementation uses $\beta=0$ and \texttt{num\_iterations}$=1$; KL penalties and cached old log-probabilities can be supported by storing the same quantities per turn segment.
 
 A natural memory/variance extension is token subsampling within a turn. Since each turn uses one scalar advantage broadcast across its tokens, subsampling tokens is an unbiased estimator of the same token-summed gradient when $N_{\rm tok}$ counts only kept positions. We leave uniform and asymmetric subsampling variants to future work.
+
+The brief states the premise that something is unobservable and that a probe run is available, so the study measures how well the model probes and acts on the result, not whether it discovers that probing is needed; the extensions of \S\ref{sec:plan-extensions} remove that premise in steps and attach a price to the probe, and are the path to the stronger claim. The brief also states the prior range of the hidden limit, which the frozen model anchors on; whether a stated prior helps or hurts a trained model is part of the same ladder.
 
 \section{Conclusion}
 
