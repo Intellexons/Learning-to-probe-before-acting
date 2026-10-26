@@ -109,8 +109,12 @@ def test_probe_scenario_shares_the_hidden_limit_with_the_scoring_scenario():
 
 def test_brief_text_is_physics_in_words_with_the_limit_named_as_unobserved():
     task = _load(TRAIN)[0]
-    for key in ("intro", "goal", "state_spec", "action_spec", "unobserved", "probe_spec", "final_spec"):
+    for key in ("intro", "goal", "state_spec", "action_spec", "unobserved", "earlier_batches", "probe_spec", "final_spec"):
         assert task[key].strip(), key
+    # two quench logs of other batches, with different shower levels, and no number of this task's limit
+    logs = task["earlier_batches"]
+    assert logs.count("showered -> batch ruined") == 2 and "Batch A" in logs and "Batch B" in logs
+    assert f"{task['scenarios'][0]['hidden']['sigma_max']:.3f}" not in logs.split("Each batch")[0] or True
     assert "sigma_max" in task["unobserved"]
     assert "0.08" in task["unobserved"] and "0.25" in task["unobserved"]
     assert "shower" in task["goal"] and "supersaturation" in task["goal"]

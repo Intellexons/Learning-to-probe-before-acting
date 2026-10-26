@@ -24,7 +24,7 @@ loop:
 branched:
   g1: 4
   g2: 4
-  max_turn_tokens: 600
+  max_turn_tokens: 1000
   # Split each per-turn forward+backward along the row dim. Shrinks the
   # (B, K, |V|) logits/gradient tensors linearly with this value while
   # keeping the gradient identity (sum of chunk losses == single-pass loss
@@ -32,7 +32,7 @@ branched:
   # to every chunk).
   #
   # Required on 24 GB L4: at mb=4 the per-chunk forward holds
-  # (4, 400, |V|) ≈ 0.97 GiB instead of the 3.9 GiB tensor plus its
+  # (4, 1000, |V|) ≈ 2.4 GiB instead of the 9.7 GiB tensor plus its
   # transient duplicate at the turn-2 `logits / temperature` allocation.
   # Cost: 4x LM-head kernel launches per turn (~5% wall-clock).
   #
@@ -55,7 +55,7 @@ generation:
   n_samples_per_task: 8
   temperature: 0.8
   top_p: 0.95
-  max_tokens: 600
+  max_tokens: 1000
 
 # One batch is at most 600 steps of 20 s (EnvConfig.max_steps); the runner
 # must not cut a slow but safe batch short.

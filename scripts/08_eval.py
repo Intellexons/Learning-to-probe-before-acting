@@ -137,8 +137,9 @@ def run_n_turn_rollout(
             final_code = extract_code(raw)
             break
 
-        # Probe turn: dispatch via the same execute_turn used in training so
-        # the tool-message text is byte-identical to the training rollout.
+        # Probe turn, or a controller written early: dispatch via the same
+        # execute_turn used in training so the tool-message text is
+        # byte-identical to the training rollout. A controller ends the task.
         tool_result = execute_turn(
             raw, task,
             is_last_turn=False,
@@ -146,6 +147,9 @@ def run_n_turn_rollout(
             timeout_policy=scoring_timeout,
             max_steps=scoring_max_steps,
         )
+        if tool_result.ended:
+            final_code = extract_code(raw)
+            break
         next_prompt = render_prompt(template, task, turn_idx=turn_idx + 1, total_turns=n_turns)
         transcript.append({"role": "user", "content": compose_turn_message(next_prompt, tool_result.text)})
 

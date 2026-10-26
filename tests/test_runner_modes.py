@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.runner import (  # noqa: E402
+    defines_policy,
     extract_code,
     score_main_turn,
     score_policy_turn,
@@ -50,6 +51,15 @@ def test_extract_takes_first_fence():
 def test_extract_empty_is_empty():
     assert extract_code("") == ""
     assert extract_code("   \n") == ""
+
+
+def test_defines_policy_is_a_top_level_def_named_policy():
+    assert defines_policy("def policy(state):\n    return 0\n")
+    assert defines_policy("# MODE: policy\nimport math\nmem = {}\ndef policy(state):\n    return 0\n")
+    assert not defines_policy("def helper(state):\n    return 0\n")
+    assert not defines_policy("class A:\n    def policy(self, s):\n        return 0\n")
+    assert not defines_policy("def policy(state:\n")  # cut off: not a controller
+    assert not defines_policy("")
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +275,19 @@ def test_score_main_without_scenario_still_builds_the_env():
                           env_code=_PROBE_ENV_SRC, env_class="_ProbeTestEnv", timeout=10)
     assert out["error"] is None, out
     assert "seed 0.0" in out["stdout"]
+
+
+def test_score_sample_reports_the_peak_sigma_reading():
+    """The final run records the highest `sigma` the state reported, the basis of
+    the ride ratio (how close to the limit the controller rode)."""
+    env_src = _PROBE_ENV_SRC.replace('return {"seed": float(self.seed)}, 0.0, True, False, {}',
+                                     'return {"seed": float(self.seed), "sigma": 0.123}, 0.0, True, False, {}')
+    task = {"task_id": "t", "env_class": "_ProbeTestEnv", "env_code": env_src, "scenarios": [_SCENARIO]}
+    res = score_sample("def policy(state):\n    return 0.0\n", task, timeout=10, max_steps=5)
+    assert res["peak_sigma_per_scenario"] == {"s0": 0.123}
+    task_no_sigma = {"task_id": "t", "env_class": "_ProbeTestEnv", "env_code": _PROBE_ENV_SRC, "scenarios": [_SCENARIO]}
+    res = score_sample("def policy(state):\n    return 0.0\n", task_no_sigma, timeout=10, max_steps=5)
+    assert res["peak_sigma_per_scenario"] == {"s0": None}
 
 
 def test_policy_run_has_no_env_class_in_scope():

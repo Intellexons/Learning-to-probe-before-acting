@@ -131,10 +131,10 @@ print("probe")
 _INVALID_BLOCK = """no fenced block here, model output garbage"""
 
 
-def test_two_turns_both_policy_picks_the_second(monkeypatch):
-    """A controller emitted on turn 1 is probe code that prints nothing; the
-    turn-2 controller is the one scored."""
-    _patch_generators(monkeypatch, [_POLICY_A, _POLICY_B])
+def test_a_controller_in_turn_one_ends_the_rollout(monkeypatch):
+    """The probe is optional: a reply that defines `policy` is the controller
+    and the task ends there; the second scripted completion is never asked for."""
+    gen = _patch_generators(monkeypatch, [_POLICY_A, _POLICY_B])
     out = run_n_turn_rollout(
         model=None, tokenizer=None, template=TEMPLATE,
         task=_tiny_task(),
@@ -143,10 +143,9 @@ def test_two_turns_both_policy_picks_the_second(monkeypatch):
         scoring_timeout=10, scoring_max_steps=10,
     )
     assert out["success"] is True
-    assert "marker B" in out["code"], (
-        "expected the SECOND policy to win, but got first-turn code"
-    )
-    assert "marker A" not in out["code"]
+    assert "marker A" in out["code"] and "marker B" not in out["code"]
+    assert gen.calls == 1
+    assert len(out["transcript"]) == 2  # the brief and the one reply
 
 
 def test_main_then_policy_uses_final_policy(monkeypatch):
@@ -164,11 +163,10 @@ def test_main_then_policy_uses_final_policy(monkeypatch):
     assert "marker B" in out["code"]
 
 
-def test_policy_then_main_is_rejected(monkeypatch):
-    """The final turn must be a controller. Even though turn 1 emitted a
-    valid one, the rollout is rejected because the final turn has no
-    `def policy`."""
-    _patch_generators(monkeypatch, [_POLICY_A, _MAIN_BLOCK])
+def test_probe_then_probe_is_rejected(monkeypatch):
+    """The last turn must be a controller: two probe-style replies in a row
+    leave the rollout without one."""
+    _patch_generators(monkeypatch, [_MAIN_BLOCK, _MAIN_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
         template=TEMPLATE,
@@ -184,7 +182,7 @@ def test_policy_then_main_is_rejected(monkeypatch):
 
 def test_final_turn_invalid_is_rejected(monkeypatch):
     """Turn 2 emits text that is not code → reject, regardless of turn 1."""
-    _patch_generators(monkeypatch, [_POLICY_A, _INVALID_BLOCK])
+    _patch_generators(monkeypatch, [_MAIN_BLOCK, _INVALID_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
         template=TEMPLATE,

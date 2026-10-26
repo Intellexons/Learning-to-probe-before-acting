@@ -345,6 +345,30 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # that don't provide it), fall back to the body only.
         prompt_turn2 = self.prompt_turn2_map.get(task["task_id"], "")
         for i, ((p_ids, t1_ids, t1_text), tr1) in enumerate(zip(turn1_outputs, turn1_results)):
+            if tr1.ended:
+                # The model wrote the controller in turn 1: this variant is a
+                # leaf with one reward and no second turn. Its row of the grid
+                # holds that reward g2 times, so V_1^(i) is its reward, its
+                # turn-1 advantage is V_1^(i) - V_0, and its turn-1 tokens
+                # weigh as much in the loss as a probe variant's do (which
+                # appear once per continuation). No turn-2 tokens, no tool
+                # message, no generate call.
+                reward = tr1.reward if tr1.reward is not None else 0.0
+                rewards_grid.append([reward] * self.g2)
+                for j in range(self.g2):
+                    trajectories.append(_Trajectory(
+                        i=i, j=j,
+                        prompt_ids=p_ids,
+                        turn1_ids=t1_ids,
+                        tool_ids=[],
+                        turn2_ids=[],
+                        turn1_text=t1_text,
+                        turn2_text="",
+                        turn1_mode=tr1.mode,
+                        turn2_mode="none",
+                        reward=reward,
+                    ))
+                continue
             if prompt_turn2:
                 user_content = compose_turn_message(prompt_turn2, tr1.text)
             else:
@@ -730,6 +754,12 @@ class BranchedGRPOTrainer(GRPOTrainer):
         seg_inputs = self._segment_inputs(inputs, segment)
         rows = seg_inputs["completion_ids"].size(0)
 
+        # A segment with no model tokens at all (every first turn was a
+        # controller, so there is no turn 2) contributes nothing: skip the
+        # forward rather than feed the parent an empty completion.
+        if seg_inputs["completion_ids"].size(1) == 0 or int(seg_inputs["completion_mask"].sum()) == 0:
+            return torch.zeros((), device=seg_inputs["completion_ids"].device)
+
         accumulated: torch.Tensor | None = None
         for start, end in _row_chunks(rows, self.loss_micro_batch_size):
             chunk = _slice_row_dim(seg_inputs, start, end)
@@ -955,7 +985,7 @@ def build_segment_tensors(
       turn2_advantages       (B, T_turn2_max)  A^(2)[b] on actual, 0 on pad
     """
     # --- Pass 1: completion = turn1 ---
-    t1_ids = [torch.tensor(t.turn1_ids, device=device) for t in trajectories]
+    t1_ids = [torch.tensor(t.turn1_ids, device=device, dtype=torch.long) for t in trajectories]
     t1_masks = [torch.ones_like(x, dtype=torch.long) for x in t1_ids]
     turn1_completion_ids = pad(t1_ids, padding_value=pad_id, padding_side="right")
     turn1_completion_mask = pad(t1_masks, padding_value=0, padding_side="right")
@@ -966,14 +996,15 @@ def build_segment_tensors(
 
     # --- Pass 2: prompt = [prompt | turn1 | tool], completion = turn2 ---
     p2_prompt_lists = [
-        torch.tensor(t.prompt_ids + t.turn1_ids + t.tool_ids, device=device)
+        torch.tensor(t.prompt_ids + t.turn1_ids + t.tool_ids, device=device, dtype=torch.long)
         for t in trajectories
     ]
     p2_prompt_masks = [torch.ones_like(x, dtype=torch.long) for x in p2_prompt_lists]
     pass2_prompt_ids = pad(p2_prompt_lists, padding_value=pad_id, padding_side="left")
     pass2_prompt_mask = pad(p2_prompt_masks, padding_value=0, padding_side="left")
 
-    t2_ids = [torch.tensor(t.turn2_ids, device=device) for t in trajectories]
+    # A controller written in turn 1 has no turn 2: an empty row, padded out.
+    t2_ids = [torch.tensor(t.turn2_ids, device=device, dtype=torch.long) for t in trajectories]
     t2_masks = [torch.ones_like(x, dtype=torch.long) for x in t2_ids]
     turn2_completion_ids = pad(t2_ids, padding_value=pad_id, padding_side="right")
     turn2_completion_mask = pad(t2_masks, padding_value=0, padding_side="right")

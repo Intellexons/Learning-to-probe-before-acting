@@ -6,8 +6,14 @@ for, how the final run is scored, and the reply format. No environment source,
 no format example, no mode directives: the probe run is turn 1 by construction
 and the final run is the last turn, so the runner reads the turn position.
 
+The probe run is optional: a first reply that defines `def policy(state)` is
+the controller and ends the task; anything else is probe code. What the model
+knows from earlier batches (quench logs of other batches) is part of the
+brief, as the batch record would be.
+
 Task fields used: `intro`, `goal`, `state_spec`, `action_spec`, `unobserved`,
-`probe_spec`, `final_spec` (see scripts/seed_tasks/build_crystallizer_tasks.py).
+`earlier_batches`, `probe_spec`, `final_spec`
+(see scripts/seed_tasks/build_crystallizer_tasks.py).
 """
 from pathlib import Path
 
@@ -27,18 +33,18 @@ _DEFAULT_FINAL_SPEC = "the same hidden parameters as your probe run, a different
 
 def _probe_section(task: dict, total_turns: int) -> str:
     n_probe = total_turns - 1
-    when = "this message" if n_probe == 1 else f"this message and the next {n_probe - 1}"
+    when = "optional, this message" if n_probe == 1 else f"optional, this message and the next {n_probe - 1}"
     probe_spec = task.get("probe_spec", _DEFAULT_PROBE_SPEC)
     return f"""## Your probe run ({when})
 
-Before the scored batch you get a probe run on {probe_spec}. It is the object `env`, already constructed:
+Before the scored batch you may run a probe on {probe_spec}. It is the object `env`, already constructed:
 
     state, info = env.reset()                                # starts a fresh probe batch
     state, reward, done, truncated, info = env.step(action)  # one step; `state` has the keys above
     env.failure_reason                                       # None, "shower", "seeds_dissolved" or "timeout"
     env.showered, env.done                                   # True once the batch has showered / has ended
 
-Drive it however you like, as many batches as you want, within {MAIN_DEFAULT_TIMEOUT} seconds of compute. Print what you learn: only your printed output reaches the next step, and output beyond {MAIN_STDOUT_TRUNCATE} characters is cut off. The controller you write afterwards has no access to `env`, to this code or to its variables.
+`done` is returned by `env.step`; `env.done`, `env.showered` and `env.failure_reason` are attributes of `env`, not keys of `state`. Drive it however you like, as many batches as you want, within {MAIN_DEFAULT_TIMEOUT} seconds of compute. Print what you learn: only your printed output reaches the next step, and output beyond {MAIN_STDOUT_TRUNCATE} characters is cut off. The controller you write afterwards has no access to `env`, to this code or to its variables.
 """
 
 
@@ -46,8 +52,9 @@ def _final_section(total_turns: int) -> str:
     if total_turns == 1:
         when, lead = "this message", "Write `def policy(state)`, the controller."
     else:
-        when = "the last message"
-        lead = "You will receive your printed output and then write `def policy(state)`, the controller."
+        when = "your controller"
+        lead = ("Whether now or after a probe run, the controller is `def policy(state)`; "
+                "after a probe run you will receive your printed output first.")
     return f"""## The final run ({when})
 
 {lead} It runs on the scored batch from its first step. {CONTROLLER_RULES}
@@ -55,8 +62,11 @@ def _final_section(total_turns: int) -> str:
 
 
 def _format_section(total_turns: int) -> str:
-    what = "the controller, defining `def policy(state)`" if total_turns == 1 else "the probe code"
-    return f"Reply with one Python code block and nothing else: {what}."
+    if total_turns == 1:
+        return "Reply with one Python code block and nothing else: the controller, defining `def policy(state)`."
+    return ("Reply with one Python code block and nothing else. If it defines `def policy(state)`, it is "
+            "your controller: the scored batch runs with it and the task ends. Anything else is probe code: "
+            "it runs on `env`, its printed output comes back to you, and you then write the controller.")
 
 
 def _followup(task: dict, turn_idx: int, total_turns: int) -> str:
@@ -64,9 +74,10 @@ def _followup(task: dict, turn_idx: int, total_turns: int) -> str:
     `compose_turn_message`)."""
     if turn_idx < total_turns:
         return (
-            "You may run another probe on a fresh `env` (same hidden parameters, a new batch; "
-            "nothing from your previous code carries over). Reply with one Python code block "
-            "and nothing else: the probe code."
+            "Reply with one Python code block and nothing else: either more probe code, run on a "
+            "fresh `env` (same hidden parameters, a new batch; nothing from your previous code "
+            "carries over), or the controller, defining `def policy(state)`, which runs on the "
+            "scored batch and ends the task."
         )
     final_spec = task.get("final_spec", _DEFAULT_FINAL_SPEC)
     return (
@@ -94,6 +105,9 @@ def render_prompt(template: str, task: dict, turn_idx: int = 1, total_turns: int
         return _followup(task, turn_idx, total_turns)
     unobserved = (task.get("unobserved") or "").strip()
     unobserved_section = f"## What you do not observe\n\n{unobserved}\n\n" if unobserved else ""
+    earlier = (task.get("earlier_batches") or "").strip()
+    if earlier:
+        unobserved_section += f"## What you know from earlier batches\n\n{earlier}\n\n"
     turn_section = (_probe_section(task, total_turns) + "\n" if total_turns > 1 else "") + _final_section(total_turns)
     return template.format(
         intro=(task.get("intro") or "Write a Python controller for the process below.").strip(),
