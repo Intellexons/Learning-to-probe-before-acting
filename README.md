@@ -28,11 +28,14 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
   **probe run**, is where the model can find it, by crossing it on a
   throwaway batch; the second turn, the **final run**, is the one that is
   scored. The model is briefed as a control engineer would be: the goal and
-  the physics in words, what it observes and what it does not, what the
-  probe run is for and what it offers. It never sees the environment's
-  source and is given no equation, so what it learns about the batch, it
-  learns by experiment (`configs/prompt_template.txt`, `src/prompts.py`,
-  task text in `scripts/seed_tasks/build_crystallizer_tasks.py`).
+  the physics in words, what it observes and what it does not, the batch
+  record (the full-cooling logs of two earlier batches that showered at
+  different levels), what the probe run is for and what it offers. It never
+  sees the environment's source and is given no equation, so what it learns
+  about this batch, it learns by experiment. The probe run is optional: a
+  first reply that defines `policy(state)` is the controller and ends the
+  task, anything else is probe code (`configs/prompt_template.txt`,
+  `src/prompts.py`, task text in `scripts/seed_tasks/build_crystallizer_tasks.py`).
 - **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
   top of the merged previous adapters, then runs an eval pass on held-out
   scenarios.
@@ -220,7 +223,7 @@ most likely to touch:
 | `loop` | `iterations` | `23` | Outer cycles (train + eval per cycle) |
 | `loop` | `trainer` | `grpo_branched` | Selects `BranchedGRPOTrainer` |
 | `branched` | `g1`, `g2` | `4`, `4` | Tree shape; `g1 * g2` leaves per prompt |
-| `branched` | `max_turn_tokens` | `400` | Per-turn generation cap |
+| `branched` | `max_turn_tokens` | `1000` | Per-turn generation cap (600 cut off half the probes written from the brief) |
 | `grpo` | `loss_type` | `dapo` | Token-summed surrogate; required for the per-turn decomposition |
 | `grpo` | `beta`, `num_iterations` | `0`, `1` | Required for the per-turn decomposition |
 | `grpo` | `epsilon`, `epsilon_high` | `0.2`, `0.28` | Asymmetric DAPO clip |

@@ -97,29 +97,36 @@ the physics in words, the readings it will see, the quantity it will not
 (the metastable limit, with its range), what the probe run is for and
 what it offers (\texttt{env.reset()}, \texttt{env.step(a)}, the end flag
 and the failure reason), how the final run is scored, and the reply
-format. It receives neither the environment's source nor any equation;
-the brief is reproduced in Appendix~\ref{app:brief}. Turn kinds are
-positional. Every turn but the last is a \emph{probe run}: one block of
-Python, fenced or bare, executed in a sandbox against a probe-run
-environment with the same hidden parameters as the scored batch on a
-different batch; the tool returns its stdout, truncated to 2000
-characters, and nothing else. The environment's source runs in a
-private namespace and the probe-run object is a whitelist, so the probe
-code has no class to instantiate and no constants to read: what it
-learns about the batch, it learns by running it. The last turn is the
-\emph{final run}: it must define \texttt{def policy(state)}, which the
-tool executes on the scored batch from its first step and rewards. A
-final turn that does not validate is floored; a probe run that does not
-parse yields a textual rejection and no reward of its own, since its
-credit comes only through the controllers that follow it. A length-$N$
+format. It also receives the batch record: the full-cooling logs of two
+earlier batches of other lots, which showered at different levels. They
+are data, not code: they show what a shower looks like in the readings
+and that the level varies from batch to batch, and say nothing about
+this batch's level. It receives neither the environment's source nor any
+equation; the brief is reproduced in Appendix~\ref{app:brief}. The probe
+run is optional, and what a reply is follows from its content. A reply
+that defines \texttt{def policy(state)} is the \emph{controller}: the
+tool executes it on the scored batch from its first step, rewards it,
+and the task ends, on whatever turn it comes. Any other block of Python,
+fenced or bare, is a \emph{probe run}: it is executed in a sandbox
+against a probe-run environment with the same hidden parameters as the
+scored batch on a different batch, and the tool returns its stdout,
+truncated to 2000 characters, and nothing else. The environment's
+source runs in a private namespace and the probe-run object is a
+whitelist, so the probe code has no class to instantiate and no
+constants to read: what it learns about the batch, it learns by running
+it. The last turn must be the controller. A controller that does not
+validate is floored; a probe run that does not parse yields a textual
+rejection and no reward of its own, since its credit comes only through
+the controller that follows it. Whether to probe at all is therefore the
+model's first decision, and the probe rate is a quantity we measure. A length-$N$
 trajectory is
 \(
   \tau = (s,\, y^{(1)},\, m^{(1)},\, \dots,\, y^{(N-1)},\, m^{(N-1)},\, y^{(N)}),
 \)
 with completions $y^{(n)}$ alternating with tool messages $m^{(n)}$,
 and $R(\tau) = R(\text{code in }y^{(N)})$ the only scalar reward.
-The remainder of the paper specializes to $N{=}2$: one probe run
-followed by the controller. Generalizing the rollout, advantages, and
+The remainder of the paper specializes to $N{=}2$: at most one probe
+run, then the controller. Generalizing the rollout, advantages, and
 loss decomposition below to $N{>}2$ is straightforward (see
 \S\ref{sec:limitations}).
 
@@ -633,9 +640,54 @@ state, and nothing in the readings depends on it until it is crossed. It is
 fixed for this task and lies between 0.08 and 0.25. How fast you can safely
 cool depends on it.
 
-## Your probe run (this message)
+## What you know from earlier batches
 
-Before the scored batch you get a probe run on the same crystallizer, with the
+Batch A, quenched at full cooling from 57.7 degC (target 20.4 degC):
+step    T      sigma
+   1   57.2  0.010
+   2   56.7  0.020
+   3   56.2  0.030
+   4   55.7  0.041
+   5   55.2  0.051
+   6   54.7  0.061
+   7   54.2  0.072
+   8   53.7  0.082
+   9   53.2  0.092
+  10   52.7  0.103
+  11   52.2  0.113   showered -> batch ruined
+
+Batch B, quenched at full cooling from 63.3 degC (target 24.3 degC):
+step    T      sigma
+   1   62.8  0.010
+   2   62.3  0.019
+   3   61.8  0.029
+   4   61.3  0.039
+   5   60.8  0.048
+   6   60.3  0.058
+   7   59.8  0.068
+   8   59.3  0.078
+   9   58.8  0.088
+  10   58.3  0.097
+  11   57.8  0.107
+  12   57.3  0.117
+  13   56.8  0.126
+  14   56.3  0.136
+  15   55.8  0.145
+  16   55.3  0.154
+  17   54.8  0.163
+  18   54.3  0.172
+  19   53.8  0.180
+  20   53.3  0.188
+  21   52.8  0.196
+  22   52.3  0.203
+  23   51.8  0.210
+  24   51.3  0.216   showered -> batch ruined
+
+Each batch showers at its own level; this batch's level is unknown.
+
+## Your probe run (optional, this message)
+
+Before the scored batch you may run a probe on the same crystallizer, with the
 same sigma_max, on a different batch (its own start temperature, target and
 seed loading). It is the object `env`, already constructed:
 
@@ -648,26 +700,33 @@ seed loading). It is the object `env`, already constructed:
     env.showered, env.done                                   # True once the
         batch has showered / has ended
 
-Drive it however you like, as many batches as you want, within 30 seconds of
-compute. Print what you learn: only your printed output reaches the next step,
-and output beyond 2000 characters is cut off. The controller you write
-afterwards has no access to `env`, to this code or to its variables.
+`done` is returned by `env.step`; `env.done`, `env.showered` and
+`env.failure_reason` are attributes of `env`, not keys of `state`. Drive it
+however you like, as many batches as you want, within 30 seconds of compute.
+Print what you learn: only your printed output reaches the next step, and
+output beyond 2000 characters is cut off. The controller you write afterwards
+has no access to `env`, to this code or to its variables.
 
-## The final run (the last message)
+## The final run (your controller)
 
-You will receive your printed output and then write `def policy(state)`, the
-controller. It runs on the scored batch from its first step. It is called once
-per step with the state dict and returns the action. It may keep state between
-calls (module-level variables are fine); it runs on one batch. Import only
-`math` and `random`. Read only the state keys listed above.
+Whether now or after a probe run, the controller is `def policy(state)`; after
+a probe run you will receive your printed output first. It runs on the scored
+batch from its first step. It is called once per step with the state dict and
+returns the action. It may keep state between calls (module-level variables
+are fine); it runs on one batch. Import only `math` and `random`. Read only
+the state keys listed above.
 
 ## Format
 
-Reply with one Python code block and nothing else: the probe code.
+Reply with one Python code block and nothing else. If it defines `def
+policy(state)`, it is your controller: the scored batch runs with it and the
+task ends. Anything else is probe code: it runs on `env`, its printed output
+comes back to you, and you then write the controller.
 \end{verbatim}
 \end{scriptsize}
 
-The second user message: the probe run's output, then the instruction for the final run.
+The second user message, after a probe run: its printed output, then the instruction for the
+final run.
 
 \begin{scriptsize}
 \begin{verbatim}
