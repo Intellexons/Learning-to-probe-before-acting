@@ -20,15 +20,19 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
   `LORA4VR_BASE_MODEL`). Weights are frozen; only a LoRA adapter is trained.
 - **Task family:** a seeded batch cooling crystallizer. A saturated
   solution holding seed crystals is cooled to a target temperature, and the
-  policy sets the cooling rate every 20 s. Cooling creates supersaturation,
-  the seeds grow and consume it, and if the supersaturation ever crosses a
-  hidden metastable limit a shower of new nuclei ruins the batch. The
-  fastest safe recipe rides just below that limit, and the limit shows up
-  nowhere in the readings until it is crossed. The first turn, the **probe
-  run**, is where the model can find it, by crossing it on a throwaway
-  batch; the second turn, the **final run**, is the one that is scored. The
-  environment source ships inside each prompt, so the model has to read the
-  physics rather than recognize a name.
+  policy sets the cooling rate every 20 s. Cooling creates supersaturation
+  (a reading, `sigma`), the seeds grow and consume it, and if it ever
+  crosses a hidden metastable limit a shower of new nuclei ruins the batch.
+  The fastest safe recipe rides just below that limit, and the limit shows
+  up nowhere in the readings until it is crossed. The first turn, the
+  **probe run**, is where the model can find it, by crossing it on a
+  throwaway batch; the second turn, the **final run**, is the one that is
+  scored. The model is briefed as a control engineer would be: the goal and
+  the physics in words, what it observes and what it does not, what the
+  probe run is for and what it offers. It never sees the environment's
+  source and is given no equation, so what it learns about the batch, it
+  learns by experiment (`configs/prompt_template.txt`, `src/prompts.py`,
+  task text in `scripts/seed_tasks/build_crystallizer_tasks.py`).
 - **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
   top of the merged previous adapters, then runs an eval pass on held-out
   scenarios.
@@ -77,10 +81,11 @@ paper.
 The study is a ladder of stages; each one is a go-or-stop check for the next.
 Stage 0 (is the environment worth it: hand-written controllers with and
 without the hidden limit) and Stage 0b (the hand-written probe run and final
-run through the real runner) have passed. Stage 1 (frozen model, one turn)
-and Stage 2 (frozen model with a probe run) are next and need a GPU. Stages 3
-to 6 are the trained arms C to F of the paper, ending with our branched
-method with per-turn baselines. The full plan with pass criteria and status
+run through the real runner, redone from the brief alone on 2026-10-26) have
+passed. Stage 1 (frozen model, one turn) and Stage 2 (frozen model with a
+probe run) ran on 2026-10-25 under the earlier protocol-style prompt and are
+re-run under the brief. Stages 3 to 6 are the trained arms C to F of the
+paper, ending with our branched method with per-turn baselines. The full plan with pass criteria and status
 is the "Experiment plan" section of `docs/paper.tex`; the evidence is in
 `docs/findings.tex`.
 
@@ -139,7 +144,7 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
 | `eval_frozen_baseline.py` | Stages 1 and 2: frozen model, one turn or probe run + final run, next to the blind and oracle references |
 | `stage0_gate_crystal.py` | Stage 0: blind vs informed hand-written controllers on the crystallizer (the env-validity gate) |
-| `stage0b_two_turn.py` | Stage 0b: the hand-written probe run and final run through the real execution path |
+| `stage0b_two_turn.py` | Stage 0b: a hand-written probe run and final run, from the brief alone (readings only), through the real execution path |
 | `seed_tasks/build_crystallizer_tasks.py` | Regenerates the task files from the env source |
 
 `09_run_loop.py` flags:
@@ -222,7 +227,6 @@ most likely to touch:
 | `training` | `per_device_train_batch_size` | `16` | = `g1 * g2`, one prompt's trajectories per inner step |
 | `training` | `num_train_epochs` | `1` | Passes over the train task set per outer iter |
 | `eval` | `n_turns` | `2` | Eval rollouts match the training protocol |
-| `prompt` | `example` | `format` | What the multi-turn format example shows: `format` (fences and directives only, nothing to copy; the default since the Stage 2 ablation of 2026-10-26), `full` (reset + print the state; the frozen model copied it in 80 to 83 of 96 probe runs), `none` (the frozen model then never takes the probe turn and drops the fences) |
 | `lora` | `r`, `alpha` | `16`, `32` | LoRA rank and scaling on q/k/v/o_proj |
 | `training` | `report_to` | `wandb` | `wandb` or `none` |
 | `paths` | `gcs_bucket` | _(unset)_ | Optional GCS checkpoint sync |
@@ -245,12 +249,16 @@ hidden limit as the final run.
   "task_id": "crystallizer_train_s0",
   "env_class": "CrystallizerEnv",
   "env_code": "\"\"\"Seeded batch cooling crystallizer with a hidden metastable limit. ...",
-  "state_spec": "state is a dict with keys: t (elapsed steps), T (solution temperature, degC), ...",
-  "action_spec": "action is a float in [-1, 1]: the commanded jacket rate ...",
-  "goal": "Cool the seeded batch to the target temperature as fast as possible ...",
+  "intro": "You are the control engineer for a seeded batch cooling crystallizer: ...",
+  "goal": "Cool the batch to its target temperature as fast as possible without ruining it. ...",
+  "state_spec": "`state` is a dict with keys: t (elapsed steps), T (solution temperature, degC), ... sigma (relative supersaturation, dimensionless).",
+  "action_spec": "`action` is a float in [-1, 1]: the jacket rate as a fraction of its 1.5 degC/min limit; ...",
+  "unobserved": "sigma_max, the level of sigma at which this batch showers. It is not in the state, ...",
+  "probe_spec": "the same crystallizer, with the same sigma_max, on a different batch (...)",
+  "final_spec": "the same sigma_max as your probe run, a different batch",
   "scenarios": [
     {"scenario_id": "s0", "seed": 0, "probe_seed": 100000,
-     "hidden": {"sigma_max": 0.1687}, "oracle_steps": 121}
+     "hidden": {"sigma_max": 0.1687}, "oracle_steps": 117}
   ]
 }
 ```
@@ -258,11 +266,13 @@ hidden limit as the final run.
 `seed` is the batch the final run (the scored one) is run on and `probe_seed`
 a different batch for the probe run. `hidden` is splatted into the env's
 `HiddenParams` by the runner. `oracle_steps` is what the time-optimal
-controller needs on the scoring batch; the fast-success and normalised-time
-metrics are measured against it. The full env source is embedded in
-`env_code` so the prompt template can paste it into the model's context.
-`build_crystallizer_tasks.py` regenerates the files when the env source or
-the task text changes.
+controller needs on the scoring batch when it knows the limit; the
+fast-success and normalised-time metrics are measured against it. The full
+env source is embedded in `env_code` so the runner can execute it inside its
+sandbox; the model never sees it. What the model sees is the brief, rendered
+by `src/prompts.py` from `intro`, `goal`, `state_spec`, `action_spec`,
+`unobserved`, `probe_spec` and `final_spec`. `build_crystallizer_tasks.py`
+regenerates the files when the env source or the text changes.
 
 ## Training on GCP
 

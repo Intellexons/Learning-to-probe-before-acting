@@ -74,41 +74,61 @@ AI-Scientist-style systems use LLMs to generate hypotheses, write and run code, 
 The agent is a language model $\pi_\theta$ over chat-template
 trajectories. The base is \texttt{Qwen3-4B-Instruct-2507} with
 frozen weights $W$; $\theta$ parameterizes a LoRA adapter
-$W' = W + AB^\top$. A task $\mathcal{T}$ specifies environment source
-code, $S$ scenarios $\{\sigma_i\}$ that vary the seed and hidden
-parameters, and a per-scenario reward. The scoring oracle runs a
-candidate policy body in a sandboxed subprocess against each scenario
-and returns
+$W' = W + AB^\top$. A task $\mathcal{T}$ specifies an environment (its
+source runs only inside the scoring sandbox; the model receives a brief
+in words, \S\ref{sec:protocol}), $S$ scenarios $\{\sigma_i\}$ that fix
+the seed and the hidden parameters, and a per-scenario reward. The
+scoring oracle runs a candidate policy body in a sandboxed subprocess
+against each scenario and returns
 \(
   R(\text{code};\mathcal{T}) = \sum_i r_i(\text{code};\sigma_i).
 \)
 Validation failures, errors, and timeouts on $\sigma_i$ score the
-\emph{error floor} $r_i = -200$, calibrated below any
-running-but-failing trajectory --- otherwise errored rollouts ($r=0$)
-outrank running-but-poor rollouts and the gradient rewards crashing.
+\emph{error floor} $r_i = -300$, calibrated below any
+running-but-failing trajectory ($-260$ at worst) --- otherwise errored
+rollouts ($r=0$) outrank running-but-poor rollouts and the gradient
+rewards crashing.
 
 \subsection{Chat-template protocol}
 \label{sec:protocol}
 
-Each turn the model emits one fenced code block tagged \texttt{policy}
-or \texttt{main}. \texttt{policy} defines \texttt{def policy(state)},
-which the tool executes across all scenarios and reports the summed
-reward as a user-role message. \texttt{main} is scratchpad or probe
-code run in a rehearsal sandbox; the tool returns truncated stdout but
-no final policy reward. The final turn must be \texttt{policy};
-\texttt{main} or untagged final turns are floored. Malformed intermediate turns are likewise
-floored and surfaced as a textual rejection. A length-$N$ trajectory
-is
+The model is briefed the way a control engineer would be: the goal and
+the physics in words, the readings it will see, the quantity it will not
+(the metastable limit, with its range), what the probe run is for and
+what it offers (\texttt{env.reset()}, \texttt{env.step(a)}, the end flag
+and the failure reason), how the final run is scored, and the reply
+format. It receives neither the environment's source nor any equation;
+the brief is reproduced in Appendix~\ref{app:brief}. Turn kinds are
+positional. Every turn but the last is a \emph{probe run}: one block of
+Python, fenced or bare, executed in a sandbox against a probe-run
+environment with the same hidden parameters as the scored batch on a
+different batch; the tool returns its stdout, truncated to 2000
+characters, and nothing else. The environment's source runs in a
+private namespace and the probe-run object is a whitelist, so the probe
+code has no class to instantiate and no constants to read: what it
+learns about the batch, it learns by running it. The last turn is the
+\emph{final run}: it must define \texttt{def policy(state)}, which the
+tool executes on the scored batch from its first step and rewards. A
+final turn that does not validate is floored; a probe run that does not
+parse yields a textual rejection and no reward of its own, since its
+credit comes only through the controllers that follow it. A length-$N$
+trajectory is
 \(
   \tau = (s,\, y^{(1)},\, m^{(1)},\, \dots,\, y^{(N-1)},\, m^{(N-1)},\, y^{(N)}),
 \)
 with completions $y^{(n)}$ alternating with tool messages $m^{(n)}$,
 and $R(\tau) = R(\text{code in }y^{(N)})$ the only scalar reward.
-The remainder of the paper specializes to $N{=}2$: a single
-intermediate turn (draft policy or scratchpad) followed by a committed
-\texttt{policy}. Generalizing the rollout, advantages, and loss
-decomposition below to $N{>}2$ is straightforward (see
+The remainder of the paper specializes to $N{=}2$: one probe run
+followed by the controller. Generalizing the rollout, advantages, and
+loss decomposition below to $N{>}2$ is straightforward (see
 \S\ref{sec:limitations}).
+
+An earlier version of the protocol (used for the runs of 2026-10-25,
+\S\ref{sec:plan}) shipped the environment's source in the prompt, a
+mode directive on the first line of each block and a format example.
+The frozen model copied the example's probe in 83 of 96 cases and,
+without it, built crystallizers of its own with limits of its own
+choosing; the brief replaced it on 2026-10-26.
 
 \subsection{Token-summed clipped surrogate}
 
@@ -368,9 +388,9 @@ no theoretical cost (\S\ref{sec:limitations}).
 
 \section{Experimental setup}
 
-\paragraph{Environment.} We use a seeded batch cooling crystallizer rather than a standard benchmark whose solution may already be familiar to the base model. A saturated solution holding a known mass of seed crystals is cooled from $55$--$65\,^\circ$C to a target of $18$--$25\,^\circ$C. The policy observes $\{t,T,c,L,T_{\rm target},\text{steps\_left}\}$ (time, temperature, dissolved concentration, mean crystal size, target) and outputs the jacket rate as a fraction of its $1.5\,^\circ$C/min limit, clipped to $[-1,1]$, once per 20\,s step for at most 600 steps. Cooling creates supersaturation $\sigma=c/c^*(T)-1$; the seeds grow and consume it. Success requires reaching the target temperature with the solution equilibrated ($\sigma\le0.02$). If $\sigma$ ever exceeds the hidden metastable limit $\sigma_{\max}\sim U[0.08,0.25]$, a shower of new nuclei ruins the batch and the episode ends in failure. The reward is $-0.1$ per step, $+120$ on success and $-80$ on failure. Full dynamics are in Appendix~\ref{app:crystallizer}.
+\paragraph{Environment.} We use a seeded batch cooling crystallizer rather than a standard benchmark whose solution may already be familiar to the base model. A saturated solution holding a known mass of seed crystals is cooled from $55$--$65\,^\circ$C to a target of $18$--$25\,^\circ$C. The policy observes $\{t,T,c,L,T_{\rm target},\text{steps\_left},\sigma\}$ (time, temperature, dissolved concentration, mean crystal size, target, and the relative supersaturation $\sigma=c/c^*(T)-1$, reported as a reading as an in-line concentration probe would) and outputs the jacket rate as a fraction of its $1.5\,^\circ$C/min limit, clipped to $[-1,1]$, once per 20\,s step for at most 600 steps. Cooling raises $\sigma$; the seeds grow and consume it. Success requires reaching the target temperature with the solution equilibrated ($\sigma\le0.02$). If the reported $\sigma$ ever exceeds the hidden metastable limit $\sigma_{\max}\sim U[0.08,0.25]$, a shower of new nuclei ruins the batch and the episode ends in failure. The reward is $-0.3$ per step, $+120$ on success and $-80$ on failure. Full dynamics are in Appendix~\ref{app:crystallizer}.
 
-\paragraph{Why it tests turn-level credit.} The time-optimal recipe rides just below $\sigma_{\max}$, but $\sigma_{\max}$ enters the dynamics only through the shower test: the readings of a batch that never showers are identical for every value of the limit. A final policy therefore cannot learn the limit in-episode, and its best blind option is to ride at the lowest limit in the range, which costs two to three times the optimal batch time at the top of the range. A first-turn probe run, which has the same environment class, the same actions and readings and the same hidden limit on a different batch, can find the limit the only way physics allows: cool at the jacket limit until the batch showers and keep the last safe supersaturation. One batch brackets the limit to about $0.01$; three batches to $2\times10^{-4}$. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a limit-aware oracle is large enough to carry the study was settled with hand-written controllers before any model was run (Stage~0, \S\ref{sec:plan}): the best blind controller reaches $7.5\%$ fast success over the range against $100\%$ for the informed one, and the hand-written probe run plus final run reaches $100\%$ fast success through the training runner (Stage~0b).
+\paragraph{Why it tests turn-level credit.} The time-optimal recipe rides just below $\sigma_{\max}$, but $\sigma_{\max}$ enters the dynamics only through the shower test: the readings of a batch that never showers are identical for every value of the limit. A final policy therefore cannot learn the limit in-episode, and its best blind option is to ride at the lowest limit in the range, which costs two to three times the optimal batch time at the top of the range. A first-turn probe run, which has the same actions and readings and the same hidden limit on a different batch, can find the limit the only way physics allows: cool at the jacket limit until the batch showers and keep the last safe reading. One batch brackets the limit to the rise of one step, about $0.01$; from readings alone, further batches that creep up from the last safe level bring the median error to $0.004$. This makes the first turn useful only through its effect on the final policy. Whether the gap between a blind controller and a limit-aware oracle is large enough to carry the study was settled with hand-written controllers before any model was run (Stage~0, \S\ref{sec:plan}): the best blind controller reaches $7.5\%$ fast success over the range against $100\%$ for the informed one, and a hand-written probe run plus controller written from the brief alone, readings only, reaches $100\%$ fast success through the training runner (Stage~0b).
 
 \paragraph{Model and training.} We train LoRA rank $r=16$ on attention projections of \texttt{Qwen3-4B-Instruct-2507}; base weights are frozen, bf16 is used, and gradient checkpointing is enabled. Unless stated otherwise, $G_1=G_2=4$ and each turn is capped at 400 tokens. The loss is the token-summed clipped surrogate \eqref{eq:loss} with $\epsilon_{\rm lo}=0.2$, asymmetric upper clipping, $\beta=0$, no critic, no GAE, and no context truncation across turns.
 
@@ -384,30 +404,30 @@ The experiments form a ladder of stages. Each stage asks one question and is a g
 \subsection{Stage 0: is the environment worth it?}
 \textbf{Question.} Does knowing the hidden limit buy anything that a controller without it cannot get from the final run's own readings?
 \textbf{Protocol.} A blind side (one hand-written controller for every limit in the range) and an informed side (one controller per limit) search the same controller families with the same optimizer budget on the same seeds, and are scored on fresh seeds. Three gates were fixed beforehand: the informed side reaches $\ge 90\%$ fast success at every limit (G1); it beats the blind side by $\ge 40$ percentage points of fast success over the range (G2); a hand-written probe run plus final run reaches $\ge 95\%$ fast success (G3).
-\textbf{Status.} Passed on 2026-10-24. The best blind controller rides at the lowest limit in the range and reaches $7.5\%$ fast success (normalised time $0.50$); the informed side reaches $100\%$ at every limit; the hand-written two-turn solution reaches $100\%$, recovering the limit to $2\times10^{-4}$. The same gate had failed for the earlier slosh-tank environment, which was dropped.
+\textbf{Status.} Passed on 2026-10-24, on the environment as it then was (shower test on the mid-step supersaturation, time weight $0.1$). The best blind controller rides at the lowest limit in the range and reaches $7.5\%$ fast success (normalised time $0.50$); the informed side reaches $100\%$ at every limit; the hand-written two-turn solution reaches $100\%$, recovering the limit to $2\times10^{-4}$ with the solubility curve in hand. The same gate had failed for the earlier slosh-tank environment, which was dropped. The environment changed on 2026-10-26 ($\sigma$ a reading, the shower test on the reported value, time weight $0.3$; Appendix~\ref{app:crystallizer}); the gate's conclusion stands, since the blind controller is unchanged and the informed one only got faster (130 against 306 steps on the 36 task batches).
 
 \subsection{Stage 0b: the hand-written solution through the training runner}
 \textbf{Question.} Does the Stage~0 solution survive the real execution path: the sandbox subprocess, the probe-run environment with the limit masked, and a probe batch different from the scoring batch?
-\textbf{Protocol.} The Stage~0 probe source is pushed through the runner's turn executor, its printed bracket is pasted into the final-run template, and the final policy is scored as the trainer scores it, on the 36 task-file batches plus 200 fresh ones. Gate: fast success $\ge 95\%$.
-\textbf{Status.} Passed on 2026-10-25: $100\%$ fast success on 236 batches, no probe failures, probe error $2\times10^{-4}$, normalised time $0.97$--$0.99$.
+\textbf{Protocol.} A hand-written probe source is pushed through the runner's turn executor, its printed bracket is pasted into a controller template, and the controller is scored as the trainer scores it, on the 36 task-file batches plus fresh ones. Gate: fast success $\ge 95\%$.
+\textbf{Status.} Passed on 2026-10-25 with the Stage~0 solution (236 batches, $100\%$ fast, probe error $2\times10^{-4}$). Redone on 2026-10-26 from the brief alone, readings only, against the changed environment: a three-batch probe that resets, steps and reads $\sigma$, and a feedback controller with memory that holds the reading $0.003$ under the level found, give $100\%$ fast success on 136 batches (normalised time $0.95$, median probe error $0.004$, at most $0.011$) where the blind controller is fast on $4\%$. The task is solvable with exactly what the model is told.
 
 \subsection{Stage 1: the frozen model in one turn (arm A)}
 \textbf{Question.} Can the base model write a working cooling policy from the prompt alone, and how fast is it without a probe run?
 \textbf{Protocol.} $N$ one-turn samples per held-out task, scored exactly as in training; fast success, normalised time and reward next to the blind and oracle references.
 \textbf{Decides.} The floor of the study. A rate near the blind reference shows the headroom a probe run can buy. A model that cannot write a running controller at all is a prompt problem to fix before anything else.
-\textbf{Status.} Done on 2026-10-25 (12 held-out batches, 8 samples each, temperature 0.8). \textbf{Result.} The code runs in 99\% of samples, but the batch is ruined in 79 of 96: the model takes the top of the stated range as its target (the constant 0.25 appears in 92 of 96 policies) and cools too hard from the first step. Success 12.5\%, fast success 1\%, normalised time 0.075, mean reward $-61$, against $+89$ for the blind cautious controller and $+107$ for the oracle. The frozen model sits far below the blind reference, so the headroom is the whole scale: caution first, then the probe.
+\textbf{Status.} Done on 2026-10-25 under the protocol prompt (12 held-out batches, 8 samples each, temperature 0.8). \textbf{Result.} The code runs in 99\% of samples, but the batch is ruined in 79 of 96: the model takes the top of the stated range as its target (the constant 0.25 appears in 92 of 96 policies) and cools too hard from the first step. Success 12.5\%, fast success 1\%, normalised time 0.075, mean reward $-61$, against $+89$ for the blind cautious controller and $+107$ for the oracle. The frozen model sits far below the blind reference, so the headroom is the whole scale: caution first, then the probe. \textbf{Under the brief} (2026-10-26, changed environment, rewards not comparable): 68 of 96 controllers are valid, 28 are cut off by the 600-token budget mid-code; 14 slow successes, no fast one, 27 ruined after a median of 23 steps, 24 timeouts, most of them controllers that never cool. Mean reward $-160$ with the floor at $-300$, against $+27$ blind and $+82$ oracle.
 
 \subsection{Stage 2: the frozen model with a probe run (arm B)}
 \textbf{Question.} Does the frozen model already write a useful probe run and use its output?
 \textbf{Protocol.} As Stage~1, with two turns under the training protocol: the final turn must be a policy, and an early policy does not end the rollout. The turn-1 mode and code are kept per sample, so the record shows which probe the model writes: none, a slow creep, or a fast one.
 \textbf{Decides.} If arm B is already near the informed ceiling, RL has nothing left to teach about probing and the environment must get harder before any training run (hide the growth constant too, or add a jacket lag). If arm B is near arm A, the gap between them is the training target.
-\textbf{Status.} Done on 2026-10-25. \textbf{Result.} The model used the probe run in all 96 samples, but 83 probe runs only reset the environment and print its initial state, the shape of the prompt's format example; 9 step a few times at full cooling, on an environment they construct themselves with a random limit; none brackets the limit. The final policies paste numbers from the probe batch into code that runs on a different batch (93 of 96) and all contain the constant 0.25: success 3 of 96, no fast success, normalised time 0.013, mean reward $-76$, below arm A. The probe run is a ritual, not an experiment, and the risk that the frozen model already writes the one-batch probe did not materialise. The gap to the informed ceiling is the training target.
+\textbf{Status.} Done on 2026-10-25 under the protocol prompt. \textbf{Result.} The model used the probe run in all 96 samples, but 83 probe runs only reset the environment and print its initial state, the shape of the prompt's format example; 9 step a few times at full cooling, on an environment they construct themselves with a random limit; none brackets the limit. The final policies paste numbers from the probe batch into code that runs on a different batch (93 of 96) and all contain the constant 0.25: success 3 of 96, no fast success, normalised time 0.013, mean reward $-76$, below arm A. The probe run is a ritual, not an experiment, and the risk that the frozen model already writes the one-batch probe did not materialise. \textbf{Under the brief} (2026-10-26): the ritual is gone. 87 of 96 probes step the environment, 61 cool at the jacket limit, 92 check the end flag or the failure reason, 30 run several batches, none builds its own crystallizer; the experiment has the right shape in nearly every sample. But 44 probes are cut off by the 600-token budget before they can run, 22 crash on reading the end flag as a state key, and only 5 outputs hold the limit to within $0.01$. Only 7 controllers reuse a number the probe printed; when the probe failed, several invented its results. Success 24 of 96 (2 fast, the fast one on invented results), 24 ruined after a median of 20 steps at full cooling towards a setpoint of $0.18$--$0.20$ with no margin, 33 timeouts, mean reward $-116$ against $+27$ blind and $+82$ oracle. The training target is now concrete: get the number out of the probe and leave a margin.
 
 \textbf{Example ablation} (2026-10-26, config key \texttt{prompt.example}). The same protocol with three versions of the prompt's format example, 96 samples each: the original (\emph{full}: reset the environment and print the state), the same two blocks with a comment in place of the probe code (\emph{format}), and no example (\emph{none}). Full replicated the result above: 80 of 96 probe runs copy the example. None removed the probe run altogether: the model answered with a policy in all 96 first turns, 59 of them without the required fence, so they were rejected. Format removed the copying (31 of 96) and produced experiments: 61 probe runs say they will find the limit and 44 step an environment in a loop and check the end flag, but every one constructs a fresh crystallizer instead of using the one provided, 39 with a limit of the model's own choosing, so the experiment can only confirm a guess; 5 heat instead of cool; and no final policy takes a number from its probe output, 92 of 96 keep the constant 0.25 (success 7 of 96, fast 1). The probes are three times longer and 17 ran out of the 600-token turn budget. The format example is the default from here on. What the frozen model lacks is not the idea of an experiment but two facts about the given environment: that the probe must run on it rather than on a copy, and that the number found there must become the setpoint.
 
 \subsection{Stage 3: single-turn GRPO (arm C)}
 \textbf{Question.} Does RL fine-tuning help without a probe run?
-\textbf{Decides.} The ceiling is the blind optimum, so the stage checks the training plumbing and the reward rather than the thesis. It also shows whether the time weight tempts the model to gamble on low-limit batches; the weight ($0.1$ as shipped, or $0.3$) is fixed before this stage.
+\textbf{Decides.} The ceiling is the blind optimum, so the stage checks the training plumbing and the reward rather than the thesis. It also shows whether the time weight tempts the model to gamble on low-limit batches; the weight was fixed at $0.3$ on 2026-10-26 (a good probe is then worth $+53$ over the blind controller, against $+18$ at $0.1$, while a ruined batch still costs $114$ more than the blind controller earns).
 \textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
 
 \subsection{Stage 4: flat multi-turn training (arm D)}
@@ -530,15 +550,15 @@ The per-turn loss decomposition addresses peak \emph{gradient} memory but does n
 \section{Seeded cooling crystallizer}
 \label{app:crystallizer}
 
-One kilogram of solvent holds dissolved solute at concentration $c$ (kg per kg solvent) and $N$ monodisperse seed crystals of size $L$. The solubility is $c^*(T)=0.20+0.006\,T+0.0001\,T^2$ with $T$ in $^\circ$C and the relative supersaturation is $\sigma=c/c^*(T)-1$. A batch starts saturated at $T_0\sim U[55,65]\,^\circ$C with a seed mass equal to $3$--$6\%$ of the theoretical yield down to the target $T_{\rm target}\sim U[18,25]\,^\circ$C. In each 20\,s step the jacket moves the temperature by the commanded fraction of $1.5\,^\circ$C/min, the shower test is evaluated at the new temperature with the current concentration, and the crystals then grow for 20\,s:
+One kilogram of solvent holds dissolved solute at concentration $c$ (kg per kg solvent) and $N$ monodisperse seed crystals of size $L$. The solubility is $c^*(T)=0.20+0.006\,T+0.0001\,T^2$ with $T$ in $^\circ$C and the relative supersaturation is $\sigma=c/c^*(T)-1$. A batch starts saturated at $T_0\sim U[55,65]\,^\circ$C with a seed mass equal to $3$--$6\%$ of the theoretical yield down to the target $T_{\rm target}\sim U[18,25]\,^\circ$C. In each 20\,s step the jacket moves the temperature by the commanded fraction of $1.5\,^\circ$C/min, the crystals grow for 20\,s driven by the supersaturation at the new temperature, and the shower test is applied to the supersaturation at the end of the step, the value the state reports (until 2026-10-26 the test used the mid-step value before growth, which the readings never show):
 \begin{align}
 \frac{dL}{dt} &= k_g\,\sigma^{g}, \qquad k_g=1.5\times10^{-6}\,\text{m/s},\quad g=1.5, \notag\\
 \frac{dc}{dt} &= -\rho N\,3L^2\,\frac{dL}{dt}, \qquad \rho=2000\,\text{kg/m}^3,
 \end{align}
-with dissolution by the same law when $\sigma<0$ and the mass transfer capped so that one step cannot cross saturation. Success requires $T\le T_{\rm target}+0.25\,^\circ$C and $\sigma\le0.02$. The episode ends in failure if $\sigma>\sigma_{\max}$ at any shower test (a shower of new nuclei) or if the seeds dissolve below $30\%$ of their initial size, and by timeout after 600 steps. The reward is $-0.1$ per step, $+120$ on success and $-80$ on failure.
+with dissolution by the same law when $\sigma<0$ and the mass transfer capped so that one step cannot cross saturation. Success requires $T\le T_{\rm target}+0.25\,^\circ$C and $\sigma\le0.02$. The episode ends in failure if the reported $\sigma$ exceeds $\sigma_{\max}$ at the end of any step (a shower of new nuclei) or if the seeds dissolve below $30\%$ of their initial size, and by timeout after 600 steps. The reward is $-0.3$ per step, $+120$ on success and $-80$ on failure.
 
 \paragraph{Why the metastable limit is the hidden quantity.}
-$\sigma_{\max}$ appears nowhere except in the shower test, so two batches with different limits produce identical readings under identical actions until one of them showers; no in-episode estimator exists. The time-optimal controller tracks $\sigma=\sigma_{\max}$ with a one-step lookahead on the solubility curve and accelerates as the crystals grow (classical programmed cooling). A controller that does not know the limit must ride at the bottom of the range ($\sigma\approx0.077$), which succeeds on every batch but takes $2$--$3$ times longer at the top of the range. The probe run finds the limit by crossing it: cooling at the jacket limit until the shower brackets $\sigma_{\max}$ to the supersaturation gained in one step, about $0.01$; two further batches that creep up from the last safe level tighten this to $2\times10^{-4}$. A slow single-batch creep is worse, not better: at high limits the growing crystals consume supersaturation faster than the creep adds it, and the batch equilibrates without ever reaching the limit.
+$\sigma_{\max}$ appears nowhere except in the shower test, so two batches with different limits produce identical readings under identical actions until one of them showers; no in-episode estimator exists. The time-optimal controller holds the reported $\sigma$ at $\sigma_{\max}$: with the dynamics known, the largest cooling that keeps the end-of-step value at the limit is found by bisection each step, and it accelerates as the crystals grow (classical programmed cooling); on the 36 task batches it needs 130 steps on average. A controller that does not know the limit must ride at the bottom of the range ($\sigma\approx0.077$), which succeeds on every batch but takes 306 steps on average, $2$--$3$ times longer at the top of the range. The probe run finds the limit by crossing it: cooling at the jacket limit until the shower brackets $\sigma_{\max}$ to the rise of one step, about $0.01$; from readings alone, two further batches that creep up from the last safe level bring the median error to $0.004$ (at most $0.011$), which a feedback controller with a margin of $0.003$ turns into $95\%$ of the oracle's speed. A slow single-batch creep is worse, not better: at high limits the growing crystals consume supersaturation faster than the creep adds it, and the batch equilibrates without ever reaching the limit.
 
 \paragraph{Configuration.}
 \begin{center}
@@ -554,12 +574,115 @@ Growth constant, order & $k_g$, $g$ & $1.5\times10^{-6}$\,m/s, $1.5$ & fixed \\
 Seed size, loading & $L_0$ & $100\,\mu$m, $3$--$6\%$ of yield & per batch \\
 Start, target temperature & $T_0$, $T_{\rm target}$ & $U[55,65]$, $U[18,25]\,^\circ$C & per batch \\
 Success tolerances & $\epsilon_T$, $\epsilon_\sigma$ & $0.25\,^\circ$C, $0.02$ & fixed \\
-Reward & & $-0.1$ per step, $+120$, $-80$ & fixed \\
+Reward & & $-0.3$ per step, $+120$, $-80$ & fixed \\
+Error floor & & $-300$ per scenario & fixed \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Each training task is one batch (its seed) with its own hidden limit; the probe run uses the same limit on a different batch, and the probe-run environment exposes every method and reading of the final-run environment but not the hidden parameters. The time-optimal number of steps for the scoring batch is stored with the task and defines the fast-success and normalised-time metrics. The two-turn protocol is useful only if a probe-aware controller can close the gap: the blind cautious controller sets the no-probe reference, the oracle sets the upper bound, and the hand-written probe run plus final run is the achievable probe-aware reference.
+Each training task is one batch (its seed) with its own hidden limit; the probe run uses the same limit on a different batch, and the probe-run object offers \texttt{reset}, \texttt{step}, the end flag, the failure reason and the two outcome tests, the same readings as the final run and nothing else; the environment's source runs in a private namespace, so the probe code has no class to instantiate. The time-optimal number of steps for the scoring batch is stored with the task and defines the fast-success and normalised-time metrics. The two-turn protocol is useful only if a probe-aware controller can close the gap: the blind cautious controller sets the no-probe reference, the oracle sets the upper bound, and the hand-written probe run plus final run is the achievable probe-aware reference.
+
+\section{The brief}
+\label{app:brief}
+
+The first user message of a two-turn rollout, rendered for one held-out task (the single-turn
+brief is the same text without the probe-run section, asking for the controller directly).
+Lines are wrapped for print.
+
+\begin{scriptsize}
+\begin{verbatim}
+You are the control engineer for a seeded batch cooling crystallizer: a
+stirred tank of hot solution holding a known mass of small seed crystals,
+cooled through a jacket whose rate you set. Your job is a Python controller
+for one batch.
+
+## Goal
+
+Cool the batch to its target temperature as fast as possible without ruining
+it.
+
+The liquid holds less dissolved material as it cools. Whatever it cannot hold
+is the supersaturation, the reading sigma: sigma = 0.10 means ten percent more
+is dissolved than the liquid can hold at the current temperature.
+Supersaturation makes the seed crystals grow, and growth uses it up, so at
+constant temperature sigma falls back towards zero; the more crystal surface
+there is, the faster. If sigma rises too far the liquid showers: a cloud of
+tiny new crystals forms at once and the batch is ruined. Heating does the
+opposite of cooling: it dissolves the seeds, and if they shrink below 30% of
+their starting size the batch is lost as well.
+
+Success: T <= T_target + 0.25 degC with sigma at most 0.02. The episode ends
+at success, at a shower, when the seeds are lost, or after 600 steps (200
+min). Reward: -0.3 per step, +120 on success, -80 if the batch is ruined.
+
+## What you observe
+
+`state` is a dict with keys: t (elapsed steps), T (solution temperature,
+degC), c (dissolved material, kg per kg solvent), L (mean crystal size, m),
+T_target (target temperature, degC), steps_left (steps remaining), sigma
+(relative supersaturation, dimensionless).
+
+`action` is a float in [-1, 1]: the jacket rate as a fraction of its 1.5
+degC/min limit; negative cools, positive heats; the env clips it to [-1, 1].
+One step is 20 s, so full cooling lowers T by 0.5 degC per step.
+
+## What you do not observe
+
+sigma_max, the level of sigma at which this batch showers. It is not in the
+state, and nothing in the readings depends on it until it is crossed. It is
+fixed for this task and lies between 0.08 and 0.25. How fast you can safely
+cool depends on it.
+
+## Your probe run (this message)
+
+Before the scored batch you get a probe run on the same crystallizer, with the
+same sigma_max, on a different batch (its own start temperature, target and
+seed loading). It is the object `env`, already constructed:
+
+    state, info = env.reset()                                # starts a fresh
+        probe batch
+    state, reward, done, truncated, info = env.step(action)  # one step;
+        `state` has the keys above
+    env.failure_reason                                       # None, "shower",
+        "seeds_dissolved" or "timeout"
+    env.showered, env.done                                   # True once the
+        batch has showered / has ended
+
+Drive it however you like, as many batches as you want, within 30 seconds of
+compute. Print what you learn: only your printed output reaches the next step,
+and output beyond 2000 characters is cut off. The controller you write
+afterwards has no access to `env`, to this code or to its variables.
+
+## The final run (the last message)
+
+You will receive your printed output and then write `def policy(state)`, the
+controller. It runs on the scored batch from its first step. It is called once
+per step with the state dict and returns the action. It may keep state between
+calls (module-level variables are fine); it runs on one batch. Import only
+`math` and `random`. Read only the state keys listed above.
+
+## Format
+
+Reply with one Python code block and nothing else: the probe code.
+\end{verbatim}
+\end{scriptsize}
+
+The second user message: the probe run's output, then the instruction for the final run.
+
+\begin{scriptsize}
+\begin{verbatim}
+Output of your probe run:
+SIGMA_MAX_LOW=0.18100 SIGMA_MAX_HIGH=0.18240
+
+Now the final run. Reply with one Python code block and nothing else: the
+controller, defining `def policy(state)`. It runs on the scored batch (the
+same sigma_max as your probe run, a different batch) from its first step and
+has no access to `env` or to your probe code. It is called once per step with
+the state dict and returns the action. It may keep state between calls
+(module-level variables are fine); it runs on one batch. Import only `math`
+and `random`. Read only the state keys listed above.
+\end{verbatim}
+\end{scriptsize}
 
 \begin{thebibliography}{99}
 \bibitem{shao2024deepseekmath} Z.~Shao et~al.
