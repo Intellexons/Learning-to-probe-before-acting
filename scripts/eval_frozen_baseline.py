@@ -40,6 +40,7 @@ from src.hf_generator import (  # noqa: E402
     load_model_for_generation,
 )
 from src.multi_turn import execute_turn  # noqa: E402
+from src.provenance import provenance  # noqa: E402
 from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     DEFAULT_MAX_STEPS,
@@ -190,6 +191,7 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--out-dir", default=None, help="default data/frozen/stage<turns>")
     args = parser.parse_args()
+    prov = provenance(sys.argv)
 
     stage = args.turns
     out_dir = Path(args.out_dir or f"data/frozen/stage{stage}")
@@ -278,6 +280,7 @@ def main() -> None:
         per_task.append(summary)
 
     overall = {
+        "provenance": prov,
         "stage": stage, "turns": stage, "model": args.model_path,
         "task_file": args.task_file, "n_tasks": len(tasks), "n_samples_per_task": args.n_samples,
         "generated_rate": _mean(t["generated_rate"] for t in per_task),

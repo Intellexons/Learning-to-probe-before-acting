@@ -298,3 +298,18 @@ def test_policy_run_has_no_env_class_in_scope():
     assert res["errors"] and "'_ProbeTestEnv' is not defined" in res["errors"][0]
     res = score_sample("def policy(state):\n    return SECRET_CONSTANT\n", task, timeout=10, max_steps=5)
     assert res["errors"] and "'SECRET_CONSTANT' is not defined" in res["errors"][0]
+
+
+def test_policy_that_prints_is_scored_normally():
+    """The brief does not forbid printing in the controller, so a `print` at
+    module level or inside `policy` must not corrupt the sandbox's result line
+    (it did: the result was the whole stdout, parsed as JSON)."""
+    task = {"task_id": "t", "env_class": "_ProbeTestEnv", "env_code": _PROBE_ENV_SRC,
+            "scenarios": [_SCENARIO]}
+    code = ("print('starting the controller')\n"
+            "def policy(state):\n"
+            "    print('step', state)\n"
+            "    return 0.0\n")
+    res = score_sample(code, task, timeout=10, max_steps=5)
+    assert not res["errors"], res
+    assert res["success_per_scenario"]["s0"] is not None or res["reward_per_scenario"]["s0"] > -300
