@@ -1,7 +1,13 @@
 """Build the crystallizer task files from crystallizer_env.py.
 
-Writes crystallizer_train.jsonl (24 tasks), crystallizer_eval.jsonl (12 held-out
+Writes crystallizer_train.jsonl (24 tasks), crystallizer_eval.jsonl (48 held-out
 tasks) and crystallizer_smoke_train.jsonl (2 tasks for pipeline smoke runs).
+
+The hidden limit of a task is a deterministic function of its seed, drawn
+within one of three equal-width thirds of the range (low, middle, high) so that
+every task set covers the range evenly: the third is the task's index in its
+set modulo 3. Fast success depends strongly on where the limit sits, so an
+unstratified draw of a few dozen tasks would leave thirds thin or empty.
 
 One task = one batch with its own hidden metastable limit, as a single-element
 `scenarios` list. The branched-rollout estimator averages G_2 leaves under the
@@ -116,8 +122,8 @@ PROBE_SPEC = (
 )
 FINAL_SPEC = "the same sigma_max as your probe run, a different batch"
 
-TRAIN_SEEDS = list(range(24))
-EVAL_SEEDS = list(range(10_000, 10_012))
+TRAIN_SEEDS = list(range(24))               # 8 per third
+EVAL_SEEDS = list(range(10_000, 10_048))    # 16 per third
 # Smoke tasks: one limit near each end of the hidden range.
 SMOKE = [(0, 0.09), (1, 0.24)]
 
@@ -125,10 +131,22 @@ PROBE_SEED_OFFSET = 100_000
 HIDDEN_SALT = 7_919
 
 
-def draw_sigma_max(seed: int) -> float:
-    """The hidden limit for a task, a deterministic function of its seed."""
+N_STRATA = 3                            # thirds of the hidden range: low, middle, high
+
+
+def stratum_bounds(stratum: int) -> tuple[float, float]:
+    lo, hi = SIGMA_MAX_RANGE
+    width = (hi - lo) / N_STRATA
+    return lo + stratum * width, lo + (stratum + 1) * width
+
+
+def draw_sigma_max(seed: int, stratum: int | None = None) -> float:
+    """The hidden limit for a task: a deterministic function of its seed, uniform within
+    its third of the range (or within the whole range when `stratum` is None)."""
     rng = random.Random(HIDDEN_SALT * seed + 17)
-    return round(CrystallizerEnv.sample_hidden(rng).sigma_max, 4)
+    u = rng.random()
+    lo, hi = stratum_bounds(stratum) if stratum is not None else SIGMA_MAX_RANGE
+    return round(lo + u * (hi - lo), 4)
 
 
 def oracle_steps(seed: int, sigma_max: float) -> int:
@@ -139,9 +157,10 @@ def oracle_steps(seed: int, sigma_max: float) -> int:
     return int(res["steps"])
 
 
-def task_entry(task_id_prefix: str, seed: int, sigma_max: float | None = None) -> dict:
+def task_entry(task_id_prefix: str, seed: int, sigma_max: float | None = None,
+               stratum: int | None = None) -> dict:
     """One task = one batch with one hidden limit. See module docstring."""
-    smax = draw_sigma_max(seed) if sigma_max is None else float(sigma_max)
+    smax = draw_sigma_max(seed, stratum) if sigma_max is None else float(sigma_max)
     return {
         "task_id": f"{task_id_prefix}_s{seed}",
         "env_class": "CrystallizerEnv",
@@ -171,8 +190,10 @@ def _write_jsonl(path: Path, entries: list[dict]) -> None:
 
 
 def main() -> None:
-    train_entries = [task_entry("crystallizer_train", seed) for seed in TRAIN_SEEDS]
-    eval_entries = [task_entry("crystallizer_eval", seed) for seed in EVAL_SEEDS]
+    train_entries = [task_entry("crystallizer_train", seed, stratum=i % N_STRATA)
+                     for i, seed in enumerate(TRAIN_SEEDS)]
+    eval_entries = [task_entry("crystallizer_eval", seed, stratum=i % N_STRATA)
+                    for i, seed in enumerate(EVAL_SEEDS)]
     smoke_entries = [task_entry("crystallizer_smoke", seed, smax) for seed, smax in SMOKE]
 
     for name, entries in [

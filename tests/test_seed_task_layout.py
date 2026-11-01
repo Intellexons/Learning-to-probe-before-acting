@@ -62,8 +62,24 @@ def test_train_covers_24_distinct_batches():
 def test_eval_batches_are_held_out():
     train_seeds = {t["scenarios"][0]["seed"] for t in _load(TRAIN)}
     eval_tasks = _load(EVAL)
-    assert len(eval_tasks) == 12
+    assert len(eval_tasks) == 48
     assert not ({t["scenarios"][0]["seed"] for t in eval_tasks} & train_seeds)
+
+
+def test_limits_cover_the_range_evenly_by_thirds():
+    """Fast success depends on where the limit sits, so every task set holds
+    equal numbers of low, middle and high limits (thirds of the range)."""
+    from build_crystallizer_tasks import N_STRATA, stratum_bounds
+
+    for path, per_third in ((TRAIN, 8), (EVAL, 16)):
+        tasks = _load(path)
+        counts = [0] * N_STRATA
+        for i, task in enumerate(tasks):
+            smax = task["scenarios"][0]["hidden"]["sigma_max"]
+            lo, hi = stratum_bounds(i % N_STRATA)
+            assert lo <= smax <= hi, (path.name, task["task_id"], smax, (lo, hi))
+            counts[i % N_STRATA] += 1
+        assert counts == [per_third] * N_STRATA
 
 
 def test_smoke_tasks_sit_near_both_ends_of_the_range():

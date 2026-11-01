@@ -1,37 +1,57 @@
-"""Offline rollout helpers and reference policies for the crystallizer.
+"""Offline rollout helpers and reference controllers for the crystallizer.
 
-Not part of the environment core — do not embed in LLM prompts.
+Not part of the environment core; never embedded in a prompt. Everything here
+runs in-process with the environment object in hand, which is what the Stage 0
+gate and the blind and oracle references need. A controller the briefed model
+writes sees only `state`; the references here may also use `env.peek`, the
+exact one-step lookahead, because they stand for the best a hand-written
+controller can do with and without the hidden limit.
+
+Batches: every helper constructs the env and then calls `reset()` once before
+the first step, exactly as the runner's policy template does. `reset()` without
+a seed continues the seeded stream, so the batch scored here is the batch the
+runner scores for the same seed.
 """
 from __future__ import annotations
 
-import copy
 from typing import Callable, Dict, List, Optional
 
-from crystallizer_env import CrystallizerEnv, EnvConfig, HiddenParams, State, saturation_temperature
+from crystallizer_env import CrystallizerEnv, EnvConfig, HiddenParams, State
 
+# A controller: either `policy(state)` as the model writes it, or
+# `controller(state, env)` for in-process references that use the lookahead.
 Policy = Callable[[State], float]
+EnvPolicy = Callable[[State, CrystallizerEnv], float]
+
+SIGMA_MAX_RANGE = (0.08, 0.25)      # the hidden limit's range; CrystallizerEnv.sample_hidden
+RIDE_BELOW = 1.0 - 1e-9             # a rider holds sigma a hair under its level, never on it
 
 
 def run_episode(
-    policy: Policy,
+    policy: Callable,
     seed: int,
     hidden: Optional[HiddenParams] = None,
     config: Optional[EnvConfig] = None,
     return_trace: bool = False,
+    policy_sees_env: bool = False,
 ) -> Dict:
-    # Mirror the runner: construct, then reset() once before the first step.
-    # reset() without a seed continues the seeded RNG stream, so this is the
-    # batch the runner's policy template runs on (not the constructor's).
+    """Run one batch under `policy` and return its outcome.
+
+    `policy_sees_env=True` calls `policy(state, env)` instead of `policy(state)`;
+    it is for the in-process references and the Stage 0 families, which use the
+    env's lookahead. A controller that raises scores the error floor of the
+    runner (-300) on this batch, as the runner would."""
     env = CrystallizerEnv(seed=seed, hidden=hidden, config=config)
     state, _ = env.reset()
     total_reward = 0.0
     trace: List[Dict] = []
     for _ in range(env.config.max_steps):
         try:
-            action = policy(dict(state))
+            action = policy(dict(state), env) if policy_sees_env else policy(dict(state))
         except Exception:
-            return {"reward": -200.0, "success": False, "failure_reason": "policy_exception",
-                    "steps": env.t, "trace": trace if return_trace else None}
+            return {"reward": -300.0, "success": False, "failure_reason": "policy_exception",
+                    "steps": env.t, "minutes": env.t * env.config.dt / 60.0,
+                    "trace": trace if return_trace else None, "hidden": env.hidden}
         next_state, reward, terminated, _, _ = env.step(action)
         total_reward += reward
         if return_trace:
@@ -52,83 +72,57 @@ def run_episode(
     }
 
 
-def score_policy(policy: Policy, seeds: List[int], hidden: HiddenParams,
-                 config: Optional[EnvConfig] = None) -> Dict:
-    rewards, successes, failures = [], 0, {}
-    for seed in seeds:
-        result = run_episode(policy, seed=seed, hidden=hidden, config=config)
-        rewards.append(result["reward"])
-        successes += int(result["success"])
-        reason = result["failure_reason"] or "success"
-        failures[reason] = failures.get(reason, 0) + 1
-    n = max(1, len(seeds))
-    return {"mean_reward": sum(rewards) / n, "success_rate": successes / n,
-            "num_scenarios": float(n), **{f"count_{k}": float(v) for k, v in failures.items()}}
-
-
 # -----------------------------------------------------------------------------
-# Reference policies
+# The rider: hold the end-of-step supersaturation at a level
 # -----------------------------------------------------------------------------
 
-def make_tracking_policy(sigma_target: float, config: Optional[EnvConfig] = None) -> Policy:
-    """One-step lookahead with the solubility curve: move to the temperature that puts the
-    supersaturation before growth at `sigma_target`, never below the target temperature. The
-    end-of-step value the shower test uses is lower than that by the growth of the step, so this
-    controller is safe at sigma_target = sigma_max and a little slower than `run_oracle_episode`.
-    It needs the formula, so it is a reference, not something the briefed model can write."""
-    cfg = config or EnvConfig()
-
-    def policy(state: State) -> float:
-        T_des = max(saturation_temperature(state["c"] / (1.0 + sigma_target), cfg), state["T_target"])
-        a = (T_des - state["T"]) / (cfg.max_rate * cfg.dt / 60.0)
-        return max(-1.0, min(1.0, a))
-    return policy
-
-
-def cautious_policy(state: State) -> float:
-    """Blind reference: rides at the lowest limit in the hidden range (0.08) minus a margin."""
-    return make_tracking_policy(0.077)(state)
-
-
-def oracle_action(env: CrystallizerEnv, sigma_max: float) -> float:
-    """The time-optimal action for the env's current state when the limit is known: the most
-    cooling such that the end-of-step supersaturation (the tested value) stays at or below
-    sigma_max, found by bisection on a copy of the env, and never below the target temperature."""
+def ride_action(env: CrystallizerEnv, level: float, iters: int = 30) -> float:
+    """The most cooling such that the supersaturation the state reports after the step
+    stays at or below `level`, found by bisection on `env.peek`, and never below the target
+    temperature. With `level` = the hidden limit this is the time-optimal action; with a
+    lower level it is the fastest controller that is safe for every limit above it."""
     cfg = env.config
     step_degC = cfg.max_rate * cfg.dt / 60.0
-    a_floor = max(-1.0, min(0.0, (env.T_target - env.T) / step_degC))
-
-    def safe(a: float) -> bool:
-        e = copy.deepcopy(env)
-        st, _, _, _, _ = e.step(a)
-        return (not e.showered) and st["sigma"] <= sigma_max * (1.0 - 1e-9)
-
-    if safe(a_floor):
+    a_floor = max(-1.0, min(0.0, (env.T_target - env.T) / step_degC))   # no overshoot
+    if env.peek(a_floor) <= level:
         return a_floor
-    lo, hi = a_floor, 0.0
-    for _ in range(40):
+    lo, hi = a_floor, 0.0            # lo cools too hard, hi is safe (no cooling raises nothing)
+    for _ in range(iters):
         mid = 0.5 * (lo + hi)
-        if safe(mid):
+        if env.peek(mid) <= level:
             hi = mid
         else:
             lo = mid
     return hi
 
 
+def make_rider(level: float) -> EnvPolicy:
+    """`controller(state, env)` that rides at `level`: the tracking family of the gate."""
+    def controller(state: State, env: CrystallizerEnv) -> float:
+        return ride_action(env, level)
+    return controller
+
+
+def oracle_action(env: CrystallizerEnv, sigma_max: float) -> float:
+    """The time-optimal action when the limit is known: ride a hair under it."""
+    return ride_action(env, sigma_max * RIDE_BELOW)
+
+
 def run_oracle_episode(seed: int, hidden: HiddenParams, config: Optional[EnvConfig] = None) -> Dict:
-    """The informed reference: the greedy time-optimal controller on the batch the runner scores
-    (construct, then reset() once, as the runner does)."""
-    env = CrystallizerEnv(seed=seed, hidden=hidden, config=config)
-    env.reset()
-    total = 0.0
-    for _ in range(env.config.max_steps):
-        _, reward, terminated, _, _ = env.step(oracle_action(env, hidden.sigma_max))
-        total += reward
-        if terminated:
-            break
-    return {"reward": float(total), "success": bool(env.is_success()),
-            "failure_reason": env.failure_reason, "steps": int(env.t),
-            "minutes": env.t * env.config.dt / 60.0}
+    """The informed reference: the time-optimal controller on the batch the runner scores."""
+    return run_episode(make_rider(hidden.sigma_max * RIDE_BELOW), seed=seed, hidden=hidden,
+                       config=config, policy_sees_env=True)
+
+
+def cautious_controller(state: State, env: CrystallizerEnv) -> float:
+    """The blind reference: rides a hair under the lowest limit in the hidden range, the
+    fastest controller that never showers whatever the batch's limit is."""
+    return ride_action(env, SIGMA_MAX_RANGE[0] * RIDE_BELOW)
+
+
+def run_cautious_episode(seed: int, hidden: HiddenParams, config: Optional[EnvConfig] = None) -> Dict:
+    return run_episode(cautious_controller, seed=seed, hidden=hidden, config=config,
+                       policy_sees_env=True)
 
 
 def max_rate_probe_policy(state: State) -> float:
@@ -137,13 +131,10 @@ def max_rate_probe_policy(state: State) -> float:
 
 
 if __name__ == "__main__":
-    seeds = list(range(20))
     for smax in (0.08, 0.165, 0.25):
         hidden = HiddenParams(sigma_max=smax)
-        for name, pol in [("cautious", cautious_policy), ("tracking", make_tracking_policy(smax * (1 - 1e-9))),
-                          ("max_rate_probe", max_rate_probe_policy)]:
-            print(f"sigma_max={smax:.3f} {name:15s}", score_policy(pol, seeds, hidden))
-        oracle = [run_oracle_episode(s, hidden) for s in seeds]
-        print(f"sigma_max={smax:.3f} {'oracle':15s}", {"mean_reward": sum(o["reward"] for o in oracle) / len(seeds),
-              "success_rate": sum(o["success"] for o in oracle) / len(seeds),
-              "mean_steps": sum(o["steps"] for o in oracle) / len(seeds)})
+        for name, run in (("cautious", run_cautious_episode), ("oracle", run_oracle_episode)):
+            rows = [run(s, hidden) for s in range(20)]
+            print(f"sigma_max={smax:.3f} {name:9s} reward {sum(r['reward'] for r in rows) / 20:7.1f}  "
+                  f"success {sum(r['success'] for r in rows) / 20:.2f}  "
+                  f"steps {sum(r['steps'] for r in rows) / 20:6.1f}")

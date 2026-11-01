@@ -8,7 +8,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "seed_tasks"))
 
 from crystallizer_env import CrystallizerEnv, EnvConfig, HiddenParams, solubility  # noqa: E402
-from crystallizer_utils import make_tracking_policy, max_rate_probe_policy, run_episode, run_oracle_episode  # noqa: E402
+from crystallizer_utils import (  # noqa: E402
+    make_rider, max_rate_probe_policy, ride_action, run_cautious_episode, run_episode, run_oracle_episode,
+)
 
 KEYS = ("t", "T", "c", "L", "T_target", "steps_left", "sigma")
 
@@ -43,10 +45,9 @@ def test_hidden_limit_leaves_no_trace_until_crossed():
     while neither has showered. This is the property the whole env rests on."""
     a = CrystallizerEnv(seed=3, hidden=HiddenParams(sigma_max=0.10))
     b = CrystallizerEnv(seed=3, hidden=HiddenParams(sigma_max=0.25))
-    pol = make_tracking_policy(0.09)
     sa, sb = a.observe(), b.observe()
     for _ in range(a.config.max_steps):
-        act = pol(sa)
+        act = ride_action(a, 0.09)   # the same action for both, chosen on batch a
         sa, _, da, _, _ = a.step(act)
         sb, _, db, _, _ = b.step(act)
         assert sa == sb
@@ -58,7 +59,7 @@ def test_hidden_limit_leaves_no_trace_until_crossed():
 def test_riding_the_limit_succeeds_and_crossing_it_showers():
     for smax in (0.08, 0.165, 0.25):
         hidden = HiddenParams(sigma_max=smax)
-        ok = run_episode(make_tracking_policy(smax * (1 - 1e-9)), seed=1, hidden=hidden)
+        ok = run_episode(make_rider(smax * (1 - 1e-9)), seed=1, hidden=hidden, policy_sees_env=True)
         assert ok["success"] and ok["failure_reason"] is None
         bad = run_episode(max_rate_probe_policy, seed=1, hidden=hidden)
         assert not bad["success"] and bad["failure_reason"] == "shower"
@@ -93,16 +94,20 @@ def test_shower_test_uses_the_reported_sigma():
     assert env.is_success() and peak <= smax and peak > 0.9 * smax
 
 
-def test_informed_controller_is_faster_than_the_safe_tracking_controller():
+def test_informed_controller_is_faster_than_the_cautious_one_above_the_bottom():
     for smax in (0.08, 0.165, 0.25):
         hidden = HiddenParams(sigma_max=smax)
         oracle = run_oracle_episode(1, hidden)
-        tracking = run_episode(make_tracking_policy(smax * (1 - 1e-9)), seed=1, hidden=hidden)
-        assert oracle["success"] and oracle["steps"] <= tracking["steps"]
+        cautious = run_cautious_episode(1, hidden)
+        assert oracle["success"] and cautious["success"]
+        if smax == 0.08:
+            assert oracle["steps"] == cautious["steps"]
+        else:
+            assert oracle["steps"] < cautious["steps"]
 
 
 def test_faster_limit_means_shorter_batch():
-    steps = [run_episode(make_tracking_policy(s * (1 - 1e-9)), seed=0,
-                         hidden=HiddenParams(sigma_max=s))["steps"] for s in (0.08, 0.165, 0.25)]
+    steps = [run_episode(make_rider(s * (1 - 1e-9)), seed=0, hidden=HiddenParams(sigma_max=s),
+                         policy_sees_env=True)["steps"] for s in (0.08, 0.165, 0.25)]
     assert steps[0] > steps[1] > steps[2]
     assert steps[0] < EnvConfig().max_steps  # slowest informed batch fits the horizon
