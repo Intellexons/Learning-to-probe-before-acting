@@ -15,6 +15,7 @@
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
 
 \newcommand{\smax}{\sigma_{\max}}
+\newcommand{\tbf}{\emph{To be filled after the re-run.}}
 
 \title{\textbf{Stage 0, in full:\\the environment gate before any model run}}
 \author{}
@@ -24,15 +25,16 @@
 \maketitle
 
 \noindent
-This is the complete account of Stage~0 of the experiment plan, and of
-Stage~0b, which re-runs its third gate through the real training pipeline.
+This is the complete protocol of Stage~0 of the experiment plan, and of
+Stage~0b, which pushes its third gate through the real training pipeline.
 It is written so that a reader who has the paper but not the scripts can see
-exactly what was done to obtain every controller, every number and every
-verdict, and can reproduce them. The paper's Stage~0 subsection will be a
-summary of this document and its appendix will carry the essentials;
-\S\ref{sec:where} says which parts go where. Nothing here is new work: it is
-the record of 2026-10-24, 2026-10-25 and 2026-10-26, assembled from the
-scripts, their logs and the diary.
+exactly what is done to obtain every controller, every number and every
+verdict, and can reproduce them. Stage~0 was first run on 2026-10-24 against
+an earlier version of the environment; it is to be re-run against the
+current one, and this document holds the protocol for that re-run with the
+results left blank (\S\ref{sec:results}). The paper's Stage~0 subsection
+will be a summary of this document and its appendix will carry the
+essentials; \S\ref{sec:where} says which parts go where.
 
 \paragraph{Terms.} A \emph{controller} is a Python function
 \texttt{policy(state)} that returns one action per step; the paper also calls
@@ -55,7 +57,7 @@ Stage~0 does not use a language model. No prompt is written, nothing is told
 to anything, and no text is generated. Every controller in Stage~0 is a
 short formula written by hand, with between one and ten numerical knobs, and
 the knobs are set by a simple search on the environment. The stage runs on a
-laptop CPU in about three minutes.
+laptop CPU in a few minutes.
 
 Its purpose is to answer one question before any model run is spent:
 \emph{does knowing the hidden limit buy anything that a controller without it
@@ -87,7 +89,8 @@ seeds grow and consume it. Success means reaching the target temperature
 (within $0.25\,^\circ$C) with $\sigma\le0.02$. If $\sigma$ ever exceeds the
 hidden limit $\smax$, drawn once per task from $U[0.08,0.25]$, a shower of new
 nuclei ruins the batch and the episode ends in failure. The horizon is 600
-steps. The full dynamics and constants are in the paper's crystallizer
+steps. The reward is $-0.3$ per step, $+120$ on success and $-80$ on
+failure. The full dynamics and constants are in the paper's crystallizer
 appendix.
 
 The hidden limit appears nowhere except in the shower test. Two batches with
@@ -96,19 +99,18 @@ one of them showers, so no in-episode estimator exists. The fastest safe
 recipe holds $\sigma$ just below $\smax$ and accelerates as the crystals grow
 (classical programmed cooling). A controller that does not know the limit
 must hold $\sigma$ at the bottom of the range to be safe on every batch, and
-is then two to three times slower than the oracle at the top of the range.
+is then slower than the oracle, the more so the higher the batch's limit.
 
-Stage~0 was run against the environment as it was on 2026-10-24. The
-environment changed on 2026-10-26; \S\ref{sec:change} says what changed and
-why the gate's conclusion carries over. Table~\ref{tab:envversions} lists
-the differences that matter here.
+The environment changed on 2026-10-26, after the first Stage~0 run.
+Table~\ref{tab:envversions} lists the differences that matter here; the
+re-run uses the current column throughout.
 
 \begin{table}[h]
 \centering\small
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{@{}lll@{}}
 \toprule
- & 2026-10-24 (Stage~0 as run) & 2026-10-26 (current) \\
+ & 2026-10-24 (first Stage~0 run) & current (the re-run) \\
 \midrule
 $\sigma$ in the state & no; from $c$ and $T$ via the solubility curve & yes, a reading \\
 Shower test applied to & mid-step $\sigma$, before growth & end-of-step $\sigma$, the reported value \\
@@ -119,8 +121,7 @@ Oracle & tracking controller with setpoint $\smax$ & bisection on the end-of-ste
 What the model is given & environment source & a brief in words \\
 \bottomrule
 \end{tabular}}
-\caption{The two environment versions. Stage~0's search ran on the left;
-Stage~0b was run on both.}
+\caption{The two environment versions.}
 \label{tab:envversions}
 \end{table}
 
@@ -128,20 +129,24 @@ Stage~0b was run on both.}
 \label{sec:families}
 
 Every Stage~0 controller works the same way: it computes a desired
-temperature $T_{\rm des}$ for the end of the next step, and the action is
-the jacket fraction that gets there, clipped to the jacket's limit,
+temperature $T_{\rm des}$ for the end of the next step, and returns the
+jacket fraction that gets there, clipped to the jacket's limit,
 \[
   a = \mathrm{clip}\!\left(\frac{T_{\rm des}-T}{0.5\,^\circ\mathrm{C}},\,-1,\,1\right).
 \]
-The families differ only in how they choose $T_{\rm des}$. Two of them are
-feedback controllers on the concentration; three are open-loop time
-profiles. The feedback building block is \emph{tracking}: given a setpoint
-$\sigma_t$, the temperature at which the current concentration $c$ is exactly
-$\sigma_t$ above saturation is $T_{\rm track}=T_{\rm sat}\!\big(c/(1+\sigma_t)\big)$,
-with $T_{\rm sat}$ the inverse of the solubility curve, and never below the
-target temperature. Hand-written code may use the solubility curve, since it
-is the environment's own function; the Stage~0b version written from the
-brief alone works from the $\sigma$ reading instead (\S\ref{sec:0b}).
+The environment only ever receives $a$; the desired temperature is an
+intermediate inside the controller's own code, convenient because the
+families are stated in temperature. They differ only in how they choose
+$T_{\rm des}$. Two of them are feedback controllers on the concentration;
+three are open-loop time profiles. The feedback building block is
+\emph{tracking}: given a setpoint $\sigma_t$, the temperature at which the
+current concentration $c$ is exactly $\sigma_t$ above saturation is
+$T_{\rm track}=T_{\rm sat}\!\big(c/(1+\sigma_t)\big)$, with $T_{\rm sat}$ the
+inverse of the solubility curve, and never below the target temperature.
+Hand-written code may use the solubility curve, since it is the
+environment's own function. In the current environment $\sigma$ is also a
+reading, so the block can equally be written on the reading; the search
+tunes the setpoint either way.
 
 Each knob $p_k$ lives in $[0,1]$ and is mapped to a physical range inside
 the family (Table~\ref{tab:families}).
@@ -176,12 +181,12 @@ start temperature, remembered at the first call.}
 
 \section{The two sides and the hidden-value configurations}
 
-Two hidden-value configurations were run. The \emph{range} configuration
+Two hidden-value configurations are run. The \emph{range} configuration
 draws $\smax$ for each batch from $U[0.08,0.25]$ as a fixed function of the
 seed, and reports at three anchors, $0.08$, $0.165$ and $0.25$. The
 \emph{set} configuration cycles the limit through $\{0.08, 0.12, 0.18,
 0.25\}$ by seed, and reports at those four values. The range configuration
-is the one the training tasks use; the set configuration was a check that
+is the one the training tasks use; the set configuration is a check that
 the result does not depend on the limit being continuous.
 
 The \textbf{blind side} gets one controller per family per configuration.
@@ -213,7 +218,7 @@ family and both sides.
   dimension.
   \item Run each on the 48 search batches (seeds 0 to 47) and record the
   mean reward. A controller that raises an exception on a batch scores the
-  error floor of the time, $-200$, on that batch.
+  error floor on that batch.
   \item Keep the best 6.
   \item For 120 rounds: nudge each survivor by Gaussian noise with a scale
   that shrinks from about $0.16$ to $0.01$ over the rounds, clip to the
@@ -257,22 +262,22 @@ are averaged over the 200 batches.
 \end{itemize}
 
 The \textbf{oracle} defines the time-optimal step count for every (batch,
-limit) pair. In the 2026-10-24 environment it is the tracking controller
-with its setpoint a hair below $\smax$; it rides exactly at the limit and is
-run once per pair and cached. In the current environment it is the most
-cooling at each step such that the end-of-step $\sigma$ stays at or below
-$\smax$, found by bisection on a copy of the environment, which is the same
-idea applied to the new shower test. The fast-success threshold of
-$1.25\times$ was fixed before the search ran.
+limit) pair. In the current environment it is the most cooling at each step
+such that the end-of-step $\sigma$ stays at or below $\smax$, found by
+bisection on a copy of the environment; it is run once per pair and cached.
+(In the 2026-10-24 environment it was the tracking controller with its
+setpoint a hair below $\smax$, the same idea applied to the mid-step shower
+test.) The fast-success threshold of $1.25\times$ was fixed before the first
+search ran and is kept.
 
 Fast success is the headline number because raw success is uninformative
 here: a cautious blind controller succeeds on every batch by being slow.
 
 \section{The three gates}
 
-All three were fixed before any search was run. The gate is one verdict per
-configuration; G1 and G2 come from the search, G3 from the hand-written
-two-turn solution of \S\ref{sec:probe}.
+All three were fixed before the first search was run and are kept for the
+re-run. The gate is one verdict per configuration; G1 and G2 come from the
+search, G3 from the hand-written two-turn solution of \S\ref{sec:probe}.
 
 \begin{table}[h]
 \centering\small
@@ -314,18 +319,19 @@ real sandbox (\S\ref{sec:0b}).
 the shower. A batch that never showers says nothing about it. So the probe
 cools until the batch showers, and the last reading before the shower is a
 lower bound on $\smax$ while the reading at the shower is an upper bound.
-Cooling at the jacket limit raises $\sigma$ by about $0.01$ per step, so one
-batch brackets the limit to about $0.01$. Further batches can go quickly to
-the lower bound and then creep up in small increments until the shower,
-tightening the bracket.
+Cooling at the jacket limit raises $\sigma$ by about $0.01$ per step, as the
+quench logs in the brief show, so one batch brackets the limit to about the
+rise of one step. Further batches can go quickly to the lower bound and then
+creep up in small increments until the shower, tightening the bracket.
 
-\paragraph{The three-pass probe (2026-10-24).} Pass one cools at the jacket
-limit until the shower. Passes two and three reset, drive $\sigma$ quickly
-to the lower bound, then raise the setpoint in eighths of the current
-bracket until the shower, and tighten the bracket each time. It prints the
-bracket. This version computes the mid-step $\sigma$ from the concentration
-and the solubility curve, because that is the value the 2026-10-24 shower
-test used.
+\paragraph{The three-pass probe.} Pass one cools at the jacket limit until
+the shower. Passes two and three reset, drive $\sigma$ quickly to the lower
+bound, then raise the setpoint in eighths of the current bracket until the
+shower, and tighten the bracket each time. It prints the bracket. The
+version used in the re-run works from the $\sigma$ reading alone and is
+listed in \S\ref{sec:0b}. The 2026-10-24 version, kept here for the record,
+computed the mid-step $\sigma$ from the concentration and the solubility
+curve, because that is the value the shower test used then.
 
 \begin{scriptsize}
 \begin{verbatim}
@@ -361,8 +367,8 @@ print(f"SIGMA_MAX_LOW={lo:.5f} SIGMA_MAX_HIGH={hi:.5f}")
 \end{verbatim}
 \end{scriptsize}
 
-\paragraph{The controller (2026-10-24).} The low end of the bracket is
-pasted in as \texttt{SIGMA\_HAT}, and the controller tracks $98\%$ of it,
+\paragraph{The controller (2026-10-24 version).} The low end of the bracket
+is pasted in as \texttt{SIGMA\_HAT}, and the controller tracks $98\%$ of it,
 the tracking family of Table~\ref{tab:families} with its setpoint set from
 the probe.
 
@@ -379,136 +385,43 @@ def policy(state):
 \end{verbatim}
 \end{scriptsize}
 
-\paragraph{How much probing is needed.} Three variants were compared on the
-range configuration, each followed by the same controller
-(Table~\ref{tab:probebudget}). One batch at the jacket limit already passes
-the gate with a bracket of about $0.01$. A single batch that creeps up
-slowly instead fails at high limits: the growing crystals consume
-supersaturation faster than a slow creep adds it, so the batch equilibrates
-and reaches the target without ever showering, and the probe learns nothing
-but a loose lower bound.
+\paragraph{How much probing is needed.} Three probe variants are compared on
+the range configuration, each followed by the same controller: the three
+passes above; one pass at the jacket limit, which stops at the first
+shower; and one pass that raises the setpoint by a fixed increment every
+step until the shower, at increments of $0.005$ and $0.001$. The question is
+whether a single batch is enough, and whether a slow creep that never
+crosses the limit at high limits can still bracket it.
 
-\begin{table}[h]
-\centering\small
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-Probe variant & Fast success & Norm.\ time & Max probe error & Fast at $\smax=0.25$ \\
-\midrule
-Three passes (used) & 100\% & 0.982 & 0.0002 (0.0040 at 0.25) & 100\% \\
-One pass at the jacket limit & 100\% & 0.946 & 0.0104 & 100\% \\
-One pass, creep by 0.005 per step & 100\% & 0.966 & 0.0210 & 100\% \\
-One pass, creep by 0.001 per step & 84\% & 0.910 & 0.0961 & 24\% \\
-\bottomrule
-\end{tabular}}
-\caption{Probe-run variants on the range configuration, 200 fresh batches,
-2026-10-24 environment. Probe error is $|\smax - \text{SIGMA\_MAX\_LOW}|$.}
-\label{tab:probebudget}
-\end{table}
-
-\section{Results of 2026-10-24}
+\section{Results}
 \label{sec:results}
 
-\paragraph{Blind side, range configuration.} The two feedback families tie
-at the top and the three open-loop families are far behind
-(Table~\ref{tab:blind}). The winning tracking controller settled at a
-setpoint of about $0.08$, the bottom of the hidden range: it never showers,
-succeeds on every batch, and takes about 100 minutes on each. It is fast
-only on the batches whose limit happens to lie near the bottom.
+\tbf\ The re-run reports, in this order, all on the current environment:
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-Family & Mean reward & Success & Fast success & Norm.\ time \\
-\midrule
-track  & 91.1 & 100\% & 7.5\% & 0.497 \\
-hybrid & 91.0 & 100\% & 7.5\% & 0.495 \\
-power  & 64.3 & 93\%  & 0\%   & 0.285 \\
-linear & 51.7 & 88\%  & 0\%   & 0.229 \\
-pwl    & $-60.0$ & 0\% & 0\%  & 0.000 \\
-\bottomrule
-\end{tabular}
-\caption{Blind side, range configuration, 200 fresh batches, time weight
-$0.1$.}
-\label{tab:blind}
-\end{table}
+\begin{enumerate}[leftmargin=1.8em]
+  \item \textbf{Blind side, range configuration.} One row per family: mean
+  reward, success, fast success, normalised time, over the 200 fresh
+  batches; and the setpoint or profile the winning family settled on.
+  \item \textbf{Informed side, range configuration.} One row per family,
+  one column per anchor: fast success and mean reward.
+  \item \textbf{Gate verdicts.} One row per configuration (range, set):
+  blind fast success over the range and at each anchor, blind normalised
+  time and reward, informed fast success and reward at each anchor, the
+  gap in percentage points, G1 and G2.
+  \item \textbf{G3 and the probe variants.} One row per variant: fast
+  success, normalised time, maximum probe error $|\smax - \text{SIGMA\_MAX\_LOW}|$,
+  and fast success at the top anchor.
+  \item \textbf{Reading of the result.} Whether the gap comes from the
+  physics or from a narrow family or a withheld sensor; what the blind
+  side's optimum is under the reward; whether it gambles.
+  \item \textbf{Stage~0b} (\S\ref{sec:0b}): one row per third of the limit
+  range and one overall: fast success, normalised time with its minimum,
+  reward, maximum probe error, and the blind cautious controller's fast
+  success, normalised time and reward on the same batches; the probe-error
+  distribution (median, ninetieth percentile, maximum); the gate verdict.
+\end{enumerate}
 
-\paragraph{Informed side, range configuration.} Tuned for one limit, the
-feedback families ride it and reach $100\%$ fast success at every anchor;
-the open-loop families cannot, even when informed, so feedback on the
-concentration is needed to ride the limit, not just knowledge of it
-(Table~\ref{tab:informed}).
-
-\begin{table}[h]
-\centering\small
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
- & \multicolumn{3}{c}{Fast success} & \multicolumn{3}{c}{Mean reward} \\
-\cmidrule(lr){2-4}\cmidrule(lr){5-7}
-Family & $0.080$ & $0.165$ & $0.250$ & $0.080$ & $0.165$ & $0.250$ \\
-\midrule
-track  & 100\% & 100\% & 100\% & 91.1 & 107.7 & 110.3 \\
-hybrid & 100\% & 100\% & 100\% & 91.0 & 107.6 & 110.2 \\
-pwl    & 0\%   & 0\%   & 10\%  & $-60.0$ & 93.6 & 107.2 \\
-power  & 0\%   & 0\%   & 1\%   & 38.2 & 96.5 & 106.6 \\
-linear & 0\%   & 0\%   & 0\%   & $-60.0$ & 89.5 & 101.8 \\
-\bottomrule
-\end{tabular}
-\caption{Informed side, range configuration, one controller per family per
-anchor, 200 fresh batches at the anchor's limit, time weight $0.1$.}
-\label{tab:informed}
-\end{table}
-
-\paragraph{Gate verdicts.} Table~\ref{tab:verdicts} gives the three runs: the
-two configurations at the shipped time weight, and a sensitivity run of the
-range configuration at time weight $0.3$, which is the value adopted on
-2026-10-26.
-
-\begin{table}[h]
-\centering\small
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}llrrrrrrll@{}}
-\toprule
-Configuration & Time wt & Blind fast & Blind norm.\ t & Blind reward & Inf.\ fast & Inf.\ reward at anchors & Gap & G1 & G2 \\
-\midrule
-range $U[0.08,0.25]$ & 0.1 & 7.5\% (100 / 0 / 0) & 0.50 & 91 & 100\% & 91 / 108 / 110 & $+92$ & pass & pass \\
-set $\{0.08,0.12,0.18,0.25\}$ & 0.1 & 25\% (100 / 0 / 0 / 0) & 0.58 & 91 & 100\% & 91 / 103 / 109 / 110 & $+75$ & pass & pass \\
-range, sensitivity & 0.3 & 11\% (0 / 0 / 0) & 0.52 & 38 & 100\% & 33 / 83 / 91 & $+89$ & pass & pass \\
-\bottomrule
-\end{tabular}}
-\caption{Gate verdicts, 2026-10-24. Blind fast success is given over the
-range and, in brackets, at each anchor. The gap is informed mean fast
-success minus blind fast success over the range, in percentage points.}
-\label{tab:verdicts}
-\end{table}
-
-G3 passed at $100\%$ fast success at every anchor in both configurations
-(Table~\ref{tab:probebudget}, first row): the three-pass probe recovered the
-limit to within $0.0002$ ($0.004$ at the top of the range, where one step of
-full cooling moves $\sigma$ furthest) and the controller then rode at $98\%$
-of it with normalised time $0.97$ to $0.99$.
-
-\paragraph{What the time weight does.} At $0.1$ per step the blind side's
-best policy is pure caution: it loses 12 to 19 reward points out of 120 to
-the informed side by being slow, and never gambles. At $0.3$ the loss grows
-to about 32 points over the range, and the blind side starts to gamble: its
-setpoint moved to about $0.084$, which showers the $4\%$ of batches whose
-limit lies below it, so at the $0.08$ anchor it has $0\%$ fast success and a
-mean reward of $-82.5$. The gates pass either way; the time weight sets how
-much a probe is worth against how much a blind controller is tempted to
-risk. It was fixed at $0.3$ on 2026-10-26: a good probe is then worth about
-$+53$ over the blind controller against $+18$ at $0.1$, while a ruined batch
-still costs 114 more than the blind controller earns.
-
-\paragraph{Reading of the result.} The gap comes from physics, not from a
-narrow controller family or a withheld sensor. Feedback on every reading was
-allowed on both sides, the families include the feedback controller that
-rides the limit when it is known, and the blind side's optimum under the
-reward is caution. A limit cannot be learned without crossing it, and
-crossing it in the final run is the failure.
-
-\section{The environment change of 2026-10-26 and why the gate stands}
+\section{The environment change of 2026-10-26}
 \label{sec:change}
 
 On 2026-10-26 the prompt was replaced by a brief in words, without the
@@ -521,26 +434,17 @@ the state reports, so that what the model sees is what is tested. The time
 weight was set to $0.3$ so that the probe is worth enough reward to be
 learned.
 
-The Stage~0 search was not re-run under the new environment. The conclusion
-is carried over by argument. The blind side is unchanged: its best
-controller is the tracking family at the bottom of the range, and the
-reference used from here on, called the cautious controller, holds the
-reading at $0.077$. The informed side only got faster: with the shower test
-on the end-of-step value the oracle can cool harder within the same limit,
-and on the 36 task batches it needs 130 steps on average against 306 for the
-cautious controller. The sensitivity row of Table~\ref{tab:verdicts} already
-covers the time weight. The one gate that depends on the readings, G3, was
-re-run under the new environment from the brief alone (\S\ref{sec:0b}).
-
-A re-run of the search itself under the current environment would close
-this argument with a number rather than a reason. It is three minutes of
-CPU; it would need the tracking family rewritten to target the end-of-step
-$\sigma$ and the oracle swapped for the bisection one.
+The first Stage~0 search ran before these changes and was not repeated after
+them. The re-run closes that gap: the search, the gates and Stage~0b are all
+run on the current environment. For the search script this means the oracle
+is the bisection one, the error floor is the current one, and the tracking
+building block may target the end-of-step $\sigma$; the families, the sides,
+the budget, the seeds and the gates are unchanged.
 
 \section{Stage 0b: the same solution through the real path}
 \label{sec:0b}
 
-Stage~0 ran the probe and the controller in-process, with the environment's
+Stage~0 runs the probe and the controller in-process, with the environment's
 functions in scope. Stage~0b asks whether the solution survives the way
 training and evaluation actually execute code: the probe source is pushed
 through the runner's turn executor, which runs it in a sandboxed subprocess
@@ -550,40 +454,16 @@ scored batch but a different batch and exposes only \texttt{reset},
 printed bracket is pasted into the controller template; and the controller
 is scored with the same function the trainer uses, on the scoring batch.
 Pre-registered gate: fast success $\ge 95\%$ with no probe failures. The
-blind cautious controller is run on the same batches as the reference.
+blind cautious controller, which holds the reading at $0.077$, is run on the
+same batches as the reference. The batches are the 36 of the task files
+plus fresh ones built by the task builder's rule.
 
-\paragraph{2026-10-25, the Stage~0 solution, 2026-10-24 environment.} The
-three-pass probe and $98\%$ controller of \S\ref{sec:probe}, on the 24
-training and 12 held-out task batches plus 200 fresh ones
-(Table~\ref{tab:0b-old}). The numbers match the in-process gate, so the
-sandbox, the wrapper and the separate probe batch cost nothing.
-
-\begin{table}[h]
-\centering\small
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}lrlrrrrrrrr@{}}
-\toprule
- & & & \multicolumn{5}{c}{probe run + controller} & \multicolumn{3}{c}{blind cautious, same batches} \\
-\cmidrule(lr){4-8}\cmidrule(lr){9-11}
-$\smax$ third & $n$ & range & fast & norm.\ t & min & reward & probe err.\ & fast & norm.\ t & reward \\
-\midrule
-low    & 78  & 0.080--0.136 & 100\% & 0.974 & 0.968 & 99.0  & 0.0002 & 23.1\% & 0.674 & 89.7 \\
-middle & 78  & 0.138--0.192 & 100\% & 0.983 & 0.975 & 107.3 & 0.0002 & 0.0\%  & 0.412 & 89.7 \\
-high   & 80  & 0.193--0.249 & 100\% & 0.989 & 0.981 & 109.6 & 0.0002 & 0.0\%  & 0.336 & 89.3 \\
-all    & 236 & 0.080--0.249 & 100\% & 0.982 & 0.968 & 105.3 & 0.0002 & 7.6\%  & 0.473 & 89.6 \\
-\bottomrule
-\end{tabular}}
-\caption{Stage~0b on 2026-10-25, time weight $0.1$. Gate: pass, no probe
-failures.}
-\label{tab:0b-old}
-\end{table}
-
-\paragraph{2026-10-26, from the brief alone, current environment.} The
-probe and the controller were rewritten using only what the brief offers:
-\texttt{env.reset()}, \texttt{env.step(a)}, the end flag,
+\paragraph{From the brief alone.} The probe and the controller use only what
+the brief offers: \texttt{env.reset()}, \texttt{env.step(a)}, the end flag,
 \texttt{env.failure\_reason} and the $\sigma$ reading. No solubility curve,
 no concentration arithmetic. This is the proof that the task is solvable
-with exactly what the model is told.
+with exactly what the model is told, and it is the version the re-run uses
+for G3 as well.
 
 The probe keeps the three-pass structure. Pass one cools at the jacket limit
 and records the highest reading seen before the shower as the lower bound
@@ -651,66 +531,37 @@ def policy(state):
 \end{verbatim}
 \end{scriptsize}
 
-Through the real runner, on the 36 task batches plus 100 fresh ones
-(Table~\ref{tab:0b-brief}): $100\%$ fast success, normalised time $0.95$
-(minimum $0.80$, on the low third where one step of margin is a larger
-share of the limit), mean reward $+76$ against $+28$ for the cautious
-controller, which is fast on $4\%$. From readings alone the probe is less
-exact than with the solubility curve: median error $0.004$, ninetieth
-percentile $0.009$, maximum $0.011$. Simpler controllers written from the
-same number were also tried: full cooling until the reading hits the
-setpoint and then hold showers on 21 of 36 batches with a thin margin and is
-fast on 33 with one step of margin; proportional control without memory is
-fast on 34. The memory controller is the one kept.
+Two simpler controllers written from the same number are run alongside it,
+to show what the memory buys: full cooling until the reading hits the
+setpoint and then hold, with a thin margin and with one step of margin; and
+proportional control on the reading without memory.
 
-\begin{table}[h]
-\centering\small
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}lrlrrrrrrrr@{}}
-\toprule
- & & & \multicolumn{5}{c}{probe run + controller} & \multicolumn{3}{c}{blind cautious, same batches} \\
-\cmidrule(lr){4-8}\cmidrule(lr){9-11}
-$\smax$ third & $n$ & range & fast & norm.\ t & min & reward & max probe err.\ & fast & norm.\ t & reward \\
-\midrule
-low    & 45  & 0.080--0.133 & 100\% & 0.904 & 0.800 & 54.5 & 0.0105 & 13.3\% & 0.638 & 27.6 \\
-middle & 45  & 0.135--0.195 & 100\% & 0.960 & 0.910 & 82.8 & 0.0108 & 0.0\%  & 0.394 & 29.0 \\
-high   & 46  & 0.195--0.248 & 100\% & 0.984 & 0.961 & 89.4 & 0.0085 & 0.0\%  & 0.329 & 28.0 \\
-all    & 136 & 0.080--0.248 & 100\% & 0.950 & 0.800 & 75.6 & 0.0108 & 4.4\%  & 0.453 & 28.2 \\
-\bottomrule
-\end{tabular}}
-\caption{Stage~0b on 2026-10-26 from the brief alone, current environment,
-time weight $0.3$. Gate: pass, no probe failures.}
-\label{tab:0b-brief}
-\end{table}
-
-\section{Reproduce}
+\section{How to run}
 \sloppy
 
 \begin{itemize}[leftmargin=1.5em]
-  \item \textbf{Stage~0 search and G3, 2026-10-24.} Commit \texttt{038e6d7},
-  \texttt{scripts/stage0\_gate\_crystal.py} (then named
-  \texttt{rung0\_gate\_crystal.py}): the \texttt{search} subcommand with
-  \texttt{--configs range:0.08-0.25 set:0.08,0.12,0.18,0.25} and the default
-  budget; the sensitivity row with \texttt{--time-weight 0.3}; G3 with the
-  \texttt{two-turn} subcommand, and the variants with \texttt{--probe
-  one-pass} and \texttt{--probe creep --creep-step 0.005|0.001}. Logs in
-  \texttt{docs/stage0/}: \texttt{crystal\_search}, \texttt{crystal\_two\_turn},
-  \texttt{crystal\_probe\_budget} and \texttt{crystal\_search\_timeweight03},
-  all dated 2026-10-24; JSON in \texttt{data/stage0/}. The script carries a
-  note that it records the 2026-10-24 environment.
-  \item \textbf{Stage~0b, 2026-10-25.} Commit \texttt{d849b0f},
-  \texttt{scripts/stage0b\_two\_turn.py} with \texttt{--n-random 200}. Log
-  \texttt{docs/stage0b/two\_turn\_runner\_2026-10-25.log}.
-  \item \textbf{Stage~0b from the brief, 2026-10-26.} Commit \texttt{f4d95ac},
-  the same script with \texttt{--n-random 100}. Result
-  \texttt{docs/stage0b/two\_turn\_brief\_2026-10-26.json}, which holds every
-  per-batch row.
-  \item \textbf{Diary.} \texttt{docs/findings.tex}, entries of 2026-10-24
-  (new environment), 2026-10-25 (Stage~0b through the runner) and 2026-10-26
-  (the brief).
+  \item \textbf{Stage~0 search and G3.} \texttt{scripts/stage0\_gate\_crystal.py}:
+  the \texttt{search} subcommand with \texttt{--configs range:0.08-0.25}
+  \texttt{set:0.08,0.12,0.18,0.25} and the default budget (300 random, top 6, 120
+  climbing rounds); G3 with the \texttt{two-turn} subcommand, and the
+  variants with \texttt{--probe one-pass} and \texttt{--probe creep
+  --creep-step 0.005|0.001}. The script as committed records the
+  2026-10-24 environment (its oracle and its tracking block target the
+  mid-step $\sigma$) and must be brought to the current one before the
+  re-run, as \S\ref{sec:change} says. Logs go to \texttt{docs/stage0/} and
+  JSON to \texttt{data/stage0/}, dated.
+  \item \textbf{Stage~0b.} \texttt{scripts/stage0b\_two\_turn.py} with
+  \texttt{--n-random 100}; it runs the readings-only probe and controller
+  above through \texttt{execute\_turn} and \texttt{score\_sample} on the task
+  files plus the fresh batches, and writes every per-batch row to
+  \texttt{data/stage0b/}, dated; the compact result goes to
+  \texttt{docs/stage0b/}.
+  \item \textbf{Diary.} Each run gets a dated entry in
+  \texttt{docs/findings.tex} with the commit, the command and the raw
+  output location.
 \end{itemize}
-
 \fussy
+
 \section{What goes where in the paper}
 \label{sec:where}
 
@@ -721,18 +572,17 @@ knobs, tuned by random search and hill climbing; that a blind side is tuned
 across limits and an informed side per limit, same families, same budget,
 same seeds, same objective; that controllers are scored on fresh batches by
 fast success against an oracle that rides the limit; the three gates; the
-verdict, with the blind and informed numbers; that the environment changed
-on 2026-10-26 and why the verdict carries over; and a pointer to the
-appendix. The Stage~0b subsection should say what the real path adds and
-that the solution was rewritten from the brief alone, with the 2026-10-26
+verdict, with the blind and informed numbers once the re-run has them; and a
+pointer to the appendix. The Stage~0b subsection should say what the real
+path adds and that the solution is written from the brief alone, with its
 numbers.
 
 The appendix should carry, from this file: Table~\ref{tab:families}
 (families), Table~\ref{tab:budget} (budget), the scoring definitions and
-the oracle of \S\ref{sec:scoring}, Table~\ref{tab:gates} (gates),
-Table~\ref{tab:verdicts} (verdicts), Table~\ref{tab:probebudget} (how much
-probing is needed), the readings-only probe and controller listings of
-\S\ref{sec:0b}, and Table~\ref{tab:0b-brief}. The 2026-10-24 listings, the
-per-family tables and Table~\ref{tab:0b-old} can stay here.
+the oracle of \S\ref{sec:scoring}, Table~\ref{tab:gates} (gates), the
+readings-only probe and controller listings of \S\ref{sec:0b}, and, once
+filled, the gate-verdict table, the probe-variant table and the Stage~0b
+table of \S\ref{sec:results}. The 2026-10-24 listings and the per-family
+tables can stay here.
 
 \end{document}
