@@ -120,7 +120,8 @@ def generate_code(
     """Generate a single code sample. Returns dict with code, success, error."""
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True,
+        enable_thinking=False,   # hybrid Qwen3 models reply without a think block; others ignore it
     )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
@@ -177,7 +178,8 @@ def generate_code_from_messages(
     Returns the same dict shape as generate_code.
     """
     text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True,
+        enable_thinking=False,   # hybrid Qwen3 models reply without a think block; others ignore it
     )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
