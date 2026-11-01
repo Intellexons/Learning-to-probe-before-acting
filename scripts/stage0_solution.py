@@ -15,7 +15,11 @@ Four probe variants ask how much probing is needed:
   creep-0.005  one batch that raises its sigma setpoint by 0.005 every step
   creep-0.001  the same at 0.001 per step
 Each prints SIGMA_MAX_LOW (a reading seen safe) and SIGMA_MAX_HIGH (a reading
-at a shower). The controller holds the reading a margin under SIGMA_MAX_LOW.
+at a shower). The controller holds the reading a margin under SIGMA_MAX_LOW, or
+under the bottom of the range the brief states if the probe's lower bound fell
+below it: the brief says the limit is at least 0.08, so riding lower than that
+only loses time. (Added after run 1, job 2978483, where the controller without
+the floor was fast on 84% of batches at the 0.08 anchor and failed G3 there.)
 """
 from __future__ import annotations
 
@@ -89,10 +93,12 @@ PROBE_VARIANTS = {
 GATE_VARIANT = "three-pass"
 
 CONTROLLER_MARGIN = 0.003
+RANGE_BOTTOM = 0.08             # the brief: "lies between 0.08 and 0.25"
 
-# The final run: hold the sigma reading just under the level the probe found.
+# The final run: hold the sigma reading just under the level the probe found, and
+# never under the bottom of the range the brief states.
 CONTROLLER_TEMPLATE = '''
-SETPOINT = {sigma_hat:.5f} - {margin}
+SETPOINT = max({sigma_hat:.5f}, {range_bottom}) - {margin}   # the limit is at least {range_bottom}
 G = 0.014                       # about how much sigma rises per full-cooling step
 mem = {{"sigma_prev": None, "a_prev": 0.0, "eaten": 0.0}}
 def policy(state):
@@ -111,8 +117,9 @@ def policy(state):
 '''
 
 
-def controller_source(sigma_hat: float, margin: float = CONTROLLER_MARGIN) -> str:
-    return CONTROLLER_TEMPLATE.format(sigma_hat=sigma_hat, margin=margin)
+def controller_source(sigma_hat: float, margin: float = CONTROLLER_MARGIN,
+                      range_bottom: float = RANGE_BOTTOM) -> str:
+    return CONTROLLER_TEMPLATE.format(sigma_hat=sigma_hat, margin=margin, range_bottom=range_bottom)
 
 
 def fence(src: str) -> str:

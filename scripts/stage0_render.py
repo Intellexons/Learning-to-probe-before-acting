@@ -17,6 +17,11 @@ THIRDS = ("low", "middle", "high")
 THIRD_LABEL = {"low": "low third", "middle": "middle third", "high": "high third"}
 
 
+def tex(s) -> str:
+    """Escape a path or name for LaTeX text."""
+    return str(s).replace("\\", "/").replace("_", "\\_").replace("%", "\\%").replace("#", "\\#")
+
+
 def pct(x: float) -> str:
     return f"{100 * x:.1f}\\%"
 
@@ -61,7 +66,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("results_dir", help="directory holding stage0_results.json (and the job log)")
     ap.add_argument("--out", required=True, help="directory for the .tex fragments")
+    ap.add_argument("--macro-prefix", default="SZ", help="prefix of the provenance macros (one per run in a document)")
     args = ap.parse_args()
+    P = args.macro_prefix
     rdir = Path(args.results_dir)
     R = json.loads((rdir / "stage0_results.json").read_text())
     prov, cfg = R["provenance"], R["config"]
@@ -79,30 +86,30 @@ def main() -> None:
     # ---- provenance macros ----------------------------------------------------------------
     b = cfg["budget"]
     W.write("provenance.tex", [
-        f"\\newcommand{{\\SZcommit}}{{{commit}}}",
-        f"\\newcommand{{\\SZcommitfull}}{{{prov['commit']}}}",
-        f"\\newcommand{{\\SZjob}}{{{job}}}",
-        f"\\newcommand{{\\SZhost}}{{{prov['hostname']}}}",
-        f"\\newcommand{{\\SZdate}}{{{prov['started_utc'][:10]}}}",
-        f"\\newcommand{{\\SZresults}}{{{rdir / 'stage0_results.json'}}}",
-        f"\\newcommand{{\\SZrows}}{{{rdir / 'stage0_rows.json'}}}",
-        f"\\newcommand{{\\SZlog}}{{{log_path}}}",
-        f"\\newcommand{{\\SZseconds}}{{{R['seconds']:.0f}}}",
-        f"\\newcommand{{\\SZworkers}}{{{prov['slurm'].get('cpus_per_task', '?')}}}",
-        f"\\newcommand{{\\SZnrandom}}{{{b['n_random']}}}",
-        f"\\newcommand{{\\SZtopk}}{{{b['topk']}}}",
-        f"\\newcommand{{\\SZnclimb}}{{{b['n_climb']}}}",
-        f"\\newcommand{{\\SZnevals}}{{{b['n_random'] + b['topk'] * b['n_climb']}}}",
-        f"\\newcommand{{\\SZsearchseeds}}{{{cfg['search_seeds'][0]} to {cfg['search_seeds'][1]}}}",
-        f"\\newcommand{{\\SZnsearch}}{{{cfg['search_seeds'][2]}}}",
-        f"\\newcommand{{\\SZfreshseeds}}{{{cfg['fresh_seeds'][0]} to {cfg['fresh_seeds'][1]}}}",
-        f"\\newcommand{{\\SZnfresh}}{{{cfg['fresh_seeds'][2]}}}",
-        f"\\newcommand{{\\SZneval}}{{{cfg['inputs']['n_eval_tasks']}}}",
-        f"\\newcommand{{\\SZevalsha}}{{{cfg['inputs']['crystallizer_eval.jsonl'][:12]}}}",
-        f"\\newcommand{{\\SZsearchseed}}{{{cfg['search_seed']}}}",
-        f"\\newcommand{{\\SZfastfactor}}{{{cfg['fast_factor']}}}",
-        f"\\newcommand{{\\SZtimeweight}}{{{cfg['env']['time_weight']}}}",
-        f"\\newcommand{{\\SZmargin}}{{{cfg['controller_margin']}}}",
+        f"\\newcommand{{\\{P}commit}}{{{commit}}}",
+        f"\\newcommand{{\\{P}commitfull}}{{{prov['commit']}}}",
+        f"\\newcommand{{\\{P}job}}{{{job}}}",
+        f"\\newcommand{{\\{P}host}}{{{tex(prov['hostname'])}}}",
+        f"\\newcommand{{\\{P}date}}{{{prov['started_utc'][:10]}}}",
+        f"\\newcommand{{\\{P}results}}{{{tex(rdir / 'stage0_results.json')}}}",
+        f"\\newcommand{{\\{P}rows}}{{{tex(rdir / 'stage0_rows.json')}}}",
+        f"\\newcommand{{\\{P}log}}{{{tex(log_path)}}}",
+        f"\\newcommand{{\\{P}seconds}}{{{R['seconds']:.0f}}}",
+        f"\\newcommand{{\\{P}workers}}{{{prov['slurm'].get('cpus_per_task', '?')}}}",
+        f"\\newcommand{{\\{P}nrandom}}{{{b['n_random']}}}",
+        f"\\newcommand{{\\{P}topk}}{{{b['topk']}}}",
+        f"\\newcommand{{\\{P}nclimb}}{{{b['n_climb']}}}",
+        f"\\newcommand{{\\{P}nevals}}{{{b['n_random'] + b['topk'] * b['n_climb']}}}",
+        f"\\newcommand{{\\{P}searchseeds}}{{{cfg['search_seeds'][0]} to {cfg['search_seeds'][1]}}}",
+        f"\\newcommand{{\\{P}nsearch}}{{{cfg['search_seeds'][2]}}}",
+        f"\\newcommand{{\\{P}freshseeds}}{{{cfg['fresh_seeds'][0]} to {cfg['fresh_seeds'][1]}}}",
+        f"\\newcommand{{\\{P}nfresh}}{{{cfg['fresh_seeds'][2]}}}",
+        f"\\newcommand{{\\{P}neval}}{{{cfg['inputs']['n_eval_tasks']}}}",
+        f"\\newcommand{{\\{P}evalsha}}{{{cfg['inputs']['crystallizer_eval.jsonl'][:12]}}}",
+        f"\\newcommand{{\\{P}searchseed}}{{{cfg['search_seed']}}}",
+        f"\\newcommand{{\\{P}fastfactor}}{{{cfg['fast_factor']}}}",
+        f"\\newcommand{{\\{P}timeweight}}{{{cfg['env']['time_weight']}}}",
+        f"\\newcommand{{\\{P}margin}}{{{cfg['controller_margin']}}}",
     ])
 
     # ---- blind side per family -------------------------------------------------------------
@@ -205,6 +212,16 @@ def main() -> None:
     lines[-1] = "\\bottomrule"
     lines.append("\\end{tabular}")
     W.write("references.tex", lines)
+    # ---- code listings, from the module itself so the document cannot drift from the code --
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from stage0_solution import CONTROLLER_MARGIN, CONTROLLER_TEMPLATE, PROBE_VARIANTS, GATE_VARIANT, RANGE_BOTTOM
+    W.write("listing_probe.tex", ["\\begin{verbatim}", PROBE_VARIANTS[GATE_VARIANT].strip("\n"), "\\end{verbatim}"])
+    W.write("listing_controller.tex", ["\\begin{verbatim}",
+                                       CONTROLLER_TEMPLATE.replace("{sigma_hat:.5f}", "<SIGMA_MAX_LOW>")
+                                       .replace("{margin}", str(CONTROLLER_MARGIN)).replace("{range_bottom}", str(RANGE_BOTTOM))
+                                       .replace("{{", "{").replace("}}", "}").strip("\n"),
+                                       "\\end{verbatim}"])
     print(f"wrote {len(list(Path(args.out).glob('*.tex')))} fragments to {args.out} from {rdir} (commit {commit}, job {job})")
 
 
