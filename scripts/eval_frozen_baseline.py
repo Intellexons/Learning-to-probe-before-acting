@@ -51,7 +51,7 @@ from src.runner import (  # noqa: E402
     validate_code,
 )
 from crystallizer_env import HiddenParams  # noqa: E402
-from crystallizer_utils import cautious_policy, run_episode, run_oracle_episode  # noqa: E402
+from crystallizer_utils import run_cautious_episode, run_oracle_episode  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def reference_rows(task: dict) -> dict:
     sc = task["scenarios"][0]
     hidden = HiddenParams(sigma_max=sc["hidden"]["sigma_max"])
     return {
-        "blind": _metrics(run_episode(cautious_policy, seed=sc["seed"], hidden=hidden), sc),
+        "blind": _metrics(run_cautious_episode(sc["seed"], hidden), sc),
         "oracle": _metrics(run_oracle_episode(sc["seed"], hidden), sc),
     }
 
