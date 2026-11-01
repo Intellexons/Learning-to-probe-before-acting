@@ -1,0 +1,1491 @@
+{
+  "provenance": {
+    "commit": "9a83f4efc675ccfe2a7a11e10c9edc0b07d4930a",
+    "commit_source": "LORA4VR_GIT_COMMIT",
+    "dirty_tree": null,
+    "branch": null,
+    "command": "scripts/eval_frozen_baseline.py --turns 2 --n-samples 4 --model-path models/hf_base/iter_000 --out-dir /scratch/2979824/out",
+    "cwd": "/sc/home/nima.hamidisiboni/work/lora4vr",
+    "hostname": "gx17v1",
+    "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "started_utc": "2026-11-01T17:17:58+00:00",
+    "slurm": {
+      "cpus_per_task": "4",
+      "job_id": "2979824",
+      "job_name": "stage2-4b",
+      "job_nodelist": "gx17v1",
+      "submit_dir": "/sc/home/nima.hamidisiboni/work/lora4vr"
+    }
+  },
+  "stage": 2,
+  "turns": 2,
+  "model": "models/hf_base/iter_000",
+  "task_file": "scripts/seed_tasks/crystallizer_eval.jsonl",
+  "n_tasks": 48,
+  "n_samples_per_task": 4,
+  "generated_rate": 1.0,
+  "ran_rate": 0.9947916666666666,
+  "success_rate": 0.28125,
+  "fast_rate": 0.020833333333333332,
+  "mean_norm_time": 0.15788869282110246,
+  "mean_reward": -53.47083333333334,
+  "mean_ride_ratio": 0.7972706194052516,
+  "earlier_batches_in_brief": true,
+  "max_tokens": 1000,
+  "blind": {
+    "fast_rate": 0.041666666666666664,
+    "mean_norm_time": 0.4932564698788697,
+    "mean_reward": 38.393750000000416
+  },
+  "oracle": {
+    "fast_rate": 1.0,
+    "mean_norm_time": 1.0,
+    "mean_reward": 79.70000000000003
+  },
+  "per_task": [
+    {
+      "task_id": "crystallizer_eval_s10000",
+      "sigma_max": 0.1254,
+      "oracle_steps": 145,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -109.50000000000027,
+      "mean_ride_ratio": 0.8298088080998949,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5686274509803921,
+        "reward": 43.50000000000037,
+        "steps": 255
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 76.50000000000006,
+        "steps": 145
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10001",
+      "sigma_max": 0.1923,
+      "oracle_steps": 105,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.4908820264751829,
+      "mean_reward": 28.300000000000086,
+      "mean_ride_ratio": 0.6348681330431313,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.3977272727272727,
+        "reward": 40.800000000000395,
+        "steps": 264
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 88.49999999999994,
+        "steps": 105
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10002",
+      "sigma_max": 0.2179,
+      "oracle_steps": 102,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.36325883418906674,
+      "mean_reward": -18.62499999999999,
+      "mean_ride_ratio": 0.3790200814826852,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4434782608695652,
+        "reward": 51.0000000000003,
+        "steps": 230
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 89.39999999999995,
+        "steps": 102
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10003",
+      "sigma_max": 0.1288,
+      "oracle_steps": 158,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -84.5,
+      "mean_ride_ratio": 1.0366583215882044,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5392491467576792,
+        "reward": 32.10000000000048,
+        "steps": 293
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 72.6000000000001,
+        "steps": 158
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10004",
+      "sigma_max": 0.168,
+      "oracle_steps": 123,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 0.75,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.1056701030927835,
+      "mean_reward": -118.37499999999989,
+      "mean_ride_ratio": 0.2434128657639514,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4241379310344828,
+        "reward": 33.00000000000047,
+        "steps": 290
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 83.1,
+        "steps": 123
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10005",
+      "sigma_max": 0.2238,
+      "oracle_steps": 93,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.39429607780612247,
+      "mean_reward": 25.450000000000134,
+      "mean_ride_ratio": 0.7609595735668429,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.372,
+        "reward": 45.000000000000355,
+        "steps": 250
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 92.09999999999997,
+        "steps": 93
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10006",
+      "sigma_max": 0.0939,
+      "oracle_steps": 243,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -84.425,
+      "mean_ride_ratio": 1.0333032301486706,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.7993421052631579,
+        "reward": 28.80000000000051,
+        "steps": 304
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 47.100000000000335,
+        "steps": 243
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10007",
+      "sigma_max": 0.159,
+      "oracle_steps": 122,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.1564102564102564,
+      "mean_reward": -72.32500000000023,
+      "mean_ride_ratio": 0.7565642646951221,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.43884892086330934,
+        "reward": 36.600000000000435,
+        "steps": 278
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 83.39999999999999,
+        "steps": 122
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10008",
+      "sigma_max": 0.2445,
+      "oracle_steps": 100,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.26072203787330656,
+      "mean_reward": -15.924999999999876,
+      "mean_ride_ratio": 0.8651352283442882,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.31347962382445144,
+        "reward": 24.30000000000055,
+        "steps": 319
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 89.99999999999996,
+        "steps": 100
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10009",
+      "sigma_max": 0.096,
+      "oracle_steps": 225,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -89.525,
+      "mean_ride_ratio": 0.755948219993787,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.7785467128027682,
+        "reward": 33.300000000000466,
+        "steps": 289
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 52.500000000000284,
+        "steps": 225
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10010",
+      "sigma_max": 0.1416,
+      "oracle_steps": 126,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.21541545871130646,
+      "mean_reward": -26.424999999999763,
+      "mean_ride_ratio": 0.9179005980049669,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.50199203187251,
+        "reward": 44.70000000000036,
+        "steps": 251
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 82.2,
+        "steps": 126
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10011",
+      "sigma_max": 0.2254,
+      "oracle_steps": 106,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -117.07500000000029,
+      "mean_ride_ratio": 0.5064587790970928,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.3521594684385382,
+        "reward": 29.7000000000005,
+        "steps": 301
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 88.19999999999995,
+        "steps": 106
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10012",
+      "sigma_max": 0.1243,
+      "oracle_steps": 160,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.1413427561837456,
+      "mean_reward": -55.57499999999988,
+      "mean_ride_ratio": 1.0209834229167578,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5693950177935944,
+        "reward": 35.70000000000044,
+        "steps": 281
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 72.0000000000001,
+        "steps": 160
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10013",
+      "sigma_max": 0.1493,
+      "oracle_steps": 137,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -87.8,
+      "mean_ride_ratio": 1.0094982180106677,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.46598639455782315,
+        "reward": 31.80000000000048,
+        "steps": 294
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 78.90000000000003,
+        "steps": 137
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10014",
+      "sigma_max": 0.2404,
+      "oracle_steps": 101,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.34327506051296375,
+      "mean_reward": 16.22500000000022,
+      "mean_ride_ratio": 0.8524500479910098,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.315625,
+        "reward": 24.000000000000554,
+        "steps": 320
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 89.69999999999996,
+        "steps": 101
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10015",
+      "sigma_max": 0.0973,
+      "oracle_steps": 233,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -83.82499999999999,
+      "mean_ride_ratio": 1.0222930007276845,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.761437908496732,
+        "reward": 28.200000000000514,
+        "steps": 306
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 50.10000000000031,
+        "steps": 233
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10016",
+      "sigma_max": 0.143,
+      "oracle_steps": 125,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.13241525423728814,
+      "mean_reward": -51.37499999999992,
+      "mean_ride_ratio": 0.9940629889660159,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.49800796812749004,
+        "reward": 44.70000000000036,
+        "steps": 251
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 82.5,
+        "steps": 125
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10017",
+      "sigma_max": 0.2482,
+      "oracle_steps": 92,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.25,
+      "mean_norm_time": 0.46073222489830723,
+      "mean_reward": 5.624999999999844,
+      "mean_ride_ratio": 0.5732602194120612,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4,
+        "reward": 51.0000000000003,
+        "steps": 230
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 92.39999999999996,
+        "steps": 92
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10018",
+      "sigma_max": 0.1215,
+      "oracle_steps": 144,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -85.475,
+      "mean_ride_ratio": 1.0191826905282184,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5901639344262295,
+        "reward": 46.80000000000034,
+        "steps": 244
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 76.80000000000005,
+        "steps": 144
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10019",
+      "sigma_max": 0.1459,
+      "oracle_steps": 147,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -86.675,
+      "mean_ride_ratio": 0.7513020125446573,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4666666666666667,
+        "reward": 25.50000000000054,
+        "steps": 315
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 75.90000000000006,
+        "steps": 147
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10020",
+      "sigma_max": 0.2138,
+      "oracle_steps": 93,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.13285714285714287,
+      "mean_reward": -74.27500000000025,
+      "mean_ride_ratio": 0.38389345885403087,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.36904761904761907,
+        "reward": 44.40000000000036,
+        "steps": 252
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 92.09999999999997,
+        "steps": 93
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10021",
+      "sigma_max": 0.093,
+      "oracle_steps": 202,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -84.425,
+      "mean_ride_ratio": 1.044513193528069,
+      "blind": {
+        "success": true,
+        "fast": true,
+        "norm_time": 0.8178137651821862,
+        "reward": 45.90000000000035,
+        "steps": 247
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 59.40000000000022,
+        "steps": 202
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10022",
+      "sigma_max": 0.1602,
+      "oracle_steps": 108,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.21464932126696834,
+      "mean_reward": -23.49999999999982,
+      "mean_ride_ratio": 0.5980784428471851,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4576271186440678,
+        "reward": 49.200000000000315,
+        "steps": 236
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 87.59999999999995,
+        "steps": 108
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10023",
+      "sigma_max": 0.2413,
+      "oracle_steps": 95,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.42695943853335133,
+      "mean_reward": 24.025000000000084,
+      "mean_ride_ratio": 0.5643304711925302,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.38,
+        "reward": 45.000000000000355,
+        "steps": 250
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 91.49999999999996,
+        "steps": 95
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10024",
+      "sigma_max": 0.0864,
+      "oracle_steps": 265,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -86.75,
+      "mean_ride_ratio": 0.772705319026506,
+      "blind": {
+        "success": true,
+        "fast": true,
+        "norm_time": 0.8983050847457628,
+        "reward": 31.500000000000483,
+        "steps": 295
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 40.5000000000004,
+        "steps": 265
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10025",
+      "sigma_max": 0.1638,
+      "oracle_steps": 107,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.12441860465116279,
+      "mean_reward": -50.84999999999993,
+      "mean_ride_ratio": 1.0162980347258366,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4476987447698745,
+        "reward": 48.300000000000324,
+        "steps": 239
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 87.89999999999995,
+        "steps": 107
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10026",
+      "sigma_max": 0.2014,
+      "oracle_steps": 108,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 1.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.6329505358796806,
+      "mean_reward": 67.80000000000014,
+      "mean_ride_ratio": 0.9181391901170008,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.38571428571428573,
+        "reward": 36.00000000000044,
+        "steps": 280
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 87.59999999999995,
+        "steps": 108
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10027",
+      "sigma_max": 0.1148,
+      "oracle_steps": 195,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -107.77500000000028,
+      "mean_ride_ratio": 0.7990796363481393,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.6151419558359621,
+        "reward": 24.900000000000546,
+        "steps": 317
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 61.5000000000002,
+        "steps": 195
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10028",
+      "sigma_max": 0.171,
+      "oracle_steps": 120,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -112.12500000000027,
+      "mean_ride_ratio": 0.4926792715899327,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.40404040404040403,
+        "reward": 30.90000000000049,
+        "steps": 297
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 83.99999999999999,
+        "steps": 120
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10029",
+      "sigma_max": 0.2193,
+      "oracle_steps": 96,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.10434782608695652,
+      "mean_reward": -53.924999999999926,
+      "mean_ride_ratio": 0.6728014312779408,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.35424354243542433,
+        "reward": 38.700000000000415,
+        "steps": 271
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 91.19999999999996,
+        "steps": 96
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10030",
+      "sigma_max": 0.1157,
+      "oracle_steps": 150,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.1059322033898305,
+      "mean_reward": -60.524999999999835,
+      "mean_ride_ratio": 0.9998418647152366,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.635593220338983,
+        "reward": 49.200000000000315,
+        "steps": 236
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 75.00000000000007,
+        "steps": 150
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10031",
+      "sigma_max": 0.1412,
+      "oracle_steps": 150,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -111.30000000000028,
+      "mean_ride_ratio": 0.502510755415106,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4854368932038835,
+        "reward": 27.300000000000523,
+        "steps": 309
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 75.00000000000007,
+        "steps": 150
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10032",
+      "sigma_max": 0.217,
+      "oracle_steps": 102,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -112.87500000000028,
+      "mean_ride_ratio": 0.7546779091138314,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.34459459459459457,
+        "reward": 31.200000000000486,
+        "steps": 296
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 89.39999999999995,
+        "steps": 102
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10033",
+      "sigma_max": 0.1305,
+      "oracle_steps": 132,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -85.02499999999999,
+      "mean_ride_ratio": 1.0472789866852086,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.559322033898305,
+        "reward": 49.200000000000315,
+        "steps": 236
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 80.40000000000002,
+        "steps": 132
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10034",
+      "sigma_max": 0.152,
+      "oracle_steps": 114,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -111.60000000000028,
+      "mean_ride_ratio": 0.9222874924871696,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4956521739130435,
+        "reward": 51.0000000000003,
+        "steps": 230
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 85.79999999999997,
+        "steps": 114
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10035",
+      "sigma_max": 0.2484,
+      "oracle_steps": 90,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 1.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.5486072946973702,
+      "mean_reward": 68.92500000000013,
+      "mean_ride_ratio": 0.7381724567986793,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.3673469387755102,
+        "reward": 46.50000000000034,
+        "steps": 245
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 92.99999999999996,
+        "steps": 90
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10036",
+      "sigma_max": 0.1279,
+      "oracle_steps": 154,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -85.625,
+      "mean_ride_ratio": 1.0263940604186312,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5539568345323741,
+        "reward": 36.600000000000435,
+        "steps": 278
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 73.80000000000008,
+        "steps": 154
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10037",
+      "sigma_max": 0.1596,
+      "oracle_steps": 110,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.13819095477386933,
+      "mean_reward": -51.37499999999994,
+      "mean_ride_ratio": 0.9755830123302156,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4583333333333333,
+        "reward": 48.00000000000033,
+        "steps": 240
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 86.99999999999996,
+        "steps": 110
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10038",
+      "sigma_max": 0.2428,
+      "oracle_steps": 93,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 1.0,
+      "fast_rate": 0.5,
+      "mean_norm_time": 0.7313202386421113,
+      "mean_reward": 79.57500000000003,
+      "mean_ride_ratio": 0.8230029353024688,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.36046511627906974,
+        "reward": 42.60000000000038,
+        "steps": 258
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 92.09999999999997,
+        "steps": 93
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10039",
+      "sigma_max": 0.1212,
+      "oracle_steps": 156,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -86.14999999999999,
+      "mean_ride_ratio": 1.0305903859080738,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5977011494252874,
+        "reward": 41.70000000000039,
+        "steps": 261
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 73.20000000000009,
+        "steps": 156
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10040",
+      "sigma_max": 0.1604,
+      "oracle_steps": 122,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.12103174603174603,
+      "mean_reward": -53.024999999999906,
+      "mean_ride_ratio": 0.9962042962696113,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.45018450184501846,
+        "reward": 38.700000000000415,
+        "steps": 271
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 83.39999999999999,
+        "steps": 122
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10041",
+      "sigma_max": 0.2427,
+      "oracle_steps": 99,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.75,
+      "fast_rate": 0.25,
+      "mean_norm_time": 0.535813492063492,
+      "mean_reward": 33.550000000000026,
+      "mean_ride_ratio": 0.6455808980833146,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.32247557003257327,
+        "reward": 27.900000000000517,
+        "steps": 307
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 90.29999999999995,
+        "steps": 99
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10042",
+      "sigma_max": 0.1072,
+      "oracle_steps": 199,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -87.35,
+      "mean_ride_ratio": 1.0132978227926661,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.6745762711864407,
+        "reward": 31.500000000000483,
+        "steps": 295
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 60.30000000000021,
+        "steps": 199
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10043",
+      "sigma_max": 0.1737,
+      "oracle_steps": 114,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0979381443298969,
+      "mean_reward": -58.04999999999988,
+      "mean_ride_ratio": 0.9617956655432526,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.40860215053763443,
+        "reward": 36.30000000000044,
+        "steps": 279
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 85.79999999999997,
+        "steps": 114
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10044",
+      "sigma_max": 0.2245,
+      "oracle_steps": 104,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.23681840510889146,
+      "mean_reward": -22.07499999999987,
+      "mean_ride_ratio": 0.601552909174538,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.4094488188976378,
+        "reward": 43.80000000000037,
+        "steps": 254
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 88.79999999999995,
+        "steps": 104
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10045",
+      "sigma_max": 0.1344,
+      "oracle_steps": 128,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.25,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.08443271767810026,
+      "mean_reward": -65.99999999999983,
+      "mean_ride_ratio": 0.6191548932479051,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5589519650655022,
+        "reward": 51.300000000000296,
+        "steps": 229
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 81.60000000000001,
+        "steps": 128
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10046",
+      "sigma_max": 0.1375,
+      "oracle_steps": 156,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.0,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.0,
+      "mean_reward": -110.02500000000028,
+      "mean_ride_ratio": 0.773202162358411,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.5148514851485149,
+        "reward": 29.100000000000506,
+        "steps": 303
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 73.20000000000009,
+        "steps": 156
+      },
+      "probe_rate": 0.25,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    },
+    {
+      "task_id": "crystallizer_eval_s10047",
+      "sigma_max": 0.2315,
+      "oracle_steps": 99,
+      "n_samples": 4,
+      "generated_rate": 1.0,
+      "ran_rate": 1.0,
+      "success_rate": 0.5,
+      "fast_rate": 0.0,
+      "mean_norm_time": 0.2779690990320179,
+      "mean_reward": -34.0250000000002,
+      "mean_ride_ratio": 0.6122720703748704,
+      "blind": {
+        "success": true,
+        "fast": false,
+        "norm_time": 0.35231316725978645,
+        "reward": 35.70000000000044,
+        "steps": 281
+      },
+      "oracle": {
+        "success": true,
+        "fast": true,
+        "norm_time": 1.0,
+        "reward": 90.29999999999995,
+        "steps": 99
+      },
+      "probe_rate": 0.0,
+      "estimate_rate": 0.0,
+      "mean_estimate_error": null
+    }
+  ],
+  "probe_rate": 0.046875,
+  "estimate_rate": 0.0,
+  "mean_estimate_error": null
+}

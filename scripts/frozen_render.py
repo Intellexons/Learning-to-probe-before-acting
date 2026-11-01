@@ -1,6 +1,8 @@
 """Render frozen-model runs (Stage 1: one turn; Stage 2: probe run + controller)
 into LaTeX fragments: one comparison table across runs, a per-third table, a
-diagnostics table from the samples, and provenance macros per run.
+diagnostics table from the samples, an error-kind table (why the samples that
+did not run failed, and three code patterns counted over all samples), and
+provenance macros per run.
 
 Each run directory holds stage<N>_summary.json (with its provenance block),
 stage<N>_samples.jsonl and the job log. Every fragment is headed by a comment
@@ -77,11 +79,22 @@ def cut_off(r: dict) -> bool:
     return last.count("```") % 2 == 1
 
 
+def last_reply(r: dict) -> str:
+    msgs = [m["content"] for m in (r.get("transcript") or []) if m.get("role") == "assistant"]
+    return msgs[-1] if msgs else ""
+
+
+def first_reply(r: dict) -> str:
+    msgs = [m["content"] for m in (r.get("transcript") or []) if m.get("role") == "assistant"]
+    return msgs[0] if msgs else ""
+
+
 def diagnostics(run: dict) -> dict:
     rows, S = run["rows"], run["summary"]
     n = len(rows)
     d = {"n": n, "generated": mean(bool(r["generated"]) for r in rows),
          "cut_off": mean(cut_off(r) for r in rows),
+         "reply_chars_median": statistics.median(len(last_reply(r)) for r in rows) if rows else None,
          "outcomes": {k: sum(outcome(r) == k for r in rows) for k in ("success", "ruined", "timeout", "error")},
          "fast": mean(bool(r["fast"]) for r in rows), "reward": mean(r["reward"] for r in rows),
          "norm_time": mean(r["norm_time"] for r in rows),
@@ -91,12 +104,78 @@ def diagnostics(run: dict) -> dict:
         probed = [r for r in rows if r.get("probed")]
         d["probe_rate"] = len(probed) / n if n else None
         d["probe_crashed"] = mean(("Traceback" in (r.get("tool_output") or "") or "Error" in (r.get("tool_output") or "")) for r in probed) if probed else None
-        d["probe_cut_off"] = mean(((r.get("transcript") or [{}])[1].get("content", "").count("```") % 2 == 1) for r in probed) if probed else None
+        d["probe_cut_off"] = mean((first_reply(r).count("```") % 2 == 1) for r in probed) if probed else None
+        d["probe_chars_range"] = (min(len(first_reply(r)) for r in probed), max(len(first_reply(r)) for r in probed)) if probed else None
         ests = [r.get("estimate_error") for r in probed if r.get("estimate_error") is not None]
         d["estimate_within_0.01"] = (sum(e <= 0.01 for e in ests) / len(probed)) if probed else None
         d["estimate_rate"] = (len(ests) / len(probed)) if probed else None
         d["estimate_error_median"] = statistics.median(ests) if ests else None
     return d
+
+
+ERROR_KINDS = (
+    "syntax error (reply cut off or malformed)",
+    "forbidden name at validation",
+    "reads state['done'], ['showered'] or ['failure_reason']",
+    "calls env in the controller",
+    "undefined name (NameError)",
+    "missing state key (KeyError)",
+    "local used before assignment",
+    "sandbox output parse error (the bug fixed on 2026-11-01)",
+    "other runtime error",
+)
+FLAG_KEYS = ("done", "showered", "failure_reason")
+
+
+def error_kind(r: dict) -> str | None:
+    """Why a sample that did not run failed, in a few fixed kinds; None if it ran."""
+    import re
+    if r.get("ran"):
+        return None
+    if not r.get("generated"):
+        g = str(r.get("generation_error") or "")
+        if "Syntax error" in g:
+            return ERROR_KINDS[0]
+        if "Forbidden" in g:
+            return ERROR_KINDS[1]
+        return ERROR_KINDS[8]
+    e = str((r.get("errors") or [""])[0])
+    e = re.sub(r"^s\d+: ", "", e)
+    if "Output parse error" in e:
+        return ERROR_KINDS[7]
+    if re.search(r"name 'env' is not defined|local variable 'env'", e):
+        return ERROR_KINDS[3]
+    if re.fullmatch(r"policy\(\) error: '(%s)'" % "|".join(FLAG_KEYS), e):
+        return ERROR_KINDS[2]
+    if "is not defined" in e:
+        return ERROR_KINDS[4]
+    if re.fullmatch(r"policy\(\) error: '[^']*'", e):
+        return ERROR_KINDS[5]
+    if "cannot access local variable" in e:
+        return ERROR_KINDS[6]
+    return ERROR_KINDS[8]
+
+
+CODE_PATTERNS = (
+    ("controllers that call env.reset or env.step", r"\benv\.(reset|step)\b"),
+    ("controllers that read state['done'], ['showered'] or ['failure_reason']",
+     r"state\[\s*['\"](done|showered|failure_reason)['\"]\s*\]"),
+    ("controllers that print", r"\bprint\("),
+)
+
+
+def error_table(run: dict) -> dict:
+    """Counts per error kind over the samples that did not run, and per code
+    pattern over all samples (the controller code, whether it ran or not)."""
+    import re
+    rows = run["rows"]
+    kinds = {k: 0 for k in ERROR_KINDS}
+    for r in rows:
+        k = error_kind(r)
+        if k is not None:
+            kinds[k] += 1
+    patterns = {name: sum(bool(re.search(rx, r.get("code") or "")) for r in rows) for name, rx in CODE_PATTERNS}
+    return {"kinds": kinds, "patterns": patterns, "n": len(rows), "errors": sum(kinds.values())}
 
 
 def by_third(run: dict) -> dict:
@@ -158,12 +237,14 @@ def main() -> None:
     write("comparison.tex", lines)
 
     # ---- outcomes and failure diagnostics ---------------------------------------------------
-    lines = ["\\begin{tabular}{@{}lrrrrrrrrr@{}}", "\\toprule",
-             "Run & $n$ & Cut off & Success & Ruined & Timeout & Error & Probe crashed & Probe cut off & Est.\\ within 0.01 \\\\", "\\midrule"]
+    lines = ["\\begin{tabular}{@{}lrrrrrrrrrrr@{}}", "\\toprule",
+             "Run & $n$ & Reply chars & Cut off & Success & Ruined & Timeout & Error & Probe chars & Probe crashed & Probe cut off & Est.\\ within 0.01 \\\\", "\\midrule"]
     for label, r in runs:
         d = diagnostics(r)
         o = d["outcomes"]
-        lines.append(f"{tex(label)} & {d['n']} & {pct(d['cut_off'])} & {o['success']} & {o['ruined']} & {o['timeout']} & {o['error']} & "
+        pr = d.get("probe_chars_range")
+        lines.append(f"{tex(label)} & {d['n']} & {d['reply_chars_median']:.0f} & {pct(d['cut_off'])} & {o['success']} & {o['ruined']} & {o['timeout']} & {o['error']} & "
+                     f"{(f'{pr[0]}--{pr[1]}' if pr else '--') if r['stage'] == 2 else '--'} & "
                      f"{pct(d.get('probe_crashed')) if r['stage'] == 2 else '--'} & {pct(d.get('probe_cut_off')) if r['stage'] == 2 else '--'} & "
                      f"{pct(d.get('estimate_within_0.01')) if r['stage'] == 2 else '--'} \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
@@ -180,7 +261,20 @@ def main() -> None:
         lines.append(f"{th} & {bt[0][th]['n']} & {cells} \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
     write("by_third.tex", lines)
-    print(f"wrote 4 fragments to {out} for {len(runs)} runs")
+
+    # ---- why the samples that did not run failed; code patterns over all samples ----------
+    et = [error_table(r) for _, r in runs]
+    lines = ["\\begin{tabular}{@{}l" + "r" * len(runs) + "@{}}", "\\toprule",
+             " & " + " & ".join(tex(label) for label, _ in runs) + " \\\\", "\\midrule",
+             "samples that did not run & " + " & ".join(str(e["errors"]) for e in et) + " \\\\"]
+    for k in ERROR_KINDS:
+        lines.append(f"\\quad {tex(k)} & " + " & ".join(str(e["kinds"][k]) for e in et) + " \\\\")
+    lines.append("\\midrule")
+    for name, _ in CODE_PATTERNS:
+        lines.append(f"{tex(name)}, of {et[0]['n']} & " + " & ".join(str(e["patterns"][name]) for e in et) + " \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}"]
+    write("errors.tex", lines)
+    print(f"wrote 5 fragments to {out} for {len(runs)} runs")
 
 
 if __name__ == "__main__":
