@@ -34,8 +34,9 @@ added as experiments complete. Reproduction references a git commit; the code
 at that commit is the exact code that produced the result. The paths
 \texttt{docs/rung0/} and \texttt{scripts/rung0\_gate\_crystal.py} named in
 entries up to 2026-10-25 are now \texttt{docs/stage0/} and
-\texttt{scripts/stage0\_gate\_crystal.py}; a level of the experiment plan is
-called a stage.
+\texttt{scripts/stage0\_gate\_crystal.py}, which was replaced on 2026-11-01 by
+\texttt{scripts/stage0\_gate.py}; a level of the experiment plan is called a
+stage.
 
 \noindent\textbf{System.} \texttt{Qwen3-4B-Instruct-2507} with a LoRA adapter
 trained by branched multi-turn GRPO (\texttt{src/branched\_trainer.py}). The
@@ -60,10 +61,10 @@ themselves are never edited. The full plan with pass criteria is the section
 \toprule
 Stage & What it asks & Status & Entry \\
 \midrule
-0  & Is the environment worth it: does the hidden limit need a probe run? & passed & 2026-10-24, crystallizer \\
-0b & Does the hand-written probe run + final run survive the real runner? & passed; redone from the brief 2026-10-26 & 2026-10-25; 2026-10-26, the brief \\
-1  & Frozen model, one turn, no probe run (arm A) & done (protocol prompt); redone under the brief & 2026-10-25, Stages 1 and 2; 2026-10-26, the brief \\
-2  & Frozen model with a probe run (arm B) & done (protocol prompt); redone under the brief & 2026-10-25, Stages 1 and 2; 2026-10-26, example ablation; 2026-10-26, the brief \\
+0  & Is the environment worth it: does the hidden limit need a probe run? & passed on the current environment (clean rebuild, run 2); earlier passes were on the previous environment & 2026-11-01, Stage 0 rebuilt \\
+0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed & 2026-11-01, Stage 0 rebuilt \\
+1  & Frozen model, one turn, no probe run (arm A) & done under the brief on 12 tasks; to be re-run on the 48-task eval set & 2026-10-26, the brief \\
+2  & Frozen model with a probe run (arm B) & done under the brief on 12 tasks; to be re-run on the 48-task eval set & 2026-10-26, the brief \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -969,6 +970,153 @@ cluster (A30, jobs 2782627 and 2782628), which run
 results in \texttt{docs/stage1/} and \texttt{docs/stage2/} with the suffix
 \texttt{brief\_2026-10-26}: job log, summary, samples with probe code, tool
 output, controller and outcome.
+\end{sloppypar}
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-11-01 \quad Stage 0 rebuilt on the current environment, with
+the provenance of every number; the gate passes on the second run}
+% ============================================================
+
+\commit{2edeba7} $\cdot$ \textit{hand-written controllers only, CPU; two
+cluster jobs of 32 CPUs, 282\,s and 279\,s; no model was run}
+
+\subsection*{Setup / motivation}
+
+The user's decision: a clean slate for Stage~0. The earlier gate had been run
+on the previous environment and carried over by argument; its results are
+discarded, nothing is kept for compatibility, and reproducibility is the
+first requirement: every number names the commit, the job and the log that
+produced it. The full account is \texttt{docs/stage0\_gate.tex}, whose
+tables are rendered from the result JSON by
+\texttt{scripts/stage0\_render.py}; this entry is the dated summary.
+
+What was built. The environment gains \texttt{peek(action)}, the exact
+one-step preview of the reported $\sigma$, by splitting the step's arithmetic
+into a pure function both use; the oracle and the tracking family ride on it
+by bisection, and the new oracle reproduces the previous one step for step on
+65 batches. The references are the rider at the limit (oracle) and the rider
+at the bottom of the range (cautious blind); the closed-form pre-growth
+tracker is gone. Task limits are drawn uniformly within thirds of the range so
+every set covers it evenly, and the held-out set grows from 12 to 48 tasks
+(16 per third); Stages~1 and~2 must be re-run on it. The gate is one script,
+\texttt{scripts/stage0\_gate.py}: five families (track, linear, power, hybrid,
+pwl) with knobs in the unit cube; a blind side tuned across limits and an
+informed side per anchor ($0.08$, $0.165$, $0.25$); 300 random vectors and
+six survivors climbing for 120 rounds on 48 search batches; scoring on 200
+fresh batches by fast success against the task files' oracle, batches drawn
+as the runner draws them. Stage~0b is folded in as G3: the hand-written
+readings-only probe and controller (\texttt{scripts/stage0\_solution.py},
+four probe variants) run through \texttt{execute\_turn} and
+\texttt{score\_sample}, the sandbox path training uses, at every anchor and
+over the range, and the same solution, the oracle and both blind controllers
+are scored on the 48 held-out tasks as the references the model stages are
+read against. \texttt{src/provenance.py} embeds commit, tree state, command,
+host and Slurm job in every result and refuses to run without a commit; the
+cluster copy has no \texttt{.git}, so the job receives it via
+\texttt{sbatch --export}. Decisions taken from the todo list: the 48-task
+stratified evaluation set (item~5); no stress set, the range stays what the
+brief states (item~9); both blind references reported, cautious and
+reward-optimal (item~8); per-task oracle and informed rows for the informed
+frozen arm (item~6).
+
+\subsection*{Results}
+
+\textbf{Run 1} (commit \texttt{fc23a2b}, job 2978483). G1 pass: the track
+family tuned at each anchor is fast on every batch. G2 pass: the best blind
+controller, track at level $0.1016$, is fast on $10.5\%$ of range batches, 90
+points below the informed side; it showers 23 of 200 batches, all in the low
+third. G3 fail at the $0.08$ anchor: $84.0\%$ fast there, $100\%$ at $0.165$
+and $0.25$, $99.5\%$ over the range. The probe brackets the limit to about one
+step of full cooling (median error $0.005$, maximum $0.011$) and the
+controller rode a further $0.003$ under that bound; at the bottom of the range
+that shortfall cost more than $1.25\times$ the oracle's time on a sixth of the
+batches.
+
+\textbf{Run 2} (commit \texttt{2edeba7}, job 2978644). One change: the
+controller's setpoint is the larger of the probe's lower bound and $0.08$,
+minus the margin, since the brief states the limit is at least $0.08$. The
+search side is identical to run~1 (same code, seed and batches). G3 pass:
+$100\%$ fast at every anchor and over the range, no probe failure, normalised
+time $0.950$ over the range (minimum $0.829$, low third). All three gates
+pass.
+
+\begin{center}\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Reference, 48 held-out tasks & Steps & Reward & Success & Fast & Norm.\ time \\
+\midrule
+oracle (rides at the limit) & 134.3 & 79.7 & 100\% & 100\% & 1.000 \\
+cautious blind (rides at 0.08) & 272.0 & 38.4 & 100\% & 4.2\% & 0.493 \\
+searched blind (track at 0.1016) & 176.5 & 46.2 & 89.6\% & 10.4\% & 0.563 \\
+probe run + controller & 143.1 & 77.1 & 100\% & 100\% & 0.951 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Probe variants over the range (each followed by the same controller): three
+passes and one pass at the jacket limit are indistinguishable (median error
+$0.0049$ against $0.0050$, both $100\%$ fast, normalised time $0.950$), so the
+creep passes as written tighten nothing; a creep of $0.005$ per step halves
+the median error but is loose by up to $0.03$ at high limits; a creep of
+$0.001$ per step fails there outright ($77.5\%$ fast, maximum error $0.11$).
+
+\subsection*{Interpretation}
+
+The gap comes from physics, with the strongest blind side the families can
+offer: feedback on the reading and the exact lookahead were allowed on both
+sides, and only the two feedback families ride the limit even when informed.
+Under the current reward the best blind policy gambles: it rides above the
+bottom of the range, loses the batches below its level and is still fast on
+one in ten. So the model stages have two blind references, the cautious one
+that never fails and the searched one that a reward-trained controller
+without a probe (arm~C) can reach at most, and only by gambling, which the
+success column exposes. A probe that crosses the limit once, read correctly,
+is the whole value of the probe run; refinement buys little, and a probe that
+creeps too slowly learns nothing because the crystals consume the
+supersaturation faster than it adds it. The hand-written solution from the
+brief alone lands within three reward points of the oracle.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Re-run Stages~1 and~2 on the 48-task evaluation set; the 12-task
+  results are stale.
+\item Rewrite the paper's Stage~0 subsection and appendix from
+  \texttt{docs/stage0\_gate.tex} (its last section says what goes where).
+\item Write the Stage~3 gate from the references: arm~C against the searched
+  blind controller's $+46.2$, with its success rate as the gambling check,
+  and the cautious $+38.4$ as the no-failure line.
+\item Close todo items 5, 8 and 9 and part of 6; add the Stage~1 and~2
+  re-run as an item.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether a second probe pass that holds the reading at the lower bound by
+feedback, rather than creeping, would tighten the bracket; the gate does not
+need it. Whether a readings-only family belongs in the search, to measure the
+informed ceiling without the lookahead. Whether gambling by a trained
+controller should be penalised in the reward or only reported.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+Run~2: \commit{2edeba7}, \texttt{hpc push . lora4vr}, then
+\texttt{hpc submit lora4vr jobs/hpi/stage0.sbatch
+--export=ALL,LORA4VR\_GIT\_COMMIT=2edeba7c173ce738e608d56eb7a575122e4a02bd}
+(job 2978644, gx07), \texttt{hpc pull lora4vr/results/stage0\_2978644
+docs/stage0/}, \texttt{scripts/stage0\_render.py docs/stage0/stage0\_2978644
+--out docs/stage0/tables}. Run~1: \commit{fc23a2b}, the same with job
+2978483, rendered to \texttt{docs/stage0/tables\_run1}. Each result directory
+holds the job log, \texttt{stage0\_summary.txt}, \texttt{stage0\_results.json}
+with its provenance block and \texttt{stage0\_rows.json} with every per-batch
+row. Locally, \texttt{scripts/stage0\_gate.py --out <dir> --workers <n>} runs
+the same thing, \texttt{--quick} as a smoke test; \texttt{tests/test\_stage0\_gate.py}
+covers the pieces.
 \end{sloppypar}
 
 \end{document}
