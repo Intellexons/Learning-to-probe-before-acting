@@ -1,8 +1,12 @@
 """Render frozen-model runs (Stage 1: one turn; Stage 2: probe run + controller)
 into LaTeX fragments: one comparison table across runs, a per-third table, a
 diagnostics table from the samples, an error-kind table (why the samples that
-did not run failed, and three code patterns counted over all samples), and
-provenance macros per run.
+did not run failed, and three code patterns counted over all samples), a table
+of what the first reply of each Stage 2 sample is (the replies counted as
+probe code, and where the controllers mention the probe environment), and
+provenance macros per run. With --tokenizer, one more: the length of the first
+replies in tokens against a list of budgets, next to the token counts of the
+hand-written probe code and controller of Stage 0.
 
 Each run directory holds stage<N>_summary.json (with its provenance block),
 stage<N>_samples.jsonl and the job log. Every fragment is headed by a comment
@@ -10,16 +14,22 @@ naming the result files, commits and jobs; the document cites nothing visibly.
 
   uv run python scripts/frozen_render.py --out docs/stage12/tables \\
       stage1-4b=docs/stage12/stage1-4b_<job> stage2-4b=docs/stage12/stage2-4b_<job> ...
+  uv run python scripts/frozen_render.py --out docs/stage12/tables_budget \\
+      --tokenizer models/hf_base/iter_000/tokenizer.json --macro-prefix SFT ...
 """
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
 import statistics
+import sys
 from pathlib import Path
 
 THIRDS = ("low", "middle", "high")
 RANGE = (0.08, 0.25)
+TOKEN_BUDGETS = (750, 1000, 1250, 1500, 2000)
 
 
 def third_of(smax: float) -> str:
@@ -187,11 +197,78 @@ def by_third(run: dict) -> dict:
     return out
 
 
+ENV_CALL = r"\benv\.(reset|step)\b"
+FIRST_REPLY_ROWS = (
+    ("probe", "first replies counted as probe code (the probe rate's numerator)"),
+    ("probe_cut_off", "\\quad cut off by the token budget"),
+    ("probe_rejected", "\\quad rejected by the sandbox before running"),
+    ("probe_def_policy", "\\quad hold a top-level \\texttt{def policy} (a controller that did not parse)"),
+    ("probe_env_call", "\\quad call \\texttt{env.reset} or \\texttt{env.step} outside comments"),
+    ("probe_printed", "\\quad ran and printed output"),
+    None,
+    ("controller", "first replies taken as the controller"),
+    ("ctrl_env", "\\quad mention \\texttt{env.reset} or \\texttt{env.step}"),
+    ("ctrl_env_policy", "\\qquad inside \\texttt{policy}"),
+    ("ctrl_env_top", "\\qquad at top level"),
+    ("ctrl_env_other", "\\qquad in another function"),
+    ("ctrl_env_comment", "\\qquad in comments only"),
+)
+
+
+def env_call_site(code: str) -> str:
+    """Where a controller's code calls env.reset or env.step: 'policy', 'top'
+    (a top-level statement), 'other' (another function or class), or 'comment'
+    (the names appear in the text but not in the parsed code). One site per
+    controller, in that order of precedence."""
+    def calls(node: ast.AST) -> bool:
+        return any(isinstance(n, ast.Attribute) and n.attr in ("reset", "step")
+                   and isinstance(n.value, ast.Name) and n.value.id == "env" for n in ast.walk(node))
+    try:
+        body = ast.parse(code).body
+    except SyntaxError:
+        return "comment"
+    defs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    if any(isinstance(n, defs) and n.name == "policy" and calls(n) for n in body):
+        return "policy"
+    if any(not isinstance(n, defs) and calls(n) for n in body):
+        return "top"
+    if any(isinstance(n, defs) and calls(n) for n in body):
+        return "other"
+    return "comment"
+
+
+def first_reply_table(run: dict) -> dict:
+    """What the first reply of a Stage 2 sample is. A reply is counted as probe
+    code when runner.defines_policy is false for it, which is also the case for
+    a controller that does not parse; the rows separate the two."""
+    rows = run["rows"]
+    probed = [r for r in rows if r.get("probed")]
+    ctrl = [r for r in rows if r.get("probed") is False]
+    d = {"n": len(rows), "probe": len(probed), "controller": len(ctrl)}
+
+    def uncommented(code: str) -> str:
+        return "\n".join(l for l in code.splitlines() if not l.lstrip().startswith("#"))
+
+    tool = lambda r: (r.get("tool_output") or "").strip()
+    d["probe_cut_off"] = sum(first_reply(r).count("```") % 2 == 1 for r in probed)
+    d["probe_rejected"] = sum(tool(r).startswith("[main rejected") for r in probed)
+    d["probe_def_policy"] = sum(bool(re.search(r"(?m)^def policy\s*\(", r.get("t1_code") or "")) for r in probed)
+    d["probe_env_call"] = sum(bool(re.search(ENV_CALL, uncommented(r.get("t1_code") or ""))) for r in probed)
+    d["probe_printed"] = sum(bool(tool(r)) and not tool(r).startswith("[main rejected") and tool(r) != "[empty output]" for r in probed)
+    sites = [env_call_site(r.get("t1_code") or "") for r in ctrl if re.search(ENV_CALL, r.get("t1_code") or "")]
+    d["ctrl_env"] = len(sites)
+    for key, site in (("ctrl_env_policy", "policy"), ("ctrl_env_top", "top"), ("ctrl_env_other", "other"), ("ctrl_env_comment", "comment")):
+        d[key] = sites.count(site)
+    return d
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("runs", nargs="+", help="label=dir, in the order the tables should list them")
     ap.add_argument("--out", required=True)
     ap.add_argument("--macro-prefix", default="SF")
+    ap.add_argument("--tokenizer", default=None,
+                    help="tokenizer.json of the model; adds reply_tokens.tex (first-reply lengths in tokens)")
     args = ap.parse_args()
     runs = []
     for spec in args.runs:
@@ -274,7 +351,54 @@ def main() -> None:
         lines.append(f"{tex(name)}, of {et[0]['n']} & " + " & ".join(str(e["patterns"][name]) for e in et) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
     write("errors.tex", lines)
-    print(f"wrote 5 fragments to {out} for {len(runs)} runs")
+    # ---- what the first reply of a Stage 2 sample is ---------------------------------------
+    two = [(label, r) for label, r in runs if r["stage"] == 2]
+    n_fragments = 5
+    if two:
+        ft = [first_reply_table(r) for _, r in two]
+        lines = ["\\begin{tabular}{@{}l" + "r" * len(two) + "@{}}", "\\toprule",
+                 " & " + " & ".join(tex(label) for label, _ in two) + " \\\\", "\\midrule",
+                 "Stage 2 samples & " + " & ".join(str(f["n"]) for f in ft) + " \\\\", "\\midrule"]
+        for row in FIRST_REPLY_ROWS:
+            if row is None:
+                lines.append("\\midrule")
+                continue
+            key, name = row
+            lines.append(f"{name} & " + " & ".join(str(f[key]) for f in ft) + " \\\\")
+        lines += ["\\bottomrule", "\\end{tabular}"]
+        write("first_replies.tex", lines)
+        n_fragments = 6
+    # ---- first-reply lengths in tokens, against a list of budgets --------------------------
+    if args.tokenizer:
+        from tokenizers import Tokenizer
+        tok = Tokenizer.from_file(args.tokenizer)
+
+        def ntok(text: str) -> int:
+            return len(tok.encode(text, add_special_tokens=False).ids)
+
+        lines = [f"% token counts: {args.tokenizer}, no special tokens; the first assistant reply of every sample.",
+                 "% A reply fits a budget when its text is shorter than the budget (the end-of-turn token takes one).",
+                 "% For a run whose own budget is at or below a column's, the column is empty: the cut hides it.",
+                 "\\begin{tabular}{@{}lr" + "r" * (2 + len(TOKEN_BUDGETS)) + "@{}}", "\\toprule",
+                 " & & & & \\multicolumn{%d}{c}{First replies that fit in} \\\\" % len(TOKEN_BUDGETS),
+                 "\\cmidrule(l){5-%d}" % (4 + len(TOKEN_BUDGETS)),
+                 "Run & Budget & Median & Longest & " + " & ".join(str(b) for b in TOKEN_BUDGETS) + " \\\\", "\\midrule"]
+        for label, r in runs:
+            budget = r["summary"].get("max_tokens")
+            n = [ntok(first_reply(x)) for x in r["rows"] if first_reply(x)]
+            cells = [pct(mean(v < b for v in n)) if (budget is None or b < budget) else "--" for b in TOKEN_BUDGETS]
+            lines.append(f"{tex(label)} & {budget} & {statistics.median(n):.0f} & {max(n)} & " + " & ".join(cells) + " \\\\")
+        # the hand-written solution of Stage 0, as it is sent through the sandbox
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from stage0_solution import GATE_VARIANT, PROBE_VARIANTS, controller_source, fence
+        span = 2 + len(TOKEN_BUDGETS)
+        lines += ["\\midrule",
+                  f"Stage~0 hand-written probe code ({tex(GATE_VARIANT)}) & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(fence(PROBE_VARIANTS[GATE_VARIANT]))} tokens}} \\\\",
+                  f"Stage~0 hand-written controller & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(fence(controller_source(sum(RANGE) / 2)))} tokens}} \\\\",
+                  "\\bottomrule", "\\end{tabular}"]
+        write("reply_tokens.tex", lines)
+        n_fragments += 1
+    print(f"wrote {n_fragments} fragments to {out} for {len(runs)} runs")
 
 
 if __name__ == "__main__":

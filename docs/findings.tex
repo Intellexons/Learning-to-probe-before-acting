@@ -3,6 +3,7 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{hyperref}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{amsmath}
 \usepackage{parskip}
 \usepackage{microtype}
@@ -55,22 +56,22 @@ hold the evidence. This table is kept current as stages complete; the entries
 themselves are never edited. The full plan with pass criteria is the section
 \emph{Experiment plan} of \texttt{docs/paper.tex}.
 
-\begin{center}\small
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}llll@{}}
+% Wrapped columns since 2026-11-25: on one line per row the table shrank past reading.
+\begin{center}\footnotesize
+\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{0.24\linewidth} >{\raggedright\arraybackslash}p{0.43\linewidth} >{\raggedright\arraybackslash}p{0.19\linewidth}@{}}
 \toprule
 Stage & What it asks & Status & Entry \\
 \midrule
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed on the current environment (clean rebuild, run 2); earlier passes were on the previous environment & 2026-11-01, Stage 0 rebuilt \\
 0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed & 2026-11-01, Stage 0 rebuilt \\
-1  & Frozen model, one turn, no probe run (arm A) & re-run on the 48-task set with the 4B base and Qwen3-8B (non-thinking); both far below the cautious blind reference, the 8B worse than the 4B & 2026-11-01, Stages 1 and 2 re-run \\
-2  & Frozen model with a probe run (arm B) & re-run as above; about six percent of first replies are probe code and every one is cut off by the 1000-token budget, so no probe runs & 2026-11-01, Stages 1 and 2 re-run \\
+1  & Frozen model, one turn, no probe run (arm A) & re-run on the 48-task set with the 4B base and Qwen3-8B (non-thinking); both far below the cautious blind reference, the 8B worse than the 4B; the 4B is the model to train; at 4000 tokens per turn the 4B is still far below & 2026-11-01, Stages 1 and 2 re-run; 2026-11-25, 4000 tokens \\
+2  & Frozen model with a probe run (arm B) & re-run as above; no first reply is a probe that returns a reading, at 1000 or at 4000 tokens per turn (the six percent first reported were controllers the budget cut); the model writes its probe code into the same reply as the controller, where it never runs & 2026-11-01, Stages 1 and 2 re-run; 2026-11-25, 4000 tokens \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
 6  & Branched rollouts, per-turn baselines, ours (arm F) & pending & \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{center}
 
 \bigskip
@@ -1248,5 +1249,164 @@ and \texttt{stage<N>\_samples.jsonl} with every sample's transcript, probe
 code, tool output, controller and outcome. The sandbox bug is pinned by
 \texttt{tests/test\_runner\_modes.py}, test
 \texttt{test\_policy\_that\_prints\_is\_scored\_normally}.
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-11-25 \quad Stages 1 and 2 at 4000 tokens per turn: the budget
+was not what kept the 4B from probing}
+% ============================================================
+
+\commit{2184e1f} $\cdot$ \textit{\texttt{Qwen3-4B-Instruct-2507}, frozen; two
+A30 jobs of 48 and 66 minutes, run in the night of 2026-11-01 and written up
+on 2026-11-25; no training}
+
+\subsection*{Setup / motivation}
+
+The entry of 2026-11-01 left the per-turn token budget open: every reply
+counted as a probe had been cut off at 1000 tokens, so ``does the frozen model
+probe'' could not be told from ``can its probe run''. The user asked whether
+1000 was too low and wanted the answer from the traces. Both 4B runs were
+repeated with 4000 new tokens per turn and nothing else changed: the same 48
+held-out tasks, 4 samples per task, temperature $0.8$, top-$p$ $0.95$, the same
+brief and scoring code (nothing under \texttt{src/}, \texttt{configs/},
+\texttt{jobs/} or in \texttt{scripts/eval\_frozen\_baseline.py} differs
+between \texttt{bea2bf8} and \texttt{2184e1f}). The results stayed uncommitted
+until this entry. \texttt{scripts/frozen\_render.py} gained two fragments for
+it: \texttt{first\_replies.tex}, what the first reply of each Stage~2 sample
+is, and with \texttt{--tokenizer}, \texttt{reply\_tokens.tex}, the length of
+the first replies in tokens. The full account is the section \emph{The token
+budget} of \texttt{docs/stage12\_frozen.tex}. On 2026-11-25 the user confirmed
+the 4B base as the model for the training stages.
+
+\subsection*{Results}
+
+The run names carry the budget; the 1000-token rows are the 4B runs of
+2026-11-01.
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/comparison.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commits, jobs and tokenizer
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/reply_tokens.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\input{stage12/tables_budget/first_replies.tex}
+\end{center}
+
+At 4000 tokens one first reply of 192 in Stage~2 is counted as probe code,
+and it is a complete controller with a syntax error. Over both budgets none
+of the 384 first replies of the 4B is probe code that ran and returned a
+reading. The twelve replies counted as probes at 1000 tokens were all cut
+off: eleven are controllers cut mid-code, one is a block of comments that
+ran and printed nothing. What the model does instead is write probe code
+into the same reply as the controller: 9 of 191 controllers at 4000 tokens
+mention \texttt{env.reset} or \texttt{env.step} (6 of 180 at 1000), 5 of
+them in a separate function next to \texttt{policy}, 2 inside
+\texttt{policy}, 2 in comments. A reply that defines \texttt{policy} ends
+the task, so that code never runs.
+
+Without the cut the replies are no longer: the median first reply is 788
+tokens in Stage~1 and 522 in Stage~2. A budget of 1000 lets $84.4\%$ and
+$92.2\%$ of them finish, 1500 lets $97.9\%$ and $99.0\%$. The hand-written
+probe code that passes Stage~0 is 345 tokens, its controller 291. Lifting
+the cut raises the Stage~1 reward from $-84.3$ to $-62.2$ (the samples that
+did not run fall from 22 to 11) and the Stage~2 reward from $-65.7$ to
+$-58.6$ with the same 45 successes of 192; every run stays between 97 and
+123 points below the cautious blind controller ($+38.4$).
+
+\subsection*{Interpretation}
+
+The budget was not what kept the 4B from probing; with four times the room
+it writes no probe. This corrects the entry of 2026-11-01, which read the 23
+replies counted as probes (12 from the 4B, 11 from the 8B) as probe code
+that the budget kept from running: 21 of them are cut-off controllers. The
+runner's \texttt{defines\_policy} is false for code that does not parse, so
+a broken controller is counted as a probe and, in the protocol, given a
+second turn. The frozen probe rate of the 4B is zero, not six percent.
+
+The replies that carry probe code show a misreading of the order of the two
+turns, not a missing idea. The two read in full cool at the full rate until
+the shower and take the reading there as the limit, which is the right
+experiment, but they put it beside the controller in one reply; one cut-off
+reply says so in its comments (``we must write the probe code in the same
+block''). The 8B does the same in 38 of its 181 controllers.
+
+For the task itself 1000 tokens is enough, since a working probe and a
+working controller each take under 350. What the cut removes is the tail of
+the frozen model's long, comment-heavy replies: about one in six in Stage~1
+and one in thirteen in Stage~2.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Choose the per-turn budget for the training stages (the user's call):
+  1000 keeps the turns short and cuts $15.6\%$ and $7.8\%$ of the frozen
+  model's first replies; 1500 cuts $2.1\%$ and $1.0\%$. The memory a longer
+  turn needs in training on the A30 is not measured yet.
+\item Before the stages that train with a probe run (4 to 6), get the frozen
+  model to probe at all: state the order of the two turns in the brief
+  (probe code alone first, the controller after its output) and re-run
+  Stage~2. The open-items list proposes a probe rate of ten percent as the
+  gate (item~3, not yet adopted); the rate now is zero. A change to the
+  brief is a protocol change, so it is the user's call.
+\item Decide what a first reply that does not parse is: now it is counted as
+  a probe and gets a second turn, in evaluation and in the training tree.
+  Counting only code that parses would change the metric and the runner, so
+  it is not done here.
+\item The paper's Stage~0, 1 and 2 paragraphs still carry the 12-task
+  numbers of 2026-10-26; rewrite them from \texttt{docs/stage0\_gate.tex}
+  and \texttt{docs/stage12\_frozen.tex}.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether a brief that states the order of the two turns moves the frozen
+probe rate off zero, and how far; whether the two-turn brief's lower success
+rate against the one-turn brief at 4000 tokens ($23.4\%$ against $31.8\%$)
+is a real effect of the longer brief or sampling noise between two draws.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{2184e1f}, \texttt{hpc push . lora4vr}, then the two 4B jobs with the
+budget passed through \texttt{EXTRA\_ARGS}:
+\end{sloppypar}
+\begin{scriptsize}
+\begin{verbatim}
+C=2184e1f1344b4e49c0c6b01468dc127a7d4cb194
+E=ALL,LORA4VR_GIT_COMMIT=$C,MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4
+hpc submit lora4vr jobs/hpi/stage1.sbatch --job-name=stage1-4b-4000 --time=4:00:00 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-4000 --time=4:00:00 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+hpc pull lora4vr/results/<jobname>_<jobid> docs/stage12/
+uv run python scripts/frozen_render.py --out docs/stage12/tables_budget --macro-prefix SFT \
+    --tokenizer models/hf_base/iter_000/tokenizer.json \
+    stage1-4b-1000=docs/stage12/stage1-4b_2980889 stage2-4b-1000=docs/stage12/stage2-4b_2980890 \
+    stage1-4b-4000=docs/stage12/stage1-4b-4000_3006582 stage2-4b-4000=docs/stage12/stage2-4b-4000_3006583
+\end{verbatim}
+\end{scriptsize}
+\begin{sloppypar}
+Jobs 3006582 (stage1-4b-4000) and 3006583 (stage2-4b-4000), both on gx17v1.
+Each result directory holds the job log, \texttt{stage<N>\_summary.json} with
+its provenance block, and \texttt{stage<N>\_samples.jsonl} with every sample.
+The reply quoted above is the first reply of task
+\texttt{crystallizer\_eval\_s10013}, sample~2, in
+\texttt{docs/stage12/stage2-4b\_2980890/stage2\_samples.jsonl}; the two read
+in full are tasks \texttt{crystallizer\_eval\_s10020} sample~0 and
+\texttt{crystallizer\_eval\_s10022} sample~1 in
+\texttt{docs/stage12/stage2-4b-4000\_3006583/stage2\_samples.jsonl}. The
+\texttt{first\_replies.tex} fragment for the two models at 1000 tokens is in
+\texttt{docs/stage12/tables/}, rendered by the command of the 2026-11-01
+entry.
+\end{sloppypar}
 
 \end{document}

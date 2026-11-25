@@ -34,12 +34,25 @@
 %   (src/runner.py; tests/test_runner_modes.py::test_policy_that_prints_is_scored_normally
 %   fails on the old runner). Summaries and logs: docs/stage12/superseded/.
 %   Round 2 is a fresh draw at temperature 0.8, not a re-score of round 1.
+% Token-budget runs, the numbers of Section "The token budget": code commit
+%   2184e1f1344b4e49c0c6b01468dc127a7d4cb194 (no change to src/, configs/, jobs/ or
+%   scripts/eval_frozen_baseline.py against bea2bf8); Slurm jobs 3006582
+%   (stage1-4b-4000) and 3006583 (stage2-4b-4000); one A30 each; submitted
+%   2026-11-02 00:00 with --time=4:00:00
+%   --export=ALL,LORA4VR_GIT_COMMIT=<commit>,MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4,EXTRA_ARGS="--max-tokens 4000".
+%   Results: docs/stage12/<jobname>_<jobid>/. Their tables are in
+%   docs/stage12/tables_budget/, rendered next to the two 4B runs of round 2 with
+%   --tokenizer models/hf_base/iter_000/tokenizer.json. Written up on 2026-11-25.
+% The sample quoted in Section "The token budget": docs/stage12/stage2-4b_2980890/
+%   stage2_samples.jsonl, task crystallizer_eval_s10013, sample 2, first reply. The two
+%   replies read in full there: docs/stage12/stage2-4b-4000_3006583/stage2_samples.jsonl,
+%   tasks crystallizer_eval_s10020 sample 0 and crystallizer_eval_s10022 sample 1.
 % ------------------------------------------------------------------------------------
 \input{stage12/tables/provenance.tex}
 
 \title{\textbf{Stages 1 and 2: the frozen models, 4B against 8B}}
 \author{}
-\date{2026-11-01}
+\date{2026-11-01; token-budget section added 2026-11-25}
 
 \begin{document}
 \maketitle
@@ -54,7 +67,8 @@ it, then the controller. This document compares two models on the same
 batches, \texttt{Qwen3-4B-Instruct-2507}, the base the training stages use,
 and \texttt{Qwen3-8B} in non-thinking mode, twice its size from the same
 generation. Both are read against the references Stage~0 fixed on the same
-held-out tasks.
+held-out tasks. Section~\ref{sec:budget} repeats the 4B runs with four times
+the token budget, to separate what the model writes from what the budget cuts.
 
 \paragraph{Terms.} A \emph{sample} is one rollout on one task at the sampling
 temperature. \emph{Valid} means the reply held a controller that passed
@@ -64,8 +78,10 @@ success within $1.25\times$ the oracle's steps; \emph{normalised time} is
 oracle steps over own steps, zero on failure. The \emph{ride ratio} is the
 highest reported $\sigma$ of the final run divided by the batch's limit: one
 is the oracle, lower is caution, above one is a shower. The \emph{probe rate}
-is the share of Stage~2 samples whose first reply was probe code rather than
-a controller. The \emph{estimate error} is how far the number closest to the
+is the share of Stage~2 samples whose first reply the runner took as probe
+code rather than a controller: any first reply in which it finds no top-level
+\texttt{def policy}, which includes a controller whose code does not parse
+(Table~\ref{tab:first-replies}). The \emph{estimate error} is how far the number closest to the
 true limit in the probe's printed output lies from it. \emph{Cut off} means
 the reply opened a code block the token budget closed before it ended.
 \emph{Ruined} is a shower or lost seeds; \emph{error} is a controller that
@@ -163,15 +179,21 @@ the error count of Table~\ref{tab:diagnostics}.}
   longer, more elaborate code with more invented names. The 4B's errors are
   almost all replies the token budget cut off mid-code (16 of 22 in Stage~1).
 
-  \item \textbf{Neither model uses the probe run.} 12 and 11 first replies of
-  192 are probe code, and every one of them was cut off by the 1000-token
-  budget: the sandbox rejected the unfinished block, the model received the
-  rejection as its probe output, and wrote the controller without a
-  measurement. No probe output holds a number within $0.01$ of the limit,
-  so the estimate-error column is empty and the Stage~2 ride ratios carry
-  nothing a probe found. The probe replies run from 2\,563 to 4\,430
-  characters (Table~\ref{tab:diagnostics}), past the budget; the frozen
-  probe rate is measured with the budget as a confound.
+  \item \textbf{Neither model uses the probe run, and the six percent in the
+  probe-rate column is not probing.} 12 and 11 first replies of 192 are
+  counted as probe code, every one of them cut off by the 1000-token budget.
+  Table~\ref{tab:first-replies} shows what they are: 11 of the 4B's twelve and
+  10 of the 8B's eleven are controllers the budget cut mid-code. The runner
+  finds no \texttt{def policy} in code it cannot parse, so it took each as
+  probe code; the sandbox rejected the unfinished block, the model received
+  the rejection as its probe output, and wrote the controller again. The 4B's
+  remaining reply is a code block of comments that ran and printed nothing;
+  the 8B's is probe code that was cut off and printed nothing. No probe
+  returned a reading in either run, so the estimate-error column is empty and
+  the Stage~2 ride ratios carry nothing a probe found. (Corrected on
+  2026-11-25. This item first read the 23 replies as probe code that the
+  budget kept from running; Section~\ref{sec:budget} lifts the budget and
+  finds no probe.)
 
   \item \textbf{For the 4B, the two-turn protocol helps at inference only by
   shortening the reply.} Reward rises from $-84$ to $-66$ because cut-off
@@ -193,14 +215,168 @@ the error count of Table~\ref{tab:diagnostics}.}
   twelve samples but did not shape the picture.
 \end{enumerate}
 
-\paragraph{For the ladder.} The 4B base remains the model to train: the 8B
+\paragraph{For the ladder.} The 4B base is the model to train: the 8B
 gives no better start at twice the memory. ``Whether to probe'' has a frozen
-baseline of about six percent, and at 1000 tokens per turn no probe the
-frozen models write fits; raising the budget, or measuring the probe rate at
-a budget where a probe can run, is a protocol decision to take before the
-training stages, not one this document takes.
+baseline of zero: no first reply of the 4B is a probe that returned a
+reading, at 1000 tokens per turn or at 4000 (Section~\ref{sec:budget}). The
+token budget of the training stages is still to be chosen;
+Section~\ref{sec:budget} holds the measurement the choice rests on.
 
 
+\section{The token budget: the 4B at 4000 tokens per turn}
+\label{sec:budget}
+
+The runs above allow 1000 new tokens per turn, and that cut closed $17.7\%$
+of the 4B's Stage~1 replies and every reply counted as a probe. To see what
+the model writes when nothing cuts it, both 4B runs were repeated with 4000
+tokens per turn and nothing else changed: the same 48 tasks, 4 samples per
+task, sampling settings, brief and scoring code. They are a fresh draw, not a
+re-score. Tables~\ref{tab:budget-comparison} to~\ref{tab:budget-by-third} set
+them next to the 1000-token runs of the 4B; the run names carry the budget.
+
+% provenance: see the header of stage12/tables_budget/comparison.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/comparison.tex}}
+\caption{The 4B at 1000 and at 4000 tokens per turn, next to the Stage~0
+references.}
+\label{tab:budget-comparison}
+\end{table}
+
+% provenance: see the header of stage12/tables_budget/reply_tokens.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/reply_tokens.tex}}
+\caption{The length of the first reply in tokens: the median, the longest,
+and the share of first replies short enough to finish inside each budget. A
+run cannot show what lies at or past its own budget, so those cells are
+empty. The last two rows give the size of the hand-written probe code and
+controller that pass Stage~0.}
+\label{tab:reply-tokens}
+\end{table}
+
+% provenance: see the headers of stage12/tables/first_replies.tex and
+% stage12/tables_budget/first_replies.tex
+\begin{table}[h]
+\centering\small
+\input{stage12/tables/first_replies.tex}
+
+\medskip
+\input{stage12/tables_budget/first_replies.tex}
+\caption{What the first reply of a Stage~2 sample is. Top: the two models at
+1000 tokens. Bottom: the 4B at 1000 and at 4000 tokens. The upper block of
+each splits the replies the runner counted as probe code; the lower block
+counts the controllers that mention the probe environment, by where in the
+code they do so (one place per controller: inside \texttt{policy} first, then
+top level, then another function).}
+\label{tab:first-replies}
+\end{table}
+
+% provenance: see the header of stage12/tables_budget/diagnostics.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/diagnostics.tex}}
+\caption{Where the samples end, as Table~\ref{tab:diagnostics}, for the 4B at
+both budgets.}
+\label{tab:budget-diagnostics}
+\end{table}
+
+% provenance: see the header of stage12/tables_budget/errors.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/errors.tex}}
+\caption{Why the samples that did not run failed, as Table~\ref{tab:errors},
+for the 4B at both budgets.}
+\label{tab:budget-errors}
+\end{table}
+
+% provenance: see the header of stage12/tables_budget/by_third.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12/tables_budget/by_third.tex}}
+\caption{By third of the limit's range, for the 4B at both budgets.}
+\label{tab:budget-by-third}
+\end{table}
+
+\subsection{Reading}
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{With room to write it, the 4B still does not probe.} At 4000
+  tokens one first reply of 192 is counted as probe code, and it is a complete
+  controller with a syntax error, not cut off
+  (Table~\ref{tab:first-replies}). Over both budgets, none of the 384 first
+  replies of the 4B is probe code that ran and returned a reading. The budget
+  was not what kept the model from probing.
+
+  \item \textbf{What it does instead is write probe code into the same reply
+  as the controller.} 9 of the 191 controllers at 4000 tokens mention
+  \texttt{env.reset} or \texttt{env.step} (6 of 180 at 1000 tokens): 5 in a
+  separate function defined next to \texttt{policy}, 2 inside
+  \texttt{policy}, where \texttt{env} does not exist, and 2 in comments only.
+  A reply that defines \texttt{policy} is the controller and ends the task,
+  so none of this code meets the probe batch. The two such replies read in
+  full both cool at the full rate until the shower and take the reading there
+  as the limit, which is the right experiment; what is missing is the order
+  of the protocol, the probe code alone first and the controller after its
+  output has come back. One first reply at 1000 tokens, a block of comments,
+  states the misreading: ``Since we don't have env in the final controller, we
+  must write the probe code in the same block [\ldots] So we can write probe
+  code first, then the policy.'' The 8B does the same far more often: 38 of
+  its 181 controllers mention the probe environment, 31 of them in a separate
+  function.
+
+  \item \textbf{Without the cut the replies are no longer.} The median first
+  reply is 788 tokens in Stage~1 and 522 in Stage~2
+  (Table~\ref{tab:reply-tokens}), against 814 and 553 under the 1000-token
+  cut. A budget of 1000 lets $84.4\%$ of the Stage~1 first replies and
+  $92.2\%$ of the Stage~2 ones finish; 1500 lets $97.9\%$ and $99.0\%$
+  finish; 2000 lets $99.0\%$ and all of them. The longest Stage~2 reply is
+  1\,735 tokens; one Stage~1 reply ran to the 4000-token end. For scale, the
+  hand-written probe code that passes Stage~0 is 345 tokens and its
+  controller 291.
+
+  \item \textbf{What the 1000-token cut costs the frozen baseline is the
+  replies it cuts, and little else.} In Stage~1 the reward rises from $-84.3$
+  to $-62.2$: the samples that did not run fall from 22 to 11, the 16 syntax
+  errors of the cut-off replies to none
+  (Table~\ref{tab:budget-errors}), and successes rise from 52 to 61 of 192.
+  In Stage~2 it rises from $-65.7$ to $-58.6$ with 45 successes of 192 at
+  both budgets. Fast success stays at or under $3.1\%$, and the four runs
+  stay between 97 and 123 points below the cautious blind reference. The two
+  budgets are separate draws of 192 samples, so a difference of a few samples
+  between them is not a finding.
+
+  \item \textbf{The two-turn brief does not beat the one-turn brief once the
+  cut is gone.} At 4000 tokens Stage~2 scores $-58.6$ against Stage~1's
+  $-62.2$, with fewer successes ($23.4\%$ against $31.8\%$), more ruined
+  batches (142 against 104), and fewer timeouts and errors (3 and 2 against
+  16 and 11). The gap of about 19 points at 1000 tokens shrinks to under 4,
+  which agrees with the reading above that the two-turn protocol helped only
+  by shortening the reply.
+
+  \item \textbf{The pattern by third is the same at both budgets}
+  (Table~\ref{tab:budget-by-third}): at 4000 tokens the Stage~1 controllers
+  succeed on $65.6\%$ of the high-third batches and $6.2\%$ of the low-third
+  ones.
+\end{enumerate}
+
+\paragraph{What this settles and what it leaves open.} The token budget is
+not a confound of the probe rate: the frozen 4B's probe rate is zero at
+either budget, and the six percent reported at 1000 tokens were cut-off
+controllers. The probe rate as the runner computes it counts a controller
+that does not parse as a probe; that is a property of the metric and of the
+protocol (such a reply gets a second turn), and it is not changed here. Two
+decisions stay open, and this document takes neither. The first is the
+budget of the training stages: 1000 tokens cuts about one in six of the
+frozen model's Stage~1 first replies and one in thirteen of its Stage~2
+ones, 1500 cuts about one in fifty and one in a hundred, and the memory
+cost of longer turns in training has not been measured. The second is what
+to do about a model that never probes before training starts: the training
+stages with a probe run have no probing first replies to learn from, and
+the replies above point at the brief's description of the two turns, not at
+the budget.
+
+\clearpage
 \section{Reproduce}
 \sloppy
 % commits and jobs: see the provenance block at the top of this file
@@ -220,7 +396,23 @@ uv run python scripts/frozen_render.py --out docs/stage12/tables \
 \end{verbatim}
 \end{scriptsize}
 and the same with \texttt{MODEL\_PATH=models/hf\_base/iter\_000} for the 4B
-runs. Each result directory holds the job log, \texttt{stage<N>\_summary.json}
+runs. The token-budget runs of Section~\ref{sec:budget} are the 4B jobs with
+the budget passed through \texttt{EXTRA\_ARGS}, and their tables are
+rendered with the model's tokenizer for the token counts:
+\begin{scriptsize}
+\begin{verbatim}
+E=ALL,LORA4VR_GIT_COMMIT=$(git rev-parse HEAD),MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4
+hpc submit lora4vr jobs/hpi/stage1.sbatch --job-name=stage1-4b-4000 --time=4:00:00 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-4000 --time=4:00:00 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+hpc pull lora4vr/results/stage2-4b-4000_<jobid> docs/stage12/
+uv run python scripts/frozen_render.py --out docs/stage12/tables_budget --macro-prefix SFT \
+    --tokenizer models/hf_base/iter_000/tokenizer.json \
+    stage1-4b-1000=docs/stage12/stage1-4b_<jobid> stage2-4b-1000=docs/stage12/stage2-4b_<jobid> \
+    stage1-4b-4000=docs/stage12/stage1-4b-4000_<jobid> stage2-4b-4000=docs/stage12/stage2-4b-4000_<jobid>
+\end{verbatim}
+\end{scriptsize} Each result directory holds the job log, \texttt{stage<N>\_summary.json}
 with its provenance block and per-task rows, and
 \texttt{stage<N>\_samples.jsonl} with every sample: the full transcript, the
 probe code, the tool output, the controller and its outcome.
