@@ -63,9 +63,9 @@ themselves are never edited. The full plan with pass criteria is the section
 Stage & What it asks & Status & Entry \\
 \midrule
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed on the current environment (clean rebuild, run 2); earlier passes were on the previous environment & 2026-11-01, Stage 0 rebuilt \\
-0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed & 2026-11-01, Stage 0 rebuilt \\
-1  & Frozen model, one turn, no probe run (arm A) & re-run on the 48-task set with the 4B base and Qwen3-8B (non-thinking); both far below the cautious blind reference, the 8B worse than the 4B; the 4B is the model to train; at 4000 tokens per turn the 4B is still far below & 2026-11-01, Stages 1 and 2 re-run; 2026-11-25, 4000 tokens \\
-2  & Frozen model with a probe run (arm B) & re-run as above; no first reply is a probe that returns a reading, at 1000 or at 4000 tokens per turn (the six percent first reported were controllers the budget cut); the model writes its probe code into the same reply as the controller, where it never runs & 2026-11-01, Stages 1 and 2 re-run; 2026-11-25, 4000 tokens \\
+0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed, and passed again through the agent loop on 2026-11-25 with the same numbers & 2026-11-01, Stage 0 rebuilt; 2026-11-25, the agent loop \\
+1  & Frozen model, one reply, no probe run (arm A) & re-run under the agent loop with the 4B base: $-105$ at 1000 tokens, $-65$ at 4000, against $+38$ for the cautious blind reference; a third of the answers do not fit in 1000 tokens & 2026-11-25, the agent loop \\
+2  & Frozen model with a probe run (arm B) & re-run under the agent loop: nine first replies of ten are probe runs, but with two replies seven samples of ten end without a final answer ($-232$); with four replies eight of ten end with one ($-104$); the probes rarely return the limit and the controllers do not use it & 2026-11-25, the agent loop \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -1407,6 +1407,164 @@ in full are tasks \texttt{crystallizer\_eval\_s10020} sample~0 and
 \texttt{first\_replies.tex} fragment for the two models at 1000 tokens is in
 \texttt{docs/stage12/tables/}, rendered by the command of the 2026-11-01
 entry.
+\end{sloppypar}
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-11-25 \quad The agent loop: the model acts through a tool call
+and a final answer; Stages 0 to 2 re-run}
+% ============================================================
+
+\commit{7800206} $\cdot$ \textit{\texttt{Qwen3-4B-Instruct-2507}, frozen; one
+CPU job of 5 minutes and five A30 jobs of 66 to 109 minutes; no training}
+
+\subsection*{Setup / motivation}
+
+The entry above found that the frozen 4B never ran a probe under the
+code-block replies: when it wrote probe code it wrote it beside the
+controller in one block, where it never ran. The rule that read a reply by
+its contents was ours, and the model could not know it. A sentence in the
+brief teaching it the rule was proposed and the user rejected it as too
+artificial. The principle adopted instead: the interface is given, standard
+and silent about strategy; whether and how the model probes is the
+behaviour under study and is never instructed. The user chose the agent
+loop and asked for the experiments again.
+
+\begin{sloppypar}
+The loop (\texttt{src/agent\_loop.py}, \texttt{multi\_turn.execute\_turn}):
+the model has one tool, \texttt{probe\_run(code)}, in its own tool-call
+format, and a reply without a tool call is its final answer, whose
+controller is the final run. A first version (commits \texttt{8dda982},
+\texttt{c530e1f}) made the final run a second tool. Offered only that tool
+in one reply, the frozen model wrote its controller as an ordinary answer
+and called nothing in 154 of 192 replies (jobs 3458920 and 3458921, kept as
+the record), so the final answer became the reply itself. The brief, the
+Stage~0 check, the trainer, the reward function and both evaluation scripts
+follow the loop; the trainer now samples the second reply from the exact
+token prefix the loss conditions on. Stage~0 was re-run on the new path, and
+Stages~1 and~2 were re-run with three diagnostic runs beside them: four
+replies instead of two, and 4000 tokens per reply instead of 1000 for each
+stage. The full account is \texttt{docs/stage12\_agent\_loop.tex}.
+\end{sloppypar}
+
+\subsection*{Results}
+
+Stage~0 passes all three gates through the agent loop (job 3458955), with
+tables identical to the run of 2026-11-01. The model runs, 48 held-out
+tasks, 4 samples each; the run names carry what differs from Stage~1
+(\texttt{stage1}: one reply, 1000 tokens) and Stage~2 (\texttt{stage2}: two
+replies, 1000 tokens):
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables/comparison.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables/sequences.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables/probe_outcomes.tex}}
+\end{center}
+
+The frozen model probes: 171 of 192 first replies in Stage~2 call
+\texttt{probe\_run}, against none of 384 under the code-block replies. But
+132 of the 192 samples are two probe runs and no final answer, so Stage~2
+scores $-231.7$ against Stage~1's $-105.4$. With four replies 158 samples
+reach a final run and the reward is $-104.1$. After a first probe that
+stopped on an error the next reply is never the final answer (none of 64 in
+Stage~2), and no reply in any run mentions how many replies are left. Of the
+439 probe runs of the four-reply run, 48 printed a number within $0.01$ of
+the limit, 164 printed nothing (157 of them hold no \texttt{print}), and 60
+stopped on an error. The samples that probed and then answered succeed in
+$30.6\%$ of cases, like one reply at 4000 tokens ($29.2\%$), and are fast in
+$0.7\%$. One-reply answers are prose around code: a third do not fit in
+1000 tokens, and lifting the cut raises Stage~1 from $-105.4$ to $-65.3$.
+Stage~2 does not move with the token budget ($-227.4$ at 4000).
+
+\subsection*{Interpretation}
+
+The interface failure is gone. Given a tool in its own format the model
+probes without being asked, which the brief-patch would have manufactured.
+What is left is behaviour, in three parts. The model iterates as an agent
+does, repairing a failed probe before anything else, and takes no account
+of its reply budget, so two replies leave seven samples of ten without a
+final answer. Its probes mostly return nothing: the commonest fault is
+code that never prints, the next an end flag read from the wrong place.
+And when a probe does return the limit the controller does not use it:
+fast success stays under one percent, where the hand-written probe run and
+controller are fast on every task. These are the things the training
+stages are meant to teach, and each now shows up as a countable quantity.
+
+The two-reply budget is the open point. It is what the hand-written
+solution needs and what the branched tree is built for, but a frozen model
+starts there with most of its samples at the error floor.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Decide the reply budget for Stage~2 and the training stages (the
+  user's call): keep two replies; give more; or keep two and tell the model
+  with each tool response how many replies it has left, which is a question
+  about the interface.
+\item Decide the token budget: a third of one-reply answers do not fit in
+  1000 tokens, one in eleven in 1500. Memory for longer turns in training
+  on the A30 is still unmeasured.
+\item Stage~3 (single-reply training) does not depend on the reply budget
+  and can start once the token budget is fixed.
+\item Rewrite the paper's Stage~0 paragraphs from
+  \texttt{docs/stage0\_gate.tex}; its Stage~1 and~2 paragraphs now point at
+  \texttt{docs/stage12\_agent\_loop.tex}. The open-items list
+  (\texttt{docs/todo.tex}) predates the agent loop.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether a model told its remaining replies would answer on the last one;
+whether training on two replies can climb out of a start in which seven
+samples of ten are at the floor, or needs the larger budget first; why the
+first version's probes stopped on the end-flag error three times as often
+(91 of 187 first probes against 31 of 171) under a prompt that differs only
+in the second tool and one sentence.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{7800206} for the runs (after it only the renderer and documents
+changed), \texttt{hpc push . lora4vr}, then:
+\end{sloppypar}
+\begin{scriptsize}
+\begin{verbatim}
+C=78002066ae308d6dc6aa0ebd95f400b154fa3d49
+hpc submit lora4vr jobs/hpi/stage0.sbatch --export=ALL,LORA4VR_GIT_COMMIT=$C
+E=ALL,LORA4VR_GIT_COMMIT=$C,MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4
+hpc submit lora4vr jobs/hpi/stage1.sbatch --job-name=stage1-4b-agent --export="$E"
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-agent --export="$E"
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-agent-4replies \
+    --export="$E,EXTRA_ARGS=--turns 4"
+hpc submit lora4vr jobs/hpi/stage1.sbatch --job-name=stage1-4b-agent-4000 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-agent-4000 \
+    --export="$E,EXTRA_ARGS=--max-tokens 4000"
+\end{verbatim}
+\end{scriptsize}
+\begin{sloppypar}
+Jobs 3458955 (stage0), 3458957 (stage1-4b-agent), 3458956
+(stage2-4b-agent), 3458958 (stage2-4b-agent-4replies), 3458959
+(stage1-4b-agent-4000) and 3458960 (stage2-4b-agent-4000). Results in
+\texttt{docs/stage0/stage0\_3458955/} and
+\texttt{docs/stage12\_agent/<jobname>\_<jobid>/}; the pull and render
+commands are in the Reproduce section of
+\texttt{docs/stage12\_agent\_loop.tex}. The first version's runs (commit
+\texttt{c530e1f}, jobs 3458920 and 3458921) are in
+\texttt{docs/stage12\_agent/first\_version/}; its 91 and the 154 above are
+in \texttt{docs/stage12\_agent/tables\_first/}.
 \end{sloppypar}
 
 \end{document}

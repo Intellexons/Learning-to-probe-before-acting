@@ -13,8 +13,12 @@ protocol (runs up to 2026-11-01) a reply was one code block, read by its
 contents; its first-reply table is first_replies.tex. In the agent loop (runs
 whose samples carry a `"protocol"` that starts with `agent-loop`) the model
 calls the tool `probe_run` and a reply without a tool call is its final
-answer; the first-reply table is first_actions.tex, and the error table gains
-the ways a task can end without a final run. The first version of the loop
+answer; the first-reply table is first_actions.tex, sequences.tex counts the
+samples by the sequence of their replies, by_path.tex sets the samples that
+answered straight away beside those that probed first, probe_outcomes.tex
+counts every probe run by how it ended, after_first_probe.tex sets how the
+first probe run ended against what the next reply was, and the error table
+gains the ways a task can end without a final run. The first version of the loop
 (`"protocol": "agent-loop"`, superseded the day it ran) had a second tool,
 `final_run`; its samples render through the same code, with two more rows.
 The fragments of a folder that holds only code-block runs come out as before.
@@ -372,6 +376,7 @@ FIRST_ACTION_ROWS = (
     ("none_fenced_policy", "\\quad a fenced code block that defines \\texttt{policy}", True),
     None,
     ("no_final", "samples that ended without a final run", False),
+    ("budget_mentions", "samples in which some reply mentions the reply budget", False),
 )
 FINAL_ACTIONS = ("final_run", "probe_run+final_run")
 
@@ -403,9 +408,180 @@ def first_action_table(run: dict) -> dict:
          "invalid_json": sum("not valid JSON" in why(r) and not cut(r) for r in invalid),
          "none": n(lambda r: act(r) == "none"),
          "none_fenced_policy": n(lambda r: act(r) == "none" and re.search(r"```[^`]*def policy\b", first_reply(r), re.DOTALL)),
-         "no_final": n(lambda r: (r.get("actions") or [""])[-1] not in FINAL_ACTIONS)}
+         "no_final": n(lambda r: (r.get("actions") or [""])[-1] not in FINAL_ACTIONS),
+         "budget_mentions": n(mentions_budget)}
     d["invalid_other"] = d["invalid"] - d["invalid_cut"] - d["invalid_json"]
     return d
+
+
+def probe_outputs(r: dict) -> list[str]:
+    """The tool responses of a sample's probe runs, in order, read from the
+    transcript (a response to a call that could not be acted on is not one)."""
+    return [m["content"] for m in (r.get("transcript") or [])
+            if m.get("role") == "tool" and not m["content"].startswith("[tool call not acted on")]
+
+
+def estimate_error_of(text: str, sigma_max: float) -> float | None:
+    """How far the closest plausible level in a probe's output is from the true
+    limit; the reading of `eval_frozen_baseline.probe_estimate_error`, kept in
+    step with it, so that every probe run of a sample can be read, not only
+    the first."""
+    nums = [float(x) for x in re.findall(r"(?<![\d.\-])0\.\d{2,}(?!\d)", text or "")]
+    nums = [x for x in nums if 0.03 <= x <= 0.5]
+    return min(abs(x - sigma_max) for x in nums) if nums else None
+
+
+def some_probe_near(r: dict, tol: float = 0.01) -> bool:
+    """Some probe run of the sample printed a number within `tol` of the limit."""
+    errs = [estimate_error_of(t, r["sigma_max"]) for t in probe_outputs(r)]
+    return any(e is not None and e <= tol for e in errs)
+
+
+def probe_runs(r: dict) -> list[tuple[str, str]]:
+    """The probe runs of a sample as (code, tool response) pairs, in order:
+    the calls of each reply that could be acted on, matched with the tool
+    responses that follow the reply. A probe run in the last reply was not
+    executed and has no response, so it is not in the list."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.agent_loop import parse_tool_calls
+    t = r.get("transcript") or []
+    pairs = []
+    for i, m in enumerate(t):
+        if m.get("role") != "assistant":
+            continue
+        codes = [c.code for c in parse_tool_calls(m["content"]) if c.error is None]
+        outs = []
+        for nxt in t[i + 1:]:
+            if nxt.get("role") != "tool":
+                break
+            if not nxt["content"].startswith("[tool call not acted on"):
+                outs.append(nxt["content"])
+        pairs.extend(zip(codes, outs))
+    return pairs
+
+
+BUDGET_MENTION = re.compile(
+    r"\b(repl(y|ies) (left|remaining)|(last|final|second|third|fourth|one more) reply|remaining repl"
+    r"|only (one|two|three|four|\d) repl|I have (one|two|three|four|\d) repl)", re.IGNORECASE)
+
+
+def mentions_budget(r: dict) -> bool:
+    """Some reply of the sample speaks of how many replies it has or has left."""
+    return any(BUDGET_MENTION.search(m["content"]) for m in (r.get("transcript") or []) if m.get("role") == "assistant")
+
+
+PROBE_OUTCOMES = (
+    "ran and printed a number within 0.01 of the limit",
+    "ran and printed, no number near the limit",
+    "ran and printed nothing",
+    "stopped on an end flag read from the wrong place (KeyError)",
+    "stopped on another error",
+    "ran out of its 30 seconds",
+    "rejected before running (syntax error, forbidden name)",
+)
+
+
+def probe_outcome(text: str, sigma_max: float) -> str:
+    """How one probe run ended, from its tool response."""
+    if text.startswith("[probe run rejected"):
+        return PROBE_OUTCOMES[6]
+    if "[probe run error: Timeout" in text:
+        return PROBE_OUTCOMES[5]
+    if "[probe run error" in text:
+        flags = "|".join(FLAG_KEYS)
+        return PROBE_OUTCOMES[3] if re.search(r"KeyError: '(%s)'" % flags, text) else PROBE_OUTCOMES[4]
+    if text.strip() in ("", "[empty output]"):
+        return PROBE_OUTCOMES[2]
+    e = estimate_error_of(text, sigma_max)
+    return PROBE_OUTCOMES[0] if (e is not None and e <= 0.01) else PROBE_OUTCOMES[1]
+
+
+SILENT_NO_PRINT = "silent_no_print"
+
+
+def probe_outcome_table(run: dict) -> dict:
+    """Every probe run of every sample, counted by how it ended; of the runs
+    that printed nothing, how many hold no call to `print` at all."""
+    counts = {k: 0 for k in PROBE_OUTCOMES}
+    counts[SILENT_NO_PRINT] = 0
+    for r in run["rows"]:
+        for code, text in probe_runs(r):
+            k = probe_outcome(text, r["sigma_max"])
+            counts[k] += 1
+            if k == PROBE_OUTCOMES[2] and not re.search(r"\bprint\s*\(", code or ""):
+                counts[SILENT_NO_PRINT] += 1
+    return counts
+
+
+def after_first_probe_table(run: dict) -> dict:
+    """How the first probe run of a sample ended, against what the reply after
+    it was: per outcome, the samples and how many of them then gave the final
+    answer (the others called the tool again)."""
+    out = {k: [0, 0] for k in PROBE_OUTCOMES}
+    for r in run["rows"]:
+        if r.get("first_action") != "probe_run":
+            continue
+        pairs = probe_runs(r)
+        if not pairs:
+            continue
+        k = probe_outcome(pairs[0][1], r["sigma_max"])
+        out[k][0] += 1
+        if (r.get("actions") or [])[1:2] == ["final_run"]:
+            out[k][1] += 1
+    return out
+
+
+SEQUENCE_WORDS = {"final_run": "final", "probe_run": "probe", "probe_run+final_run": "probe+final",
+                  "invalid": "invalid call", "none": "no call"}
+MAX_SEQUENCE_ROWS = 12
+
+
+def sequence_of(r: dict) -> str:
+    """The replies of a sample as a short sequence, e.g. "probe, probe, final"."""
+    return ", ".join(SEQUENCE_WORDS.get(a, a) for a in (r.get("actions") or []))
+
+
+def sequence_table(runs: list[dict]) -> tuple[list[str], list[dict]]:
+    """Counts of samples per sequence of replies, one dict per run, and the
+    sequences ordered by how many samples took them over all runs. Past
+    MAX_SEQUENCE_ROWS the rest are summed as "other"."""
+    counts = []
+    total: dict[str, int] = {}
+    for run in runs:
+        c: dict[str, int] = {}
+        for r in run["rows"]:
+            k = sequence_of(r)
+            c[k] = c.get(k, 0) + 1
+            total[k] = total.get(k, 0) + 1
+        counts.append(c)
+    order = sorted(total, key=lambda k: (-total[k], k))
+    shown, rest = order[:MAX_SEQUENCE_ROWS], order[MAX_SEQUENCE_ROWS:]
+    if rest:
+        for c in counts:
+            c["other"] = sum(c.get(k, 0) for k in rest)
+        shown = shown + ["other"]
+    return shown, counts
+
+
+PATHS = (
+    ("answered straight away", lambda r: (r.get("actions") or [""])[0] == "final_run"),
+    ("probed, then a final run", lambda r: (r.get("actions") or [""])[0] != "final_run"
+                                          and (r.get("actions") or [""])[-1] in FINAL_ACTIONS),
+    ("ended without a final run", lambda r: (r.get("actions") or [""])[-1] not in FINAL_ACTIONS),
+)
+
+
+def path_rows(run: dict) -> list[dict]:
+    """The samples of a run split by the path they took, with the outcome of each part."""
+    out = []
+    for name, pred in PATHS:
+        rs = [r for r in run["rows"] if pred(r)]
+        out.append({"path": name, "n": len(rs),
+                    "ran": mean(bool(r["ran"]) for r in rs), "success": mean(bool(r["success"]) for r in rs),
+                    "fast": mean(bool(r["fast"]) for r in rs), "reward": mean(r["reward"] for r in rs),
+                    "ride_ratio": mean(r.get("ride_ratio") for r in rs),
+                    "near": sum(some_probe_near(r) for r in rs) if not name.startswith("answered") else None})
+    return out
 
 
 def main() -> None:
@@ -518,11 +694,66 @@ def main() -> None:
             key, name, only_final_tool = row
             if only_final_tool and not final_tool:
                 continue
-            indent = "" if key == "no_final" else "\\quad "
+            indent = "" if key in ("no_final", "budget_mentions") else "\\quad "
             lines.append(f"{indent}{name} & " + " & ".join("--" if f[key] is None else str(f[key]) for f in ft) + " \\\\")
         lines += ["\\bottomrule", "\\end{tabular}"]
         write("first_actions.tex", lines)
         n_fragments += 1
+
+        # the sequence of replies each sample took
+        shown, counts = sequence_table([r for _, r in loop_runs])
+        lines = ["\\begin{tabular}{@{}l" + "r" * len(loop_runs) + "@{}}", "\\toprule",
+                 "Replies of the sample, in order & " + " & ".join(tex(label) for label, _ in loop_runs) + " \\\\", "\\midrule"]
+        for k in shown:
+            lines.append(f"{tex(k)} & " + " & ".join(str(c.get(k, 0)) for c in counts) + " \\\\")
+        lines += ["\\midrule", "samples & " + " & ".join(str(len(r["rows"])) for _, r in loop_runs) + " \\\\",
+                  "\\bottomrule", "\\end{tabular}"]
+        write("sequences.tex", lines)
+        n_fragments += 1
+
+        # answered straight away against probed first
+        lines = ["\\begin{tabular}{@{}llrrrrrrr@{}}", "\\toprule",
+                 "Run & Path & $n$ & Controller ran & Success & Fast & Reward & Ride ratio & Est.\\ within 0.01 \\\\", "\\midrule"]
+        for i, (label, r) in enumerate(loop_runs):
+            if i:
+                lines.append("\\addlinespace")
+            for j, row in enumerate(path_rows(r)):
+                lines.append(f"{tex(label) if j == 0 else ''} & {row['path']} & {row['n']} & {pct(row['ran'])} & {pct(row['success'])} & "
+                             f"{pct(row['fast'])} & {num(row['reward'])} & {num(row['ride_ratio'], 2)} & "
+                             f"{'--' if row['near'] is None else row['near']} \\\\")
+        lines += ["\\bottomrule", "\\end{tabular}"]
+        write("by_path.tex", lines)
+        n_fragments += 1
+
+        # every probe run, by how it ended
+        probing = [(label, r) for label, r in loop_runs if r["stage"] == 2]
+        if probing:
+            pt = [probe_outcome_table(r) for _, r in probing]
+            lines = ["\\begin{tabular}{@{}l" + "r" * len(probing) + "@{}}", "\\toprule",
+                     " & " + " & ".join(tex(label) for label, _ in probing) + " \\\\", "\\midrule",
+                     "probe runs, over all replies & " + " & ".join(str(sum(c[k] for k in PROBE_OUTCOMES)) for c in pt) + " \\\\"]
+            for k in PROBE_OUTCOMES:
+                lines.append(f"\\quad {tex(k)} & " + " & ".join(str(c[k]) for c in pt) + " \\\\")
+                if k == PROBE_OUTCOMES[2]:
+                    lines.append("\\qquad of these, the code holds no \\texttt{print} & "
+                                 + " & ".join(str(c[SILENT_NO_PRINT]) for c in pt) + " \\\\")
+            lines += ["\\bottomrule", "\\end{tabular}"]
+            write("probe_outcomes.tex", lines)
+            n_fragments += 1
+
+            # how the first probe ended, against what the next reply was
+            at = [after_first_probe_table(r) for _, r in probing]
+            lines = ["\\begin{tabular}{@{}l" + "rr" * len(probing) + "@{}}", "\\toprule",
+                     " & " + " & ".join(f"\\multicolumn{{2}}{{c}}{{{tex(label)}}}" for label, _ in probing) + " \\\\",
+                     "".join(f"\\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}" for i in range(len(probing))),
+                     "The first probe run & " + " & ".join("$n$ & then final" for _ in probing) + " \\\\", "\\midrule"]
+            for k in PROBE_OUTCOMES:
+                lines.append(f"{tex(k)} & " + " & ".join(f"{a[k][0]} & {a[k][1]}" for a in at) + " \\\\")
+            lines += ["\\midrule", "all first probe runs & " + " & ".join(
+                f"{sum(v[0] for v in a.values())} & {sum(v[1] for v in a.values())}" for a in at) + " \\\\",
+                "\\bottomrule", "\\end{tabular}"]
+            write("after_first_probe.tex", lines)
+            n_fragments += 1
     two = [(label, r) for label, r in runs if r["stage"] == 2 and not agent(r)]
     if two:
         ft = [first_reply_table(r) for _, r in two]
