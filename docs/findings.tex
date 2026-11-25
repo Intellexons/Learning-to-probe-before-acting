@@ -65,7 +65,7 @@ Stage & What it asks & Status & Entry \\
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed on the current environment (clean rebuild, run 2); earlier passes were on the previous environment & 2026-11-01, Stage 0 rebuilt \\
 0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed, and passed again through the agent loop on 2026-11-25 with the same numbers & 2026-11-01, Stage 0 rebuilt; 2026-11-25, the agent loop \\
 1  & Frozen model, one reply, no probe run (arm A) & re-run under the agent loop with the 4B base: $-105$ at 1000 tokens, $-65$ at 4000, against $+38$ for the cautious blind reference; a third of the answers do not fit in 1000 tokens & 2026-11-25, the agent loop \\
-2  & Frozen model with a probe run (arm B) & re-run under the agent loop: nine first replies of ten are probe runs, but with two replies seven samples of ten end without a final answer ($-232$); with four replies eight of ten end with one ($-104$); the probes rarely return the limit and the controllers do not use it & 2026-11-25, the agent loop \\
+2  & Frozen model with a probe run (arm B) & re-run under the agent loop: nine first replies of ten are probe runs, but with two replies seven samples of ten end without a final answer ($-232$); with four replies eight of ten end with one ($-104$); the probes rarely return the limit and the controllers do not ride safely under it; stating the replies left with each tool response changes nothing & 2026-11-25, the agent loop; 2026-11-25, the replies left \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -1593,6 +1593,108 @@ commands are in the Reproduce section of
 \texttt{c530e1f}, jobs 3458920 and 3458921) are in
 \texttt{docs/stage12\_agent/first\_version/}; its 91 and the 154 above are
 in \texttt{docs/stage12\_agent/tables\_first/}.
+\end{sloppypar}
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-11-25 \quad Stating the replies left with the tool response
+changes nothing}
+% ============================================================
+
+\commit{1205d32} $\cdot$ \textit{\texttt{Qwen3-4B-Instruct-2507}, frozen; one
+A30 job of 70 minutes; no training}
+
+\subsection*{Setup / motivation}
+
+The entry above found that with two replies the frozen model probes, probes
+again and never answers in 132 of 192 samples, and that no reply mentions
+the reply budget. The user chose to stay with purely reward-driven training
+and asked what two replies would mean for it. From the Stage~2 numbers, a
+first reply that answers straight away is worth about $-76$ and one that
+probes about $-249$, because most second replies probe again; training
+could learn not to probe for that reason alone. The check proposed and
+approved: repeat Stage~2 with every tool response ending in a line that
+states the replies left, \texttt{[1 reply left]} after the first of two. It
+is a fact about the state, not an instruction. The option is
+\texttt{--show-replies-left} of \texttt{scripts/eval\_frozen\_baseline.py},
+off by default.
+
+\subsection*{Results}
+
+\texttt{stage2} is the Stage~2 run of the entry above (job 3458956),
+\texttt{stage2-left} the same with the line (job 3459459):
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables_left/comparison.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\input{stage12_agent/tables_left/sequences.tex}
+\end{center}
+
+135 of 192 samples are still two probe runs and no final answer, against
+132. After a first probe that stopped on an error the next reply is still
+never the final answer (none of 59). Every tool response ends with the
+line, and no reply speaks of the reply budget. Reward $-240.6$ against
+$-231.7$, success $6.2\%$ against $9.4\%$.
+
+\subsection*{Interpretation}
+
+The frozen model does not act on its reply budget, whether the number is in
+the brief or beside the tool output: after a probe that failed it repairs
+the probe. The hypothesis that it only lacked the number at the right
+moment is wrong. The first replies of the two runs, which the line cannot
+touch, differ by 19 against 28 answers straight away, so differences of
+that size between two draws of 192 are sampling; the small drop in reward
+is not evidence that the line hurts.
+
+Two replies therefore remain a start in which seven samples of ten score
+the floor for a reason that has nothing to do with whether probing is
+useful.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Decide the reply budget for training (the user's call). Two replies:
+  the hand-written solution's shape and the method's, with the risk above.
+  Four replies: the frozen model reaches a final run in 158 of 192 samples;
+  the branched trainer then has to branch at the first reply and let each
+  continuation run to the end of the task, or branch at every reply.
+\item The token budget is still open: 1500 fits about $95\%$ of final
+  answers after a probe and $91\%$ of one-reply answers.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Whether reward alone teaches a two-reply model to answer on its second
+reply before it teaches it not to probe. A training run would show; a
+frozen run cannot.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{1205d32}, \texttt{hpc push . lora4vr}, then
+\end{sloppypar}
+\begin{scriptsize}
+\begin{verbatim}
+C=1205d32dcc4662250aa627f5fc069fab1a926ec8
+E=ALL,LORA4VR_GIT_COMMIT=$C,MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-agent-left \
+    --export="$E,EXTRA_ARGS=--show-replies-left"
+hpc pull lora4vr/results/stage2-4b-agent-left_<jobid> docs/stage12_agent/
+\end{verbatim}
+\end{scriptsize}
+\begin{sloppypar}
+Job 3459459 on gx17v1. Results in
+\texttt{docs/stage12\_agent/stage2-4b-agent-left\_3459459/}; tables in
+\texttt{docs/stage12\_agent/tables\_left/}, rendered by the command in the
+Reproduce section of \texttt{docs/stage12\_agent\_loop.tex}, whose section
+\emph{A check on the reply budget} is the full account.
 \end{sloppypar}
 
 \end{document}

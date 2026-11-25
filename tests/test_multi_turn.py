@@ -15,6 +15,7 @@ from src.multi_turn import (  # noqa: E402
     compute_branched_advantages,
     error_floor_reward,
     execute_turn,
+    replies_left_text,
     rollout_diagnostics,
     run_rollout,
 )
@@ -302,3 +303,40 @@ def test_rollout_one_reply_that_calls_a_tool_scores_the_floor():
     gen = _Scripted([_probe("print(1)")])
     out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 1, timeout_policy=10, max_steps=10)
     assert out["final_run"] is False and out["score"]["reward_total"] == error_floor_reward(1)
+
+
+# ---------------------------------------------------------------------------
+# The replies left, stated with the tool response
+# ---------------------------------------------------------------------------
+
+
+def test_replies_left_text():
+    assert replies_left_text(1) == "[1 reply left]"
+    assert replies_left_text(3) == "[3 replies left]"
+
+
+def test_the_tool_response_can_state_the_replies_left():
+    task = _tiny_task_one_scenario()
+    tr = execute_turn(_probe("print('LIMIT=0.18')"), task, is_last_turn=False, replies_left=1,
+                      timeout_policy=10, max_steps=10)
+    assert tr.messages == ({"role": "tool", "content": "LIMIT=0.18\n\n[1 reply left]"},)
+    assert tr.text == "LIMIT=0.18\n"          # what the probe returned, without the line
+    # with several calls the line closes the last response only
+    tr = execute_turn(_probe("print('one')") + _probe("print('two')"), task, is_last_turn=False, replies_left=2,
+                      timeout_policy=10, max_steps=10)
+    assert [m["content"] for m in tr.messages] == ["one\n", "two\n\n[2 replies left]"]
+    # a call that could not be acted on gets it too, and by default nothing is added
+    tr = execute_turn('<tool_call>\n{"name": "nope"}\n</tool_call>', task, is_last_turn=False, replies_left=1,
+                      timeout_policy=10, max_steps=10)
+    assert tr.messages[0]["content"].endswith("\n\n[1 reply left]")
+    tr = execute_turn(_probe("print('LIMIT=0.18')"), task, is_last_turn=False, timeout_policy=10, max_steps=10)
+    assert tr.messages == ({"role": "tool", "content": "LIMIT=0.18\n"},)
+
+
+def test_rollout_counts_the_replies_down():
+    gen = _Scripted([_probe("print(1)"), _probe("print(2)"), _final()])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 4, show_replies_left=True,
+                      timeout_policy=10, max_steps=10)
+    tool = [m["content"] for m in out["transcript"] if m["role"] == "tool"]
+    assert tool == ["1\n\n[3 replies left]", "2\n\n[2 replies left]"]
+    assert out["final_run"] is True
