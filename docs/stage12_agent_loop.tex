@@ -30,6 +30,9 @@
 %   provenance block, stage<N>_samples.jsonl with every sample). Tables:
 %   docs/stage0/tables_agent/ and docs/stage12_agent/tables/. After that commit only
 %   scripts/frozen_render.py and documents changed.
+% The controller read in full for the reading on the fate of the probes:
+%   docs/stage12_agent/stage2-4b-agent-4replies_3458958/stage2_samples.jsonl, task
+%   crystallizer_eval_s10001, sample 3 (SHOWER_THRESHOLD = 0.197, true limit 0.192).
 % The first version, the numbers of Section 3: code commit
 %   c530e1f58bfa788a43c9d4fc014884e38a9a5d1c; jobs 3458920 (stage1-4b-loop) and 3458921
 %   (stage2-4b-loop), submitted 2026-11-25 16:40. Results:
@@ -236,6 +239,17 @@ Ride ratio and estimate error are means over the samples that have them.}
 \label{tab:comparison}
 \end{table}
 
+% provenance: see the header of stage12_agent/tables/answered.tex
+\begin{table}[h]
+\centering\small
+\input{stage12_agent/tables/answered.tex}
+\caption{Each run split in two: the samples that ended without a final run,
+which score the error floor of $-300$, and the samples that gave one. The
+mean reward of a run is in the fourth column; the last three columns are
+over the samples that gave a final run only.}
+\label{tab:answered}
+\end{table}
+
 % provenance: see the header of stage12_agent/tables/first_actions.tex
 \begin{table}[h]
 \centering\small
@@ -285,6 +299,19 @@ not counted.}
 reply was: $n$ samples per outcome, and how many of them then gave the final
 answer. The others called the tool again.}
 \label{tab:after-first-probe}
+\end{table}
+
+% provenance: see the header of stage12_agent/tables/probe_fate.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables/probe_fate.tex}}
+\caption{What became of the probes that found the limit. From the top: the
+probe runs, and those whose output holds a number within $0.01$ of the true
+limit; the samples in which that happened, and whether they gave a final
+run; whether the controller's code then holds a number within $0.01$ of the
+limit; and how its final run ended. The last block is the comparison: the
+samples that probed without printing such a number.}
+\label{tab:probe-fate}
 \end{table}
 
 % provenance: see the header of stage12_agent/tables/reply_tokens.tex
@@ -370,19 +397,45 @@ Table~\ref{tab:diagnostics}.}
   says it is not. 9 were rejected before running and one ran out of time.
   The 171 probe runs of Stage~2 split the same way.
 
-  \item \textbf{A probe does not yet make the controller better.} In the
-  four-reply run the 147 samples that probed and then answered succeed in
-  $30.6\%$ of cases and are fast in $0.7\%$, with a mean reward of $-57.3$
-  (Table~\ref{tab:by-path}). One reply at 4000 tokens, with no probe at
-  all, succeeds in $29.2\%$ and is fast in $2.6\%$, at $-65.3$. In 35 of
-  the 147 some probe run printed a number within $0.01$ of the limit, and
-  fast success is still under one percent. The hand-written probe run and
-  controller are fast on every task at $+77.1$
-  (Table~\ref{tab:references}). Getting the limit out of the probe and
-  riding close to it is what the frozen model does not do.
+  \item \textbf{One reply has the highest mean because it always answers,
+  not because its controllers are better.} With one reply there is no tool,
+  and the brief says ``You have one reply: your final answer'', so every
+  sample gives a final run. With the tool, the samples that never answer
+  score $-300$ each, and the mean of a run is mostly a count of them
+  (Table~\ref{tab:answered}): 134 of 192 with two replies, 34 with four.
+  Over the samples that did give a final run the reward is $-74.0$ with two
+  replies and $-61.9$ with four, beside $-65.3$ for one reply at 4000
+  tokens, and success is $31.0\%$, $30.4\%$ and $29.2\%$. One reply at 1000
+  tokens is lower, $-105.4$ and $18.2\%$, because of the answers the token
+  budget cuts (item~\ref{it:tokens}). The controllers are about as good
+  with a probe as without one; what differs is how many samples reach one.
+
+  \item \textbf{What became of the probes that found the limit.}
+  \label{it:fate} Table~\ref{tab:probe-fate} follows them in the four-reply
+  run. Of 439 probe runs, 48 printed a number within $0.01$ of the limit,
+  in 40 samples. Five of the 40 ran out of replies; 35 gave a final run. In
+  20 of the 35 the controller's code holds a number within $0.01$ of the
+  limit, against 14 of 112 among the samples whose probes found none, so in
+  most of the 20 the number did travel from the probe to the controller.
+  It did not help. Of those 20 final runs 6 succeed and none is fast; 14
+  ruin the batch, 8 by a shower, the reading going over the limit, and 6 by
+  losing the seeds. In 7 of the 8 showers the number in the controller lies
+  above the true limit: a probe that cools until the shower reads a level
+  just past the limit, and a controller that takes that reading as its
+  threshold crosses the limit as the probe did. The one such controller read
+  in full slows its cooling at $80\%$ of the threshold and keeps cooling.
+  The 15 controllers that do not carry the number do no worse: 6 succeed, 7
+  ruin the batch. Altogether 12 of
+  the 35 samples that found the limit succeed, against 33 of 112 that
+  probed and found nothing, and $29.2\%$ for one reply with no probe at
+  all. The hand-written probe run and controller are fast on every task at
+  $+77.1$ (Table~\ref{tab:references}): they hold the reading a margin
+  under the level found. Getting the limit out of the probe is the smaller
+  part of what the frozen model lacks; riding safely under it is the
+  larger.
 
   \item \textbf{The token budget matters for the one-reply answer and not
-  for Stage~2.} A final answer is prose around the code. Its median length
+  for Stage~2.} \label{it:tokens} A final answer is prose around the code. Its median length
   is 864 tokens in Stage~1, and without the cut $67.2\%$ of the answers fit
   in 1000 tokens, $84.4\%$ in 1250, $91.1\%$ in 1500 and $96.9\%$ in 2000
   (Table~\ref{tab:reply-tokens}). At 1000 tokens $28.1\%$ of Stage~1's

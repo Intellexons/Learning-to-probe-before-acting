@@ -1488,6 +1488,30 @@ $0.7\%$. One-reply answers are prose around code: a third do not fit in
 1000 tokens, and lifting the cut raises Stage~1 from $-105.4$ to $-65.3$.
 Stage~2 does not move with the token budget ($-227.4$ at 4000).
 
+One reply has the highest mean because it always answers, not because its
+controllers are better. With one reply there is no tool and the brief says
+``You have one reply: your final answer'', so every sample gives a final
+run; with the tool, each sample that never answers scores $-300$:
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\input{stage12_agent/tables/answered.tex}
+\end{center}
+
+Over the samples that gave a final run the reward is $-74.0$ with two
+replies and $-61.9$ with four, beside $-65.3$ for one reply at 4000 tokens.
+
+What became of the probes that found the limit, in the four-reply run
+(\texttt{probe\_fate.tex}, a table of the full account): of 439 probe runs
+48 printed a number within $0.01$ of the limit, in 40 samples. Five of the
+40 ran out of replies and 35 gave a final run. In 20 of the 35 the
+controller's code holds a number within $0.01$ of the limit, against 14 of
+112 where the probes found none, so the number does reach the controller.
+Of those 20 final runs 6 succeed, none is fast, and 14 ruin the batch, 8 by
+a shower; in 7 of the 8 the number in the controller is above the true
+limit. Altogether 12 of the 35 samples that found the limit succeed,
+against 33 of 112 that probed and found nothing.
+
 \subsection*{Interpretation}
 
 The interface failure is gone. Given a tool in its own format the model
@@ -1497,9 +1521,13 @@ does, repairing a failed probe before anything else, and takes no account
 of its reply budget, so two replies leave seven samples of ten without a
 final answer. Its probes mostly return nothing: the commonest fault is
 code that never prints, the next an end flag read from the wrong place.
-And when a probe does return the limit the controller does not use it:
-fast success stays under one percent, where the hand-written probe run and
-controller are fast on every task. These are the things the training
+And when a probe does return the limit, the controller mostly carries the
+number and still does not ride safely under it: a probe that cools until the
+shower reads a level just past the limit, the controller takes that reading
+as its threshold, and it crosses the limit as the probe did. Fast success
+stays under one percent, where the hand-written probe run and controller,
+which hold the reading a margin under the level found, are fast on every
+task. These are the things the training
 stages are meant to teach, and each now shows up as a countable quantity.
 
 The two-reply budget is the open point. It is what the hand-written

@@ -17,8 +17,11 @@ answer; the first-reply table is first_actions.tex, sequences.tex counts the
 samples by the sequence of their replies, by_path.tex sets the samples that
 answered straight away beside those that probed first, probe_outcomes.tex
 counts every probe run by how it ended, after_first_probe.tex sets how the
-first probe run ended against what the next reply was, and the error table
-gains the ways a task can end without a final run. The first version of the loop
+first probe run ended against what the next reply was, probe_fate.tex follows
+the probes that found the limit to the controller and the final run,
+answered.tex splits each run into the samples that ended without a final run
+and the rest, and the error table gains the ways a task can end without a
+final run. The first version of the loop
 (`"protocol": "agent-loop"`, superseded the day it ran) had a second tool,
 `final_run`; its samples render through the same code, with two more rows.
 The fragments of a folder that holds only code-block runs come out as before.
@@ -531,6 +534,78 @@ def after_first_probe_table(run: dict) -> dict:
     return out
 
 
+def controller_numbers(code: str) -> list[float]:
+    """The numeric literals of a controller's code."""
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return []
+    return [float(n.value) for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool)]
+
+
+def controller_holds_limit(r: dict, tol: float = 0.01) -> bool:
+    """The controller's code holds a number within `tol` of the true limit."""
+    return any(0.03 <= x <= 0.5 and abs(x - r["sigma_max"]) <= tol for x in controller_numbers(r.get("code") or ""))
+
+
+def held_number(r: dict) -> float | None:
+    """The number in the controller's code that lies closest to the true limit."""
+    xs = [x for x in controller_numbers(r.get("code") or "") if 0.03 <= x <= 0.5]
+    return min(xs, key=lambda x: abs(x - r["sigma_max"])) if xs else None
+
+
+def showered(r: dict) -> bool:
+    """The final run's reading went over the limit."""
+    return r.get("peak_sigma") is not None and r["peak_sigma"] > r["sigma_max"]
+
+
+def _final_run_counts(rs: list[dict]) -> dict:
+    return {"n": len(rs), "success": sum(bool(r["success"]) for r in rs), "fast": sum(bool(r["fast"]) for r in rs),
+            "ruined": sum(outcome(r) == "ruined" for r in rs),
+            "showered": sum(outcome(r) == "ruined" and showered(r) for r in rs),
+            # of the showers: the number the controller holds is above the true limit
+            "showered_above": sum(outcome(r) == "ruined" and showered(r) and (held_number(r) or 0.0) > r["sigma_max"] for r in rs),
+            "other": sum(outcome(r) in ("timeout", "error") for r in rs)}
+
+
+def probe_fate_table(run: dict) -> dict:
+    """What became of the probes that found the limit: from every probe run to
+    the samples in which one printed the limit, to the controllers that carry
+    the number, to how their final runs ended; and the same for the samples
+    that probed without finding it."""
+    rows = run["rows"]
+    runs_ = [(r, code, text) for r in rows for code, text in probe_runs(r)]
+    errs = [estimate_error_of(t, r["sigma_max"]) for r, _, t in runs_]
+    clean = [probe_outcome(t, r["sigma_max"]) == PROBE_OUTCOMES[0] for r, _, t in runs_]
+    near = [e is not None and e <= 0.01 for e in errs]
+    d = {"runs": len(runs_), "runs_near": sum(near),
+         # the same count as probe_outcomes.tex, and the rest: the number was printed, then the code stopped on an error
+         "runs_near_clean": sum(clean), "runs_near_then_error": sum(n and not c for n, c in zip(near, clean))}
+    probed = [r for r in rows if probe_outputs(r)]
+    found = [r for r in probed if some_probe_near(r)]
+    final = lambda r: (r.get("actions") or [""])[-1] in FINAL_ACTIONS
+    found_final = [r for r in found if final(r)]
+    d.update({"samples_found": len(found), "found_no_final": len(found) - len(found_final),
+              "found_final": len(found_final),
+              "carries": _final_run_counts([r for r in found_final if controller_holds_limit(r)]),
+              "not_carries": _final_run_counts([r for r in found_final if not controller_holds_limit(r)])})
+    missed_final = [r for r in probed if not some_probe_near(r) and final(r)]
+    d["missed"] = _final_run_counts(missed_final)
+    d["missed_carries"] = sum(controller_holds_limit(r) for r in missed_final)
+    return d
+
+
+def answered_row(run: dict) -> dict:
+    """A run split into the samples that ended without a final run, which score
+    the error floor, and the samples that gave one."""
+    rows = run["rows"]
+    yes = [r for r in rows if (r.get("actions") or [""])[-1] in FINAL_ACTIONS]
+    return {"n": len(rows), "no_final": len(rows) - len(yes), "reward_all": mean(r["reward"] for r in rows),
+            "reward_answered": mean(r["reward"] for r in yes), "success_answered": mean(bool(r["success"]) for r in yes),
+            "fast_answered": mean(bool(r["fast"]) for r in yes)}
+
+
 SEQUENCE_WORDS = {"final_run": "final", "probe_run": "probe", "probe_run+final_run": "probe+final",
                   "invalid": "invalid call", "none": "no call"}
 MAX_SEQUENCE_ROWS = 12
@@ -754,6 +829,56 @@ def main() -> None:
                 "\\bottomrule", "\\end{tabular}"]
             write("after_first_probe.tex", lines)
             n_fragments += 1
+
+            # what became of the probes that found the limit
+            ft = [probe_fate_table(r) for _, r in probing]
+
+            def row(name: str, get) -> str:
+                return f"{name} & " + " & ".join(str(get(f)) for f in ft) + " \\\\"
+
+            def group(prefix: str, key: str, above: bool = False) -> list[str]:
+                out = [row(f"{prefix}the final run succeeded", lambda f: f[key]["success"]),
+                       row(f"{prefix}\\quad and was fast", lambda f: f[key]["fast"]),
+                       row(f"{prefix}the batch was ruined", lambda f: f[key]["ruined"]),
+                       row(f"{prefix}\\quad by a shower: the reading went over the limit", lambda f: f[key]["showered"])]
+                if above:
+                    out.append(row(f"{prefix}\\qquad the number in the controller is above the limit",
+                                   lambda f: f[key]["showered_above"]))
+                return out + [row(f"{prefix}timed out or did not run", lambda f: f[key]["other"])]
+
+            lines = ["\\begin{tabular}{@{}l" + "r" * len(probing) + "@{}}", "\\toprule",
+                     " & " + " & ".join(tex(label) for label, _ in probing) + " \\\\", "\\midrule",
+                     row("probe runs executed", lambda f: f["runs"]),
+                     row("\\quad whose output holds a number within 0.01 of the limit", lambda f: f["runs_near"]),
+                     row("\\qquad the code ran to its end", lambda f: f["runs_near_clean"]),
+                     row("\\qquad the code stopped on an error after printing it", lambda f: f["runs_near_then_error"]),
+                     "\\midrule",
+                     row("samples in which a probe run printed such a number", lambda f: f["samples_found"]),
+                     row("\\quad ran out of replies before a final answer", lambda f: f["found_no_final"]),
+                     row("\\quad went on to a final run", lambda f: f["found_final"]),
+                     row("\\qquad the controller holds a number within 0.01 of the limit", lambda f: f["carries"]["n"]),
+                     *group("\\qquad\\quad ", "carries", above=True),
+                     row("\\qquad the controller holds no such number", lambda f: f["not_carries"]["n"]),
+                     *group("\\qquad\\quad ", "not_carries"),
+                     "\\midrule",
+                     row("samples that probed, found no such number, and gave a final run", lambda f: f["missed"]["n"]),
+                     row("\\quad the controller holds a number within 0.01 of the limit all the same", lambda f: f["missed_carries"]),
+                     *group("\\quad ", "missed"),
+                     "\\bottomrule", "\\end{tabular}"]
+            write("probe_fate.tex", lines)
+            n_fragments += 1
+
+        # the samples that ended without a final run, and the rest
+        ar = [answered_row(r) for _, r in loop_runs]
+        lines = ["\\begin{tabular}{@{}lrrrrrr@{}}", "\\toprule",
+                 " & & & & \\multicolumn{3}{c}{The samples that gave a final run} \\\\", "\\cmidrule(l){5-7}",
+                 "Run & Samples & No final run & Reward, all & Reward & Success & Fast \\\\", "\\midrule"]
+        for (label, _), a in zip(loop_runs, ar):
+            lines.append(f"{tex(label)} & {a['n']} & {a['no_final']} & {num(a['reward_all'])} & {num(a['reward_answered'])} & "
+                         f"{pct(a['success_answered'])} & {pct(a['fast_answered'])} \\\\")
+        lines += ["\\bottomrule", "\\end{tabular}"]
+        write("answered.tex", lines)
+        n_fragments += 1
     two = [(label, r) for label, r in runs if r["stage"] == 2 and not agent(r)]
     if two:
         ft = [first_reply_table(r) for _, r in two]
