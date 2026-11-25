@@ -30,6 +30,13 @@
 %   provenance block, stage<N>_samples.jsonl with every sample). Tables:
 %   docs/stage0/tables_agent/ and docs/stage12_agent/tables/. After that commit only
 %   scripts/frozen_render.py and documents changed.
+% The replies left, the numbers of Section 5: code commit
+%   1205d32dcc4662250aa627f5fc069fab1a926ec8 (the option --show-replies-left; without
+%   it the code path is that of 7800206); Slurm job 3459459 (stage2-4b-agent-left),
+%   one A30 on gx17v1, started 2026-11-25 20:01 with
+%   --export=ALL,LORA4VR_GIT_COMMIT=<commit>,MODEL_PATH=models/hf_base/iter_000,N_SAMPLES=4,EXTRA_ARGS=--show-replies-left.
+%   Results: docs/stage12_agent/stage2-4b-agent-left_3459459/; tables
+%   docs/stage12_agent/tables_left/, rendered beside the Stage 2 run 3458956.
 % The controller read in full for the reading on the fate of the probes:
 %   docs/stage12_agent/stage2-4b-agent-4replies_3458958/stage2_samples.jsonl, task
 %   crystallizer_eval_s10001, sample 3 (SHOWER_THRESHOLD = 0.197, true limit 0.192).
@@ -468,11 +475,81 @@ reply budget. Two replies are what the hand-written solution needs and
 what the training method's tree of first and second replies is built for;
 the frozen model ends with a controller that passes validation in $29.7\%$
 of two-reply samples and in $81.8\%$ of four-reply ones. Training on two replies starts with about
-seven samples of ten at the error floor; a larger budget changes the shape
-of the method; and whether the model is told, reply by reply, how many it
-has left is a question about the interface. The second is the token budget
+seven samples of ten at the error floor, and a larger budget changes the
+shape of the method. Telling the model with each tool response how many
+replies it has left does not change this (Section~\ref{sec:left}). The
+second is the token budget
 of a reply: a third of the one-reply answers do not fit in 1000 tokens,
 one in eleven does not fit in 1500, one in thirty in 2000.
+
+\clearpage
+\section{A check on the reply budget: the replies left, stated}
+\label{sec:left}
+
+The reading above found that the frozen model takes no account of its reply
+budget, although the brief states it. Would it, if the number were in front
+of it at the moment it matters? Stage~2 was repeated with one change: every
+tool response ends with a line that states the replies left, which after
+the first reply of two is \texttt{[1 reply left]}. The line is a fact about
+the state of the task, as \texttt{steps\_left} is in the environment's
+state, and says nothing about what to do. Everything else is as in
+\texttt{stage2}; the run, \texttt{stage2-left}, is a fresh draw.
+
+% provenance: see the header of stage12_agent/tables_left/comparison.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables_left/comparison.tex}}
+\caption{Stage~2 without and with the line that states the replies left.}
+\label{tab:left-comparison}
+\end{table}
+
+% provenance: see the header of stage12_agent/tables_left/sequences.tex
+\begin{table}[h]
+\centering\small
+\input{stage12_agent/tables_left/sequences.tex}
+\caption{The samples by the sequence of their replies, without and with the
+line.}
+\label{tab:left-sequences}
+\end{table}
+
+% provenance: see the header of stage12_agent/tables_left/after_first_probe.tex
+\begin{table}[h]
+\centering\small
+\resizebox{\linewidth}{!}{\input{stage12_agent/tables_left/after_first_probe.tex}}
+\caption{How the first probe run ended, against what the next reply was,
+without and with the line.}
+\label{tab:left-after}
+\end{table}
+
+% provenance: see the header of stage12_agent/tables_left/first_actions.tex
+\begin{table}[h]
+\centering\small
+\input{stage12_agent/tables_left/first_actions.tex}
+\caption{What the first reply of each sample is, without and with the line.
+The last row counts the samples in which some reply speaks of the reply
+budget.}
+\label{tab:left-first}
+\end{table}
+
+The line changes nothing. 135 of 192 samples are still two probe runs and
+no final answer, against 132 without it (Table~\ref{tab:left-sequences}).
+After a first probe run that stopped on an error the next reply is still
+never the final answer, none of 59 (Table~\ref{tab:left-after}). Every tool
+response of the run ends with the line, and no reply of the run speaks of
+the reply budget (last row of Table~\ref{tab:left-first}). The reward is
+$-240.6$ against $-231.7$ and success $6.2\%$ against $9.4\%$
+(Table~\ref{tab:left-comparison}): no effect in the direction hoped for.
+
+The two runs also give a measure of what two draws of 192 samples differ
+by. The first reply is written before any tool response, so the line cannot
+touch it; yet 28 first replies answer straight away with the line and 19
+without (Table~\ref{tab:left-first}). Differences of that size between the
+runs are sampling.
+
+So the frozen model does not act on its reply budget, whether the number is
+in the brief or beside the tool output. One wording was tried. A more
+insistent one would be an instruction about what to do, which the principle
+of this document rules out.
 
 \clearpage
 \section{Reproduce}
@@ -508,6 +585,12 @@ uv run python scripts/frozen_render.py --out $D/tables_first --macro-prefix SAF 
     stage1-first=$D/first_version/stage1-4b-loop_<jobid> \
     stage2-first=$D/first_version/stage2-4b-loop_<jobid>
 uv run python scripts/render_brief_appendix.py
+# Section 5, on the commit that has --show-replies-left
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-4b-agent-left \
+    --export="$E,EXTRA_ARGS=--show-replies-left"
+uv run python scripts/frozen_render.py --out $D/tables_left --macro-prefix SAL \
+    --tokenizer models/hf_base/iter_000/tokenizer.json \
+    stage2=$D/stage2-4b-agent_<jobid> stage2-left=$D/stage2-4b-agent-left_<jobid>
 \end{verbatim}
 \end{scriptsize}
 Each result directory holds the job log, \texttt{stage<N>\_summary.json}
