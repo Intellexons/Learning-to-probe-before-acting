@@ -1,22 +1,27 @@
 """The agent loop: how the model acts.
 
-The model acts through tool calls in its own chat format, as any tool-using
-agent does. There are two tools:
+The model works as a tool-using agent does, in its own chat format:
 
-  probe_run(code)   runs the code on a probe batch, where the object `env` is
-                    available; what the code prints comes back as the tool
-                    response.
-  final_run(code)   runs the controller, `def policy(state)`, on the scored
-                    batch; the task ends.
+  - It has one tool, `probe_run(code)`: the code runs on a probe batch, where
+    the object `env` is available, and what it prints comes back as the tool
+    response.
+  - A reply without a tool call is its final answer. The controller in it,
+    `def policy(state)` in a Python code block, runs on the scored batch: the
+    final run. The task ends.
 
-Nothing in the brief says which to call or in what order: the tools exist, and
-what the model does with them is the behaviour under study. The runtime does
-what a tool runtime does: it acts on the calls of a reply in the order they
-are written, the task ends at the first final run, and a call it cannot act on
-gets a response that says why.
+This is the loop every tool runtime runs: act on the tool calls of a reply and
+hand back the results; a reply that calls nothing is the answer. Nothing in
+the brief says whether to probe or when: the tool exists, and what the model
+does with it is the behaviour under study.
 
-This module holds the tool definitions, the parser for the model's calls and
-the renderer that writes a call the way the model would. Executing a call is
+(A first version, 2026-11-25, made the final run a second tool, `final_run`.
+With only that tool on offer the frozen model wrote its controller as an
+ordinary answer with a code block in 9 of 12 replies and called nothing, so
+the final answer became what it is for the model: the reply itself.)
+
+This module holds the tool definition, the parser for the model's calls, the
+reader for the controller in a final answer, and renderers that write a call
+and an answer the way the model would. Acting on a reply is
 `src.multi_turn.execute_turn`.
 """
 from __future__ import annotations
@@ -28,42 +33,29 @@ from dataclasses import dataclass
 from src.runner import extract_code
 
 TOOL_PROBE = "probe_run"
-TOOL_FINAL = "final_run"
 
-
-def _tool(name: str, description: str, code_description: str) -> dict:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": {"code": {"type": "string", "description": code_description}},
-                "required": ["code"],
-            },
+PROBE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": TOOL_PROBE,
+        "description": "Run Python code on a probe batch; the object `env` is available to it. "
+                       "Returns what the code prints.",
+        "parameters": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "Python source code."}},
+            "required": ["code"],
         },
-    }
+    },
+}
 
 
-PROBE_TOOL = _tool(
-    TOOL_PROBE,
-    "Run Python code on a probe batch; the object `env` is available to it. Returns what the code prints.",
-    "Python source code.",
-)
-FINAL_TOOL = _tool(
-    TOOL_FINAL,
-    "Run the controller on the scored batch. This ends the task.",
-    "Python source code that defines `def policy(state)`.",
-)
-
-
-def tools_for(total_turns: int) -> list[dict]:
-    """The tools the model is offered. With a single reply there is no probe
-    run to offer: the reply is the final run."""
+def tools_for(total_turns: int) -> list[dict] | None:
+    """The tools the model is offered: the probe run when there is a reply to
+    spend on it. With a single reply there is no tool, and the chat template
+    writes no tool block: the reply is the final answer."""
     if total_turns < 1:
         raise ValueError(f"total_turns must be >= 1, got {total_turns}")
-    return [PROBE_TOOL, FINAL_TOOL] if total_turns > 1 else [FINAL_TOOL]
+    return [PROBE_TOOL] if total_turns > 1 else None
 
 
 @dataclass(frozen=True)
@@ -78,6 +70,7 @@ class ToolCall:
 
 _CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 _NAME_RE = re.compile(r'"name"\s*:\s*"([^"]*)"')
+_FENCE_RE = re.compile(r"```\w*[ \t]*\n(.*?)```(?!\w)", re.DOTALL)
 
 
 def _parse_call(body: str) -> ToolCall:
@@ -92,7 +85,7 @@ def _parse_call(body: str) -> ToolCall:
     if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
         return ToolCall(None, None, 'the call has no "name"')
     name = obj["name"]
-    if name not in (TOOL_PROBE, TOOL_FINAL):
+    if name != TOOL_PROBE:
         return ToolCall(name, None, f"there is no tool named {name!r}")
     args = obj.get("arguments")
     if isinstance(args, str):
@@ -110,7 +103,8 @@ def _parse_call(body: str) -> ToolCall:
 def parse_tool_calls(text: str) -> list[ToolCall]:
     """The tool calls of a reply, in the order they are written. A call the
     token budget cut before `</tool_call>` is returned as one that cannot be
-    acted on. A reply without any call gives an empty list."""
+    acted on. A reply without any call gives an empty list: it is the final
+    answer."""
     text = text or ""
     calls = []
     end = 0
@@ -125,6 +119,23 @@ def parse_tool_calls(text: str) -> list[ToolCall]:
     return calls
 
 
+def controller_from_answer(text: str) -> str:
+    """The controller in a final answer.
+
+    The answer is prose around a Python code block. If it holds several
+    blocks, the controller is the last one that defines `policy`; if none
+    does, or the answer is one block (closed or cut off by the token budget)
+    or bare code, `runner.extract_code` reads it as before. What comes back
+    is validated and scored by the runner, so an answer without a controller
+    scores the error floor there.
+    """
+    text = text or ""
+    with_policy = [b for b in _FENCE_RE.findall(text) if re.search(r"^def policy\b", b, re.MULTILINE)]
+    if with_policy:
+        return with_policy[-1].strip()
+    return extract_code(text)
+
+
 def render_tool_call(name: str, code: str) -> str:
     """A tool call as the model writes one (and as the chat template renders
     one). Used by hand-written solutions and tests, so they go through the
@@ -132,26 +143,12 @@ def render_tool_call(name: str, code: str) -> str:
     return "<tool_call>\n" + json.dumps({"name": name, "arguments": {"code": code}}) + "\n</tool_call>"
 
 
+def render_final_answer(code: str) -> str:
+    """A final answer as the model writes one: the controller in a Python
+    code block. Used by hand-written solutions and tests."""
+    return "```python\n" + code.strip("\n") + "\n```"
+
+
 def tool_message(text: str) -> dict:
     """The chat message that carries a tool response back to the model."""
     return {"role": "tool", "content": text}
-
-
-def system_message_with_tools(tokenizer, tools: list[dict]) -> dict:
-    """The system message the chat template writes when it is given `tools`,
-    as an explicit message.
-
-    For callers that hand a chat to code that renders it without tools (TRL's
-    stock GRPOTrainer): a chat that starts with this message renders to the
-    same text as the chat rendered with the tools, which is checked here.
-    """
-    probe = [{"role": "user", "content": "x"}]
-    with_tools = tokenizer.apply_chat_template(probe, tools=tools, tokenize=False, add_generation_prompt=True)
-    start, end = "<|im_start|>system\n", "<|im_end|>\n"
-    if not with_tools.startswith(start) or end not in with_tools:
-        raise RuntimeError("the chat template does not open with a ChatML system message")
-    message = {"role": "system", "content": with_tools[len(start):with_tools.index(end)]}
-    plain = tokenizer.apply_chat_template([message] + probe, tokenize=False, add_generation_prompt=True)
-    if plain != with_tools:
-        raise RuntimeError("the explicit system message does not reproduce the template's tool block")
-    return message

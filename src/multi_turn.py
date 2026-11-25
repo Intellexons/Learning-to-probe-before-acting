@@ -3,12 +3,12 @@
 The training-loop trick designed in the 2026-04-26 conversation:
 
   For each prompt, generate G_1 first replies. For each first reply i, act on
-  its tool calls (`execute_turn`): a final run ends the task there, a probe
-  run returns what it printed as the tool response. Then generate G_2 second
-  replies after each first reply that did not end the task. What a reply is
-  follows from the tool it calls (`src.agent_loop`), not from its position or
-  its contents. The final reward of the trajectory (i, j) is the reward of
-  its final run.
+  it (`execute_turn`): a reply without a tool call is the final answer and
+  ends the task there, a probe run returns what it printed as the tool
+  response. Then generate G_2 second replies after each first reply that did
+  not end the task. What a reply is follows from whether it calls the tool
+  (`src.agent_loop`), not from its position or the code in it. The final
+  reward of the trajectory (i, j) is the reward of its final run.
 
   Empirical values (no learned critic, all MC):
     V̂_0     = grand mean over all G_1 G_2 final rewards (initial-state baseline)
@@ -31,9 +31,8 @@ import statistics
 from dataclasses import dataclass
 
 from src.agent_loop import (
-    TOOL_FINAL,
-    TOOL_PROBE,
     ToolCall,
+    controller_from_answer,
     parse_tool_calls,
     tool_message,
     tools_for,
@@ -49,24 +48,19 @@ from src.runner import (
     score_policy_turn,
 )
 
-# What a reply was, read from its tool calls. A reply is a final run if it
-# holds one; a final run written after a probe run in the same reply is its
-# own kind, because the probe's output was never read.
+# What a reply was. A reply without a tool call is the final answer: the
+# final run. A reply with tool calls is a probe run if at least one of them
+# could be acted on.
 ACTION_FINAL = "final_run"
 ACTION_PROBE = "probe_run"
-ACTION_PROBE_THEN_FINAL = "probe_run+final_run"
 ACTION_INVALID = "invalid"   # tool calls, none of which could be acted on
-ACTION_NONE = "none"         # no tool call at all
 
 # Turn kinds as the trainer records them: "policy" is a final run (scored, the
-# task ended), "main" a probe run (what it printed comes back). The other two
-# are replies that were neither.
+# task ended), "main" a probe run (what it printed comes back), "invalid" a
+# reply whose calls could not be acted on.
 MODE_POLICY = "policy"
 MODE_MAIN = "main"
 MODE_INVALID = "invalid"
-MODE_NONE = "none"
-
-NO_TOOL_CALL_TEXT = "[no tool call in your reply]"
 
 
 # ---------------------------------------------------------------------------
@@ -101,15 +95,14 @@ class ToolResult:
     """What came of one reply.
 
     `action` is what the reply was (ACTION_*), `mode` the same in the
-    trainer's words. `ended` is True when the task is over: the reply held a
-    final run, or it was the last reply and held none. `reward` is the total
+    trainer's words. `ended` is True when the task is over: the reply was the
+    final answer, or it was the last reply and was not. `reward` is the total
     reward when the task ended (the error floor if there was no final run),
     None otherwise. `score` is the full score dict behind that reward.
     `messages` are the chat messages that follow the reply when the task goes
-    on: one tool response per call, or a notice that there was no call.
-    `text` is their content joined, for logs and for callers that read the
-    probe output. `code` is the controller of the final run, or else the code
-    of the first probe run.
+    on: one tool response per call. `text` is their content joined, for logs
+    and for callers that read the probe output. `code` is the controller of
+    the final run, or else the code of the first probe run.
     """
     mode: str
     reward: float | None
@@ -124,8 +117,7 @@ class ToolResult:
 
 _NO_FINAL_RUN = {
     ACTION_PROBE: "the last reply called probe_run",
-    ACTION_INVALID: "the last reply held no tool call that could be acted on",
-    ACTION_NONE: "the last reply held no tool call",
+    ACTION_INVALID: "the last reply held a tool call that could not be acted on",
 }
 
 
@@ -139,44 +131,39 @@ def execute_turn(
     timeout_main: int = MAIN_DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> ToolResult:
-    """Act on the tool calls of one reply and return a ToolResult.
+    """Act on one reply and return a ToolResult.
 
-    The calls are taken in the order they are written. The first `final_run`
-    that can be acted on is scored as the final run (a controller that fails
-    validation or errors at runtime scores the error floor, see
-    `score_sample`) and the task ends; probe runs written before it in the
-    same reply are not run, since nothing would read their output. Without a
-    final run, each `probe_run` is executed in the sandbox against the probe
+    A reply **without a tool call** is the final answer, on any turn: the
+    controller in it (`agent_loop.controller_from_answer`) is scored as the
+    final run and the task ends. An answer without a controller, a controller
+    that fails validation and one that errors at runtime all score the error
+    floor (see `score_sample`).
+
+    A reply **with tool calls** is acted on call by call, in the order they
+    are written: each `probe_run` is executed in the sandbox against the probe
     batch and what it printed is its tool response; a call that cannot be
-    acted on gets a response that says why; a reply without any call gets a
-    notice. `reward` is None then: credit for the first turn comes from the
-    branched estimate, not from the tool response.
+    acted on gets a response that says why. `reward` is None then: credit for
+    the first turn comes from the branched estimate, not from the tool
+    response.
 
-    The **last reply** has to hold the final run. If it does not, the task
-    ends without one and scores the error floor; nothing is executed.
+    The **last reply** has to be the final answer. If it calls a tool
+    instead, the task ends without a final run and scores the error floor;
+    nothing is executed.
     """
     calls = tuple(parse_tool_calls(raw_completion))
     n_scenarios = len(task.get("scenarios", []))
 
-    final_idx = next((k for k, c in enumerate(calls) if c.error is None and c.name == TOOL_FINAL), None)
-    if final_idx is not None:
-        final = calls[final_idx]
-        probed_first = any(c.error is None and c.name == TOOL_PROBE for c in calls[:final_idx])
-        score = score_policy_turn(final.code, task, timeout=timeout_policy, max_steps=max_steps)
+    if not calls:
+        code = controller_from_answer(raw_completion)
+        score = score_policy_turn(code, task, timeout=timeout_policy, max_steps=max_steps)
         return ToolResult(
             mode=MODE_POLICY, reward=score["reward_total"],
             text=_policy_tool_text(score["reward_total"], n_scenarios), ended=True,
-            action=ACTION_PROBE_THEN_FINAL if probed_first else ACTION_FINAL,
-            code=final.code, score=score, calls=calls,
+            action=ACTION_FINAL, code=code, score=score, calls=calls,
         )
 
-    probes = [c for c in calls if c.error is None]   # with no final run, every valid call is a probe run
-    if probes:
-        action, mode = ACTION_PROBE, MODE_MAIN
-    elif calls:
-        action, mode = ACTION_INVALID, MODE_INVALID
-    else:
-        action, mode = ACTION_NONE, MODE_NONE
+    probes = [c for c in calls if c.error is None]
+    action, mode = (ACTION_PROBE, MODE_MAIN) if probes else (ACTION_INVALID, MODE_INVALID)
     code = probes[0].code if probes else ""
 
     if is_last_turn:
@@ -189,8 +176,6 @@ def execute_turn(
     # as the final run, on the scenario's probe batch.
     cal = scenario or (task.get("scenarios") or [{}])[0]
     messages: list[dict] = []
-    if not calls:
-        messages.append({"role": "user", "content": NO_TOOL_CALL_TEXT})
     for c in calls:
         if c.error is not None:
             messages.append(tool_message(f"[tool call not acted on: {c.error}]"))
@@ -219,11 +204,12 @@ def run_rollout(
 ) -> dict:
     """One task, from the brief to the end: the loop evaluation runs.
 
-    `generate(messages, tools)` returns the model's next reply as text. The
-    loop gives the model the brief and the tools, acts on each reply with
-    `execute_turn`, and stops when the task has ended, which the last reply
-    always brings about. Returns the transcript, the ToolResult of every
-    reply, and the score of the task.
+    `generate(messages, tools)` returns the model's next reply as text
+    (`tools` is None when the model has a single reply). The loop gives the
+    model the brief and the tool, acts on each reply with `execute_turn`, and
+    stops when the task has ended, which the last reply always brings about.
+    Returns the transcript, the ToolResult of every reply, and the score of
+    the task.
     """
     tools = tools_for(total_turns)
     messages: list[dict] = [{"role": "user", "content": brief}]

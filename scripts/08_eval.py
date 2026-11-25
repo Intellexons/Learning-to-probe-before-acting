@@ -1,9 +1,10 @@
 """Evaluate the current model on the held-out tasks.
 
-The model acts through tool calls (`src.agent_loop`). With one reply
-(eval.n_turns = 1) the only tool is `final_run`: the model writes the
-controller from the brief. With N replies it also has `probe_run`, whose
-printed output comes back as the tool response. The loop is
+The model acts as a tool-using agent (`src.agent_loop`). With one reply
+(eval.n_turns = 1) there is no tool: the reply is the final answer, the
+controller written from the brief. With N replies it has `probe_run`, whose
+printed output comes back as the tool response, and a reply without a tool
+call is the final answer. The loop is
 `src.multi_turn.run_rollout`, built on the `execute_turn` training uses, so
 eval and training see the same messages.
 """

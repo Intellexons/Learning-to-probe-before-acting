@@ -4,8 +4,8 @@ Mocks the generator so the rollout can be exercised on CPU. What a reply is
 and what follows it is covered by `test_multi_turn.py`; here we lock down
 what the eval script makes of a rollout:
 
-  - a final run ends the task on any reply, and its controller is the code
-    the script scores;
+  - a final answer (a reply without a tool call) ends the task on any reply,
+    and its controller is the code the script scores;
   - a rollout whose replies run out without a final run, or whose controller
     fails validation, is reported as not successful with the reason.
 """
@@ -17,7 +17,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call  # noqa: E402
+from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call  # noqa: E402
 from src.prompts import load_template  # noqa: E402
 
 TEMPLATE = load_template(str(REPO_ROOT / "configs" / "prompt_template.txt"))
@@ -92,16 +92,16 @@ def _patch_generators(monkeypatch, completions: list[str]):
 
 # The controllers below return `(0.5, 0.0)` so the tiny env completes its
 # 5-step horizon: enough for the scoring path to return a reward.
-_POLICY_A = render_tool_call(TOOL_FINAL, "def policy(state):\n    return (0.5, 0.0)  # marker A")
-_POLICY_B = render_tool_call(TOOL_FINAL, "def policy(state):\n    return (0.5, 0.0)  # marker B")
+_POLICY_A = render_final_answer("def policy(state):\n    return (0.5, 0.0)  # marker A")
+_POLICY_B = render_final_answer("def policy(state):\n    return (0.5, 0.0)  # marker B")
 _MAIN_BLOCK = render_tool_call(TOOL_PROBE, 'print("probe")')
-_INVALID_BLOCK = """no tool call here, model output garbage"""
-_NOT_A_CONTROLLER = render_tool_call(TOOL_FINAL, 'print("no policy defined")')
+_INVALID_BLOCK = """no code here, model output garbage"""
+_NOT_A_CONTROLLER = render_final_answer('print("no policy defined")')
 
 
 def test_a_controller_in_turn_one_ends_the_rollout(monkeypatch):
-    """A final run in the first reply ends the task there; the second scripted
-    reply is never asked for."""
+    """A final answer as the first reply ends the task there; the second
+    scripted reply is never asked for."""
     gen = _patch_generators(monkeypatch, [_POLICY_A, _POLICY_B])
     out = run_n_turn_rollout(
         model=None, tokenizer=None, template=TEMPLATE,
@@ -134,8 +134,8 @@ def test_main_then_policy_uses_final_policy(monkeypatch):
 
 
 def test_probe_then_probe_is_rejected(monkeypatch):
-    """The last reply has to hold the final run: two probe runs in a row leave
-    the rollout without one."""
+    """The last reply has to be the final answer: two probe runs in a row
+    leave the rollout without a final run."""
     _patch_generators(monkeypatch, [_MAIN_BLOCK, _MAIN_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
@@ -151,7 +151,7 @@ def test_probe_then_probe_is_rejected(monkeypatch):
 
 
 def test_final_turn_invalid_is_rejected(monkeypatch):
-    """The second reply holds no tool call → no final run, whatever the first was."""
+    """The second reply is an answer without a controller → rejected, whatever the first was."""
     _patch_generators(monkeypatch, [_MAIN_BLOCK, _INVALID_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
@@ -162,7 +162,7 @@ def test_final_turn_invalid_is_rejected(monkeypatch):
         scoring_timeout=10, scoring_max_steps=10,
     )
     assert out["success"] is False
-    assert "no final run" in out["error"]
+    assert "is not valid" in out["error"]
 
 
 def test_final_run_with_an_invalid_controller_is_rejected(monkeypatch):
@@ -180,7 +180,7 @@ def test_final_run_with_an_invalid_controller_is_rejected(monkeypatch):
 
 
 def test_one_reply_is_the_final_run(monkeypatch):
-    """With one reply the model has only `final_run`."""
+    """With one reply there is no tool: the reply is the final answer."""
     _patch_generators(monkeypatch, [_POLICY_A])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,

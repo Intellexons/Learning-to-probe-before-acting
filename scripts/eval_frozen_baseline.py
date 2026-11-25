@@ -1,13 +1,13 @@
 """Frozen-model references on the crystallizer: Stage 1 (one reply) and Stage 2 (two replies).
 
-No training. The model acts through tool calls (`src.agent_loop`). Stage 1
-(--turns 1): one reply and one tool, `final_run`; the model writes the
-controller from the brief. Stage 2 (--turns 2): two replies and two tools; the
-model may spend the first reply on `probe_run` (its code runs on the probe
-batch: same hidden limit, different batch, limit masked; what it prints comes
-back as the tool response) and the second on `final_run`, or call `final_run`
-straight away. The loop is `src.multi_turn.run_rollout`, the one training
-uses turn by turn.
+No training. The model acts as a tool-using agent (`src.agent_loop`). Stage 1
+(--turns 1): one reply and no tool; the reply is the final answer, the
+controller written from the brief. Stage 2 (--turns 2): two replies and one
+tool, `probe_run`; a first reply that calls it is a probe run (its code runs
+on the probe batch: same hidden limit, different batch, limit masked; what it
+prints comes back as the tool response), and a reply without a tool call is
+the final answer. The loop is `src.multi_turn.run_rollout`, built on the
+`execute_turn` training uses.
 
 For every task in the task file (default: the held-out eval set) N samples
 are drawn. Per task and overall the script reports success, fast success
@@ -126,7 +126,7 @@ def rollout(model, tokenizer, template: str, task: dict, total_turns: int, *,
 
 # Names the interaction protocol in every sample and summary, so a reader of
 # the result files can tell these runs from the code-block protocol before them.
-PROTOCOL = "agent-loop"
+PROTOCOL = "agent-loop/final-answer"
 
 
 def _count(values) -> dict:
@@ -160,7 +160,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--turns", type=int, default=1,
-                        help="the number of replies the model has: 1 = Stage 1 (the final run only), "
+                        help="the number of replies the model has: 1 = Stage 1 (the final answer only), "
                              "2 = Stage 2 (a probe run is possible); more than 2 is Stage 2 with a longer budget")
     parser.add_argument("--model-path", default="models/hf_base/iter_000")
     parser.add_argument("--task-file", default="scripts/seed_tasks/crystallizer_eval.jsonl")

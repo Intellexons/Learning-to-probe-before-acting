@@ -11,10 +11,13 @@ hand-written probe code and controller of Stage 0.
 Runs come in two protocols and the renderer reads both. In the code-block
 protocol (runs up to 2026-11-01) a reply was one code block, read by its
 contents; its first-reply table is first_replies.tex. In the agent loop (runs
-whose samples say `"protocol": "agent-loop"`) the model acts through the tool
-calls `probe_run` and `final_run`; its first-reply table is first_actions.tex,
-and the error table gains the ways a task can end without a final run. The
-fragments of a folder that holds only code-block runs come out as before.
+whose samples carry a `"protocol"` that starts with `agent-loop`) the model
+calls the tool `probe_run` and a reply without a tool call is its final
+answer; the first-reply table is first_actions.tex, and the error table gains
+the ways a task can end without a final run. The first version of the loop
+(`"protocol": "agent-loop"`, superseded the day it ran) had a second tool,
+`final_run`; its samples render through the same code, with two more rows.
+The fragments of a folder that holds only code-block runs come out as before.
 
 Each run directory holds stage<N>_summary.json (with its provenance block),
 stage<N>_samples.jsonl and the job log. Every fragment is headed by a comment
@@ -88,14 +91,19 @@ def outcome(r: dict) -> str:
 
 
 def is_agent_loop(r: dict) -> bool:
+    return str(r.get("protocol") or "").startswith("agent-loop")
+
+
+def has_final_tool(r: dict) -> bool:
+    """The first version of the agent loop, in which the final run was a tool."""
     return r.get("protocol") == "agent-loop"
 
 
 def reply_cut_off(text: str, agent_loop: bool) -> bool:
-    """The token budget closed the reply mid-way: a tool call without its end
-    tag in the agent loop, a code fence never closed in the code-block protocol."""
-    if agent_loop:
-        return text.count("<tool_call>") > text.count("</tool_call>")
+    """The token budget closed the reply mid-way: a code fence never closed,
+    or in the agent loop a tool call without its end tag."""
+    if agent_loop and text.count("<tool_call>") > text.count("</tool_call>"):
+        return True
     return text.count("```") % 2 == 1
 
 
@@ -159,11 +167,12 @@ FLAG_KEYS = ("done", "showered", "failure_reason")
 AGENT_ERROR_KINDS = (
     "no final run: the tool call was cut off by the token budget",
     "no final run: the tool call is not valid JSON",
-    "no final run: no tool call in the reply",
+    "no final run: no tool call in the reply",          # first version of the loop only
     "no final run: the last reply is a probe run",
     "no final run: other (unknown tool, no code)",
     "the controller does not parse",
     "the controller defines no policy",
+    "the final answer was cut off by the token budget",
 )
 
 
@@ -176,7 +185,7 @@ def agent_error_kind(r: dict) -> str | None:
         g = str(r.get("generation_error") or "")
         if g.startswith("controller invalid"):
             if "Syntax error" in g:
-                return AGENT_ERROR_KINDS[5]
+                return AGENT_ERROR_KINDS[7] if (cut_off(r) and not has_final_tool(r)) else AGENT_ERROR_KINDS[5]
             if "No 'def policy" in g:
                 return AGENT_ERROR_KINDS[6]
             return ERROR_KINDS[1]
@@ -213,9 +222,12 @@ def kinds_for(runs: list[dict]) -> tuple[str, ...]:
     if not any(agent):
         return ERROR_KINDS
     runtime = tuple(k for i, k in enumerate(ERROR_KINDS) if i not in (0, 7))
+    final_tool = any(bool(r["rows"]) and has_final_tool(r["rows"][0]) for r in runs)
+    # "no tool call" is a failure only where the final run was a tool; elsewhere it is the final answer
+    loop_kinds = tuple(k for i, k in enumerate(AGENT_ERROR_KINDS) if final_tool or i != 2)
     if all(agent):
-        return AGENT_ERROR_KINDS + runtime
-    return ERROR_KINDS + AGENT_ERROR_KINDS
+        return loop_kinds + runtime
+    return ERROR_KINDS + loop_kinds
 
 
 def error_kind(r: dict) -> str | None:
@@ -343,27 +355,31 @@ def first_reply_table(run: dict) -> dict:
     return d
 
 
+# The rows of first_actions.tex. A row marked "final tool" is shown only when
+# a run of the first version of the loop is in the table.
 FIRST_ACTION_ROWS = (
-    ("final", "a final run (the controller straight away)"),
-    ("probe", "a probe run, whose output came back"),
-    ("probe_clean", "\\quad the probe code ran without an error"),
-    ("probe_near", "\\quad the output holds a number within 0.01 of the limit"),
-    ("probe_then_final_next", "\\quad the second reply is a final run"),
-    ("probe_final", "a probe run and a final run in one reply (the probe never read)"),
-    ("invalid", "a tool call that could not be acted on"),
-    ("invalid_cut", "\\quad cut off by the token budget"),
-    ("invalid_json", "\\quad not valid JSON"),
-    ("invalid_other", "\\quad other (unknown tool, no code)"),
-    ("none", "no tool call"),
-    ("none_fenced_policy", "\\quad a fenced code block that defines \\texttt{policy}"),
+    ("final", "a final run (the controller straight away)", False),
+    ("probe", "a probe run, whose output came back", False),
+    ("probe_clean", "\\quad the probe code ran without an error", False),
+    ("probe_near", "\\quad the output holds a number within 0.01 of the limit", False),
+    ("probe_then_final", "\\quad the task went on to a final run", False),
+    ("probe_final", "a probe run and a final run in one reply (the probe never read)", True),
+    ("invalid", "a tool call that could not be acted on", False),
+    ("invalid_cut", "\\quad cut off by the token budget", False),
+    ("invalid_json", "\\quad not valid JSON", False),
+    ("invalid_other", "\\quad other (unknown tool, no code)", False),
+    ("none", "no tool call", True),
+    ("none_fenced_policy", "\\quad a fenced code block that defines \\texttt{policy}", True),
     None,
-    ("no_final", "samples that ended without a final run"),
+    ("no_final", "samples that ended without a final run", False),
 )
+FINAL_ACTIONS = ("final_run", "probe_run+final_run")
 
 
 def first_action_table(run: dict) -> dict:
-    """What the first reply of a sample is under the agent loop, read from the
-    tool it calls (`first_action`), and how the samples that probed went on."""
+    """What the first reply of a sample is under the agent loop (`first_action`:
+    the final answer, a probe run, or a call that could not be acted on), and
+    how the samples that probed went on."""
     rows = run["rows"]
     two = run["stage"] == 2
 
@@ -374,20 +390,20 @@ def first_action_table(run: dict) -> dict:
     probed = [r for r in rows if act(r) == "probe_run"]
     invalid = [r for r in rows if act(r) == "invalid"]
     why = lambda r: " ".join(r.get("call_errors") or [])
+    cut = lambda r: "cut off" in why(r) and reply_cut_off(first_reply(r), True)
     d = {"n": len(rows), "final": n(lambda r: act(r) == "final_run"),
          "probe": len(probed) if two else None,
          "probe_clean": sum("[probe run rejected" not in (r.get("tool_output") or "")
                             and "[probe run error" not in (r.get("tool_output") or "") for r in probed) if two else None,
          "probe_near": sum(r.get("estimate_error") is not None and r["estimate_error"] <= 0.01 for r in probed) if two else None,
-         "probe_then_final_next": sum((r.get("actions") or [])[1:2] == ["final_run"] for r in probed) if two else None,
+         "probe_then_final": sum((r.get("actions") or [""])[-1] in FINAL_ACTIONS for r in probed) if two else None,
          "probe_final": n(lambda r: act(r) == "probe_run+final_run") if two else None,
          "invalid": len(invalid),
-         "invalid_cut": sum("cut off" in why(r) and reply_cut_off(first_reply(r), True) for r in invalid),
-         "invalid_json": sum("not valid JSON" in why(r) and not ("cut off" in why(r) and reply_cut_off(first_reply(r), True))
-                             for r in invalid),
+         "invalid_cut": sum(cut(r) for r in invalid),
+         "invalid_json": sum("not valid JSON" in why(r) and not cut(r) for r in invalid),
          "none": n(lambda r: act(r) == "none"),
          "none_fenced_policy": n(lambda r: act(r) == "none" and re.search(r"```[^`]*def policy\b", first_reply(r), re.DOTALL)),
-         "no_final": n(lambda r: (r.get("actions") or [""])[-1] not in ("final_run", "probe_run+final_run"))}
+         "no_final": n(lambda r: (r.get("actions") or [""])[-1] not in FINAL_ACTIONS)}
     d["invalid_other"] = d["invalid"] - d["invalid_cut"] - d["invalid_json"]
     return d
 
@@ -494,11 +510,14 @@ def main() -> None:
                  " & " + " & ".join(tex(label) for label, _ in loop_runs) + " \\\\", "\\midrule",
                  "samples & " + " & ".join(str(f["n"]) for f in ft) + " \\\\", "\\midrule",
                  "\\multicolumn{%d}{@{}l}{the first reply is} \\\\" % (1 + len(loop_runs))]
+        final_tool = any(has_final_tool(r["rows"][0]) for _, r in loop_runs)
         for row in FIRST_ACTION_ROWS:
             if row is None:
                 lines.append("\\midrule")
                 continue
-            key, name = row
+            key, name, only_final_tool = row
+            if only_final_tool and not final_tool:
+                continue
             indent = "" if key == "no_final" else "\\quad "
             lines.append(f"{indent}{name} & " + " & ".join("--" if f[key] is None else str(f[key]) for f in ft) + " \\\\")
         lines += ["\\bottomrule", "\\end{tabular}"]
@@ -543,11 +562,11 @@ def main() -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from stage0_solution import GATE_VARIANT, PROBE_VARIANTS, controller_source, fence
         if all(agent(r) for _, r in runs):
-            # as the tool calls the agent loop reads
+            # as the replies the agent loop reads: a probe_run call, then the final answer
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call
+            from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call
             probe_reply = render_tool_call(TOOL_PROBE, PROBE_VARIANTS[GATE_VARIANT].strip("\n"))
-            final_reply = render_tool_call(TOOL_FINAL, controller_source(sum(RANGE) / 2).strip("\n"))
+            final_reply = render_final_answer(controller_source(sum(RANGE) / 2))
             form = " as a tool call"
         else:
             probe_reply = fence(PROBE_VARIANTS[GATE_VARIANT])
@@ -556,7 +575,7 @@ def main() -> None:
         span = 2 + len(TOKEN_BUDGETS)
         lines += ["\\midrule",
                   f"Stage~0 hand-written probe code ({tex(GATE_VARIANT)}){form} & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(probe_reply)} tokens}} \\\\",
-                  f"Stage~0 hand-written controller{form} & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(final_reply)} tokens}} \\\\",
+                  f"Stage~0 hand-written controller & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(final_reply)} tokens}} \\\\",
                   "\\bottomrule", "\\end{tabular}"]
         write("reply_tokens.tex", lines)
         n_fragments += 1

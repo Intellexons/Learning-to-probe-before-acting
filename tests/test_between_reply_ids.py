@@ -16,8 +16,7 @@ TOKENIZER_DIR = REPO_ROOT / "models" / "hf_base" / "iter_000"
 pytestmark = pytest.mark.skipif(not (TOKENIZER_DIR / "tokenizer.json").exists(),
                                 reason="the model's tokenizer is not on disk")
 
-from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call, tool_message, tools_for  # noqa: E402
-from src.multi_turn import NO_TOOL_CALL_TEXT  # noqa: E402
+from src.agent_loop import TOOL_PROBE, render_tool_call, tool_message, tools_for  # noqa: E402
 
 PROMPT = [{"role": "user", "content": "the brief"}]
 REPLY = "I will look.\n" + render_tool_call(TOOL_PROBE, 'state, info = env.reset()\nprint("sigma", state["sigma"])')
@@ -37,7 +36,6 @@ def _ids(tok, messages, tools):
 @pytest.mark.parametrize("following", [
     (tool_message("LIMIT=0.18\n"),),
     (tool_message("one\n"), tool_message("[tool call not acted on: there is no tool named 'x']")),
-    ({"role": "user", "content": NO_TOOL_CALL_TEXT},),
 ])
 @pytest.mark.parametrize("model_ended_its_reply", [True, False])
 def test_prefix_of_the_second_reply_is_rebuilt_exactly(tok, following, model_ended_its_reply):
@@ -56,17 +54,9 @@ def test_prefix_of_the_second_reply_is_rebuilt_exactly(tok, following, model_end
 
 def test_the_tool_block_is_in_the_prompt_and_calls_survive_decoding(tok):
     text = tok.apply_chat_template(PROMPT, tools=tools_for(2), tokenize=False, add_generation_prompt=True)
-    assert '"name": "probe_run"' in text and '"name": "final_run"' in text
+    assert '"name": "probe_run"' in text and "final_run" not in text
+    # with one reply there is no tool, and the template writes no tool block
     one = tok.apply_chat_template(PROMPT, tools=tools_for(1), tokenize=False, add_generation_prompt=True)
-    assert '"name": "final_run"' in one and "probe_run" not in one
-    call = render_tool_call(TOOL_FINAL, "def policy(state):\n    return 0.0")
+    assert "# Tools" not in one and "probe_run" not in one
+    call = render_tool_call(TOOL_PROBE, 'print("sigma", state["sigma"])')
     assert tok.decode(tok(call, add_special_tokens=False).input_ids, skip_special_tokens=True) == call
-
-
-def test_explicit_system_message_reproduces_the_tool_block(tok):
-    from src.agent_loop import system_message_with_tools
-    for n in (1, 2):
-        message = system_message_with_tools(tok, tools_for(n))
-        assert message["role"] == "system" and "# Tools" in message["content"]
-        with_tools = tok.apply_chat_template(PROMPT, tools=tools_for(n), tokenize=False, add_generation_prompt=True)
-        assert tok.apply_chat_template([message] + PROMPT, tokenize=False, add_generation_prompt=True) == with_tools

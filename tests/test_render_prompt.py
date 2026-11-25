@@ -1,9 +1,9 @@
 """The brief: what the model is told, and nothing else.
 
 The brief states what exists: the goal and the physics in words, what is
-observed, what is not, what a probe run is, what the final run is, and that
-the model acts through tool calls with a number of replies. It carries no
-environment source, no example, and no sentence about what to do first.
+observed, what is not, what a probe run is, what the final run is, and how
+many replies the model has. It carries no environment source, no example, and
+no sentence about what to do first.
 """
 import sys
 from pathlib import Path
@@ -43,9 +43,11 @@ def test_one_reply_is_the_brief_with_the_final_run_only():
     assert "(ax, ay) — 2-tuple of floats" in rendered
     assert "## What you do not observe" in rendered and "the goal position wobbles." in rendered
     assert "## What you know from earlier batches" in rendered and "step 2 x=0.3 crashed" in rendered
-    assert "## The final run" in rendered and "`final_run` takes the controller, `def policy(state)`" in rendered
+    assert "## The final run" in rendered
+    assert "Your final answer is the controller: a Python code block that defines `def policy(state)`." in rendered
     assert "## The probe run" not in rendered and "probe_run" not in rendered and "env" not in rendered.split("## The final run")[1]
-    assert rendered.rstrip().endswith("You act through a tool call: `final_run`. You have one reply.")
+    assert "tool" not in rendered
+    assert rendered.rstrip().endswith("You have one reply: your final answer.")
 
 
 def test_default_is_one_reply():
@@ -61,7 +63,7 @@ def test_no_mode_directives_example_or_reply_format():
     for n in (1, 2):
         rendered = _render(total_turns=n)
         assert "# MODE" not in rendered and "## Example" not in rendered
-        assert "## Format" not in rendered and "code block" not in rendered
+        assert "## Format" not in rendered and "Reply with" not in rendered
 
 
 def test_two_replies_describe_the_probe_run_and_the_final_run():
@@ -77,8 +79,8 @@ def test_two_replies_describe_the_probe_run_and_the_final_run():
     assert "## The final run" in rendered and "It has no access to `env`." in rendered
     assert "## What you know from earlier batches" in rendered
     assert rendered.rstrip().endswith(
-        "You act through tool calls: `probe_run` and `final_run`. You have 2 replies; "
-        "the task ends with the final run or when the replies run out.")
+        "You have 2 replies. A reply that calls `probe_run` is a probe run; a reply without a tool call "
+        "is your final answer. The task ends with your final answer, or when your replies run out.")
 
 
 def test_the_brief_says_nothing_about_what_to_do_first():

@@ -21,9 +21,9 @@ Protocol (docs/stage0_gate.tex is the full account):
              third of the range (build_crystallizer_tasks.draw_sigma_max), or an anchor
   oracle     ride_action at the limit (crystallizer_utils); the task files use the same
   batches    construct the env, reset() once, as the runner does (crystallizer_utils)
-  G3         scripts/stage0_solution.py as two tool calls through execute_turn, the parser
-             and sandbox path training and eval use, on the fresh batches over the range
-             and at anchors
+  G3         scripts/stage0_solution.py as two replies (a probe_run call, then the final
+             answer) through execute_turn, the parser and sandbox path training and eval
+             use, on the fresh batches over the range and at anchors
   references the oracle, the cautious blind controller, the searched blind controller and
              the probe + controller, on the held-out evaluation tasks (crystallizer_eval.jsonl)
 
@@ -50,7 +50,7 @@ for _p in (REPO, REPO / "scripts", REPO / "scripts" / "seed_tasks"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call  # noqa: E402
+from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call  # noqa: E402
 from src.multi_turn import execute_turn  # noqa: E402
 from src.provenance import provenance  # noqa: E402
 from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR  # noqa: E402
@@ -266,9 +266,9 @@ def search_family(pool, family: str, triples: list[tuple], rng: random.Random, b
 
 def run_two_turn(task: dict, variant: str) -> dict:
     """The hand-written solution as two replies of the agent loop: a `probe_run` call
-    (sandbox, probe batch, limit masked), then a `final_run` call with the controller
-    built from what the probe printed. Both go through `execute_turn`, so through the
-    tool-call parser and the sandbox exactly as a model's replies do."""
+    (sandbox, probe batch, limit masked), then the final answer, a code block with the
+    controller built from what the probe printed. Both go through `execute_turn`, so
+    through the parser and the sandbox exactly as a model's replies do."""
     sc = task["scenarios"][0]
     smax = sc["hidden"]["sigma_max"]
     oracle = sc["oracle_steps"]
@@ -283,7 +283,7 @@ def run_two_turn(task: dict, variant: str) -> dict:
                     "fast": False, "norm_time": 0.0, "reward": None, "failure_reason": "probe_failed"})
         return row
     lo, hi = bracket
-    res = execute_turn(render_tool_call(TOOL_FINAL, controller_source(lo)), task,
+    res = execute_turn(render_final_answer(controller_source(lo)), task,
                        is_last_turn=True, max_steps=DEFAULT_MAX_STEPS).score
     sid = sc["scenario_id"]
     row.update({"probe_failed": False, "lo": lo, "hi": hi, "probe_error": smax - lo,

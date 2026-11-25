@@ -4,8 +4,8 @@ On the held-out task with the highest hidden limit (where a blind policy
 loses the most time): the readings-only probe from scripts/stage0_solution.py
 goes through `execute_turn` (sandbox subprocess, probe-run env with the limit
 masked, probe batch), its printed bracket is pasted into the controller
-template, and the controller goes through `execute_turn` as the final run. Both
-are tool calls, read by the same parser as a model's replies. This is the
+template, and the controller goes through `execute_turn` as the final answer.
+Both are read by the same parser as a model's replies. This is the
 smallest end-to-end check that the runner carries the crystallizer: the hidden
 limit reaches the env, the probe sees the readings and the outcome flags and
 nothing else, and the time metrics come out right. The full Stage 0b
@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "seed_tasks"))
 
-from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call  # noqa: E402
+from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call  # noqa: E402
 from src.multi_turn import execute_turn  # noqa: E402
 from src.runner import score_main_turn  # noqa: E402
 from stage0_solution import PROBE_THREE_PASS as PROBE_SOURCE, controller_source  # noqa: E402
@@ -49,7 +49,7 @@ def test_hand_written_probe_and_final_run_through_execute_turn():
     assert smax - lo < 0.012, f"probe bracket too loose: lo={lo} sigma_max={smax}"
 
     # Reply 2: the final run, scored the way the trainer scores it.
-    final = execute_turn(render_tool_call(TOOL_FINAL, controller_source(lo)), task, is_last_turn=True, max_steps=600)
+    final = execute_turn(render_final_answer(controller_source(lo)), task, is_last_turn=True, max_steps=600)
     assert final.mode == "policy" and final.ended
     res = final.score
     sid = sc["scenario_id"]

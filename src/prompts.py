@@ -6,9 +6,10 @@ what the final run is, and how it acts. No environment source, no example, no
 directive: the brief states what exists and says nothing about what to do
 with it or in what order.
 
-The model acts through two tools, `probe_run` and `final_run`
-(`src.agent_loop`). Their definitions reach the model through the chat
-template's own tool block; the brief describes what each runs on. With a
+The model acts as a tool-using agent does (`src.agent_loop`): it has one
+tool, `probe_run`, whose definition reaches it through the chat template's own
+tool block, and a reply without a tool call is its final answer, the
+controller of the final run. The brief describes what each runs on. With a
 single reply there is no probe run, and neither the tool nor its section is
 there. What the model knows from earlier batches (quench logs of other
 batches) is part of the brief, as the batch record would be.
@@ -19,7 +20,7 @@ Task fields used: `intro`, `goal`, `state_spec`, `action_spec`, `unobserved`,
 """
 from pathlib import Path
 
-from src.agent_loop import TOOL_FINAL, TOOL_PROBE
+from src.agent_loop import TOOL_PROBE
 from src.runner import MAIN_DEFAULT_TIMEOUT, MAIN_STDOUT_TRUNCATE
 
 # What the controller may and may not do.
@@ -51,15 +52,15 @@ def _final_section(total_turns: int) -> str:
     no_env = " It has no access to `env`." if total_turns > 1 else ""
     return f"""## The final run
 
-`{TOOL_FINAL}` takes the controller, `def policy(state)`, and runs it on the scored batch from its first step; the task ends there. {CONTROLLER_RULES}{no_env}
+Your final answer is the controller: a Python code block that defines `def policy(state)`. It runs on the scored batch from its first step, and the task ends there. {CONTROLLER_RULES}{no_env}
 """
 
 
 def _act_section(total_turns: int) -> str:
     if total_turns == 1:
-        return f"You act through a tool call: `{TOOL_FINAL}`. You have one reply."
-    return (f"You act through tool calls: `{TOOL_PROBE}` and `{TOOL_FINAL}`. You have {total_turns} replies; "
-            "the task ends with the final run or when the replies run out.")
+        return "You have one reply: your final answer."
+    return (f"You have {total_turns} replies. A reply that calls `{TOOL_PROBE}` is a probe run; a reply without a "
+            "tool call is your final answer. The task ends with your final answer, or when your replies run out.")
 
 
 def load_template(template_path: str = "configs/prompt_template.txt") -> str:

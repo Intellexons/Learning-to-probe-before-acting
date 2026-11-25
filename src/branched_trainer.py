@@ -179,8 +179,8 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # `(B, K, |V|)` LM-head gradient tensor — the dominant backward
         # term per Appendix A of the paper — by reducing B.
         self.loss_micro_batch_size = loss_micro_batch_size
-        # The tools the chat template writes into the prompt: the two of the
-        # agent loop (`src.agent_loop`), as evaluation offers them for a
+        # The tools the chat template writes into the prompt: the probe run of
+        # the agent loop (`src.agent_loop`), as evaluation offers it for a
         # two-reply task, so the model's chat during rollouts is the chat that
         # was measured at the frozen baseline.
         self.chat_tools = chat_tools if chat_tools is not None else tools_for(2)
@@ -354,7 +354,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
         trajectories: list[_Trajectory] = []
         for i, ((p_ids, t1_ids, t1_text), tr1) in enumerate(zip(turn1_outputs, turn1_results)):
             if tr1.ended:
-                # The first reply held the final run: this variant is a leaf
+                # The first reply was the final answer: this variant is a leaf
                 # with one reward and no second reply. Its row of the grid
                 # holds that reward g2 times, so V_1^(i) is its reward, its
                 # turn-1 advantage is V_1^(i) - V_0, and its turn-1 tokens
@@ -378,8 +378,8 @@ class BranchedGRPOTrainer(GRPOTrainer):
                     ))
                 continue
             # The task goes on: what follows the first reply is what
-            # `execute_turn` returned for it (a tool response per call, or the
-            # notice that there was none), as in evaluation.
+            # `execute_turn` returned for it (a tool response per call), as in
+            # evaluation.
             tool_ids = self._between_reply_ids(prompt_messages, t1_text, t1_ids, tr1.messages)
             turn2_outputs = self._generate_from_ids(p_ids + t1_ids + tool_ids, self.g2)
 

@@ -1,9 +1,9 @@
 """Reward function for GRPO training.
 
 Bridges TRL's GRPOTrainer reward interface to the existing scoring pipeline.
-Single-turn training gives the model one reply, so the reply has to hold the
-final run: it is read by the same `execute_turn` the agent loop uses, and a
-reply without a `final_run` call scores the error floor.
+Single-turn training gives the model one reply, which is its final answer: it
+is read by the same `execute_turn` the agent loop uses, and an answer without
+a controller scores the error floor.
 """
 import logging
 
