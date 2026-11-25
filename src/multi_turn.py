@@ -115,6 +115,13 @@ class ToolResult:
     calls: tuple[ToolCall, ...] = ()
 
 
+def replies_left_text(k: int) -> str:
+    """The line that states how many replies the model has left. A fact about
+    the state of the task, like `steps_left` in the environment's state; it
+    says nothing about what to do with them."""
+    return f"[{k} repl{'y' if k == 1 else 'ies'} left]"
+
+
 _NO_FINAL_RUN = {
     ACTION_PROBE: "the last reply called probe_run",
     ACTION_INVALID: "the last reply held a tool call that could not be acted on",
@@ -127,6 +134,7 @@ def execute_turn(
     *,
     is_last_turn: bool,
     scenario: dict | None = None,
+    replies_left: int | None = None,
     timeout_policy: int = POLICY_DEFAULT_TIMEOUT,
     timeout_main: int = MAIN_DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
@@ -149,6 +157,10 @@ def execute_turn(
     The **last reply** has to be the final answer. If it calls a tool
     instead, the task ends without a final run and scores the error floor;
     nothing is executed.
+
+    With `replies_left` given, the last tool response of the reply ends with
+    a line that states the number (`replies_left_text`). `text` stays what
+    the calls returned, without that line.
     """
     calls = tuple(parse_tool_calls(raw_completion))
     n_scenarios = len(task.get("scenarios", []))
@@ -188,7 +200,11 @@ def execute_turn(
             timeout=timeout_main,
         )
         messages.append(tool_message(_main_tool_text(out["stdout"])))
-    return ToolResult(mode=mode, reward=None, text="\n".join(m["content"] for m in messages),
+    text = "\n".join(m["content"] for m in messages)
+    if replies_left is not None:
+        last = messages[-1]
+        messages[-1] = {**last, "content": last["content"].rstrip("\n") + "\n\n" + replies_left_text(replies_left)}
+    return ToolResult(mode=mode, reward=None, text=text,
                       ended=False, action=action, messages=tuple(messages), code=code, calls=calls)
 
 
@@ -198,6 +214,7 @@ def run_rollout(
     task: dict,
     total_turns: int,
     *,
+    show_replies_left: bool = False,
     timeout_policy: int = POLICY_DEFAULT_TIMEOUT,
     timeout_main: int = MAIN_DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
@@ -209,7 +226,8 @@ def run_rollout(
     model the brief and the tool, acts on each reply with `execute_turn`, and
     stops when the task has ended, which the last reply always brings about.
     Returns the transcript, the ToolResult of every reply, and the score of
-    the task.
+    the task. With `show_replies_left`, every tool response tells the model
+    how many replies it has left.
     """
     tools = tools_for(total_turns)
     messages: list[dict] = [{"role": "user", "content": brief}]
@@ -218,6 +236,7 @@ def run_rollout(
         raw = generate(messages, tools)
         messages.append({"role": "assistant", "content": raw})
         res = execute_turn(raw, task, is_last_turn=(turn == total_turns),
+                           replies_left=(total_turns - turn) if show_replies_left else None,
                            timeout_policy=timeout_policy, timeout_main=timeout_main, max_steps=max_steps)
         turns.append(res)
         if res.ended:

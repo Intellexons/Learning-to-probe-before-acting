@@ -417,10 +417,19 @@ def first_action_table(run: dict) -> dict:
     return d
 
 
+REPLIES_LEFT_LINE = re.compile(r"\n*\[\d+ repl(?:y|ies) left\]\s*$")
+
+
+def tool_text(content: str) -> str:
+    """A tool response without the closing line that states the replies left
+    (runs made with --show-replies-left carry it)."""
+    return REPLIES_LEFT_LINE.sub("", content)
+
+
 def probe_outputs(r: dict) -> list[str]:
     """The tool responses of a sample's probe runs, in order, read from the
     transcript (a response to a call that could not be acted on is not one)."""
-    return [m["content"] for m in (r.get("transcript") or [])
+    return [tool_text(m["content"]) for m in (r.get("transcript") or [])
             if m.get("role") == "tool" and not m["content"].startswith("[tool call not acted on")]
 
 
@@ -458,7 +467,7 @@ def probe_runs(r: dict) -> list[tuple[str, str]]:
             if nxt.get("role") != "tool":
                 break
             if not nxt["content"].startswith("[tool call not acted on"):
-                outs.append(nxt["content"])
+                outs.append(tool_text(nxt["content"]))
         pairs.extend(zip(codes, outs))
     return pairs
 

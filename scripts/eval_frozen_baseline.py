@@ -84,7 +84,7 @@ def reference_rows(task: dict) -> dict:
 
 def rollout(model, tokenizer, template: str, task: dict, total_turns: int, *,
             temperature: float, top_p: float, max_tokens: int,
-            timeout: int, max_steps: int) -> dict:
+            timeout: int, max_steps: int, show_replies_left: bool = False) -> dict:
     """One sample: the agent loop from the brief to the end of the task.
 
     Returns what the row needs: the score of the task, the controller of the
@@ -96,7 +96,7 @@ def rollout(model, tokenizer, template: str, task: dict, total_turns: int, *,
                               top_p=top_p, max_tokens=max_tokens)
 
     brief = render_prompt(template, task, total_turns=total_turns)
-    roll = run_rollout(generate, brief, task, total_turns,
+    roll = run_rollout(generate, brief, task, total_turns, show_replies_left=show_replies_left,
                        timeout_policy=timeout, timeout_main=timeout, max_steps=max_steps)
     turns = roll["turns"]
     first = turns[0]
@@ -168,6 +168,8 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--max-tokens", type=int, default=1000)
+    parser.add_argument("--show-replies-left", action="store_true",
+                        help="end every tool response with a line that states how many replies the model has left")
     parser.add_argument("--no-earlier-batches", action="store_true",
                         help="drop the 'What you know from earlier batches' section from the brief (ablation)")
     parser.add_argument("--timeout", type=int, default=POLICY_DEFAULT_TIMEOUT)
@@ -207,7 +209,7 @@ def main() -> None:
             roll = rollout(model, tokenizer, template, task, turns,
                            temperature=args.temperature, top_p=args.top_p,
                            max_tokens=args.max_tokens, timeout=args.timeout,
-                           max_steps=args.max_steps)
+                           max_steps=args.max_steps, show_replies_left=args.show_replies_left)
             score = roll["score"]
             row = {
                 "task_id": tid, "sample_id": i, "sigma_max": sc["hidden"]["sigma_max"],
@@ -272,6 +274,7 @@ def main() -> None:
         "earlier_batches_in_brief": not args.no_earlier_batches,
         "max_tokens": args.max_tokens,
         "protocol": PROTOCOL,
+        "replies_left_shown": bool(args.show_replies_left),
         "first_action_counts": _count(r["first_action"] for r in samples_out),
         "blind": {
             "fast_rate": _mean(t["blind"]["fast"] for t in per_task),
