@@ -21,8 +21,9 @@ Protocol (docs/stage0_gate.tex is the full account):
              third of the range (build_crystallizer_tasks.draw_sigma_max), or an anchor
   oracle     ride_action at the limit (crystallizer_utils); the task files use the same
   batches    construct the env, reset() once, as the runner does (crystallizer_utils)
-  G3         scripts/stage0_solution.py through execute_turn and score_sample, the sandbox
-             path training and eval use, on the fresh batches over the range and at anchors
+  G3         scripts/stage0_solution.py as two replies (a probe_run call, then the final
+             answer) through execute_turn, the parser and sandbox path training and eval
+             use, on the fresh batches over the range and at anchors
   references the oracle, the cautious blind controller, the searched blind controller and
              the probe + controller, on the held-out evaluation tasks (crystallizer_eval.jsonl)
 
@@ -49,16 +50,17 @@ for _p in (REPO, REPO / "scripts", REPO / "scripts" / "seed_tasks"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call  # noqa: E402
 from src.multi_turn import execute_turn  # noqa: E402
 from src.provenance import provenance  # noqa: E402
-from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR, extract_code, score_sample  # noqa: E402
+from src.runner import DEFAULT_MAX_STEPS, FAST_FACTOR  # noqa: E402
 from build_crystallizer_tasks import N_STRATA, draw_sigma_max, stratum_bounds, task_entry  # noqa: E402
 from crystallizer_env import EnvConfig, HiddenParams  # noqa: E402
 from crystallizer_utils import (  # noqa: E402
     SIGMA_MAX_RANGE, ride_action, run_cautious_episode, run_episode, run_oracle_episode,
 )
 from stage0_solution import (  # noqa: E402
-    CONTROLLER_MARGIN, GATE_VARIANT, PROBE_VARIANTS, controller_source, fence, parse_bracket,
+    CONTROLLER_MARGIN, GATE_VARIANT, PROBE_VARIANTS, controller_source, parse_bracket,
 )
 
 CFG = EnvConfig()
@@ -263,14 +265,17 @@ def search_family(pool, family: str, triples: list[tuple], rng: random.Random, b
 # ----------------------------------------------------------------------------------------
 
 def run_two_turn(task: dict, variant: str) -> dict:
-    """Probe run through execute_turn (sandbox, probe batch, limit masked), then the
-    controller through score_sample, exactly as training and eval execute code."""
+    """The hand-written solution as two replies of the agent loop: a `probe_run` call
+    (sandbox, probe batch, limit masked), then the final answer, a code block with the
+    controller built from what the probe printed. Both go through `execute_turn`, so
+    through the parser and the sandbox exactly as a model's replies do."""
     sc = task["scenarios"][0]
     smax = sc["hidden"]["sigma_max"]
     oracle = sc["oracle_steps"]
     row = {"task_id": task["task_id"], "seed": sc["seed"], "probe_seed": sc["probe_seed"],
            "sigma_max": smax, "third": third_of(smax), "oracle_steps": oracle, "variant": variant}
-    tr = execute_turn(fence(PROBE_VARIANTS[variant]), task, is_last_turn=False, max_steps=DEFAULT_MAX_STEPS)
+    tr = execute_turn(render_tool_call(TOOL_PROBE, PROBE_VARIANTS[variant]), task,
+                      is_last_turn=False, max_steps=DEFAULT_MAX_STEPS)
     bracket = parse_bracket(tr.text)
     if bracket is None:
         row.update({"probe_failed": True, "probe_text": tr.text[:400], "lo": None, "hi": None,
@@ -278,8 +283,8 @@ def run_two_turn(task: dict, variant: str) -> dict:
                     "fast": False, "norm_time": 0.0, "reward": None, "failure_reason": "probe_failed"})
         return row
     lo, hi = bracket
-    code = extract_code(fence(controller_source(lo)))
-    res = score_sample(code, task, max_steps=DEFAULT_MAX_STEPS)
+    res = execute_turn(render_final_answer(controller_source(lo)), task,
+                       is_last_turn=True, max_steps=DEFAULT_MAX_STEPS).score
     sid = sc["scenario_id"]
     row.update({"probe_failed": False, "lo": lo, "hi": hi, "probe_error": smax - lo,
                 "bracket_width": hi - lo, "steps": int(res["steps_per_scenario"][sid]),

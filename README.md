@@ -3,13 +3,15 @@
 A small research codebase for teaching a 4B-parameter LLM to write Python
 control policies, on a single 24 GB GPU.
 
-The model doesn't just emit code in one shot. It interacts with a task over
-two chat turns: a first turn it can use to probe the environment or sketch a
-draft, and a final turn that must commit a `def policy(state)` body. Only the
-final policy is executed and scored. Training has to figure out, from that
-single scalar reward, whether the *probe* was useful or whether the final
-policy happened to work for unrelated reasons. That credit-assignment problem
-is what this project exists to study.
+The model doesn't just emit code in one shot. It works on a task as a
+tool-using agent does, over two chat turns. It has one tool, `probe_run`,
+which runs its code on a throwaway batch and returns what the code prints.
+A reply without a tool call is its final answer: the controller in it,
+`def policy(state)`, runs on the batch that is scored, and the task ends.
+Only that final run is scored.
+Training has to figure out, from that single scalar reward, whether the
+*probe* was useful or whether the final policy happened to work for unrelated
+reasons. That credit-assignment problem is what this project exists to study.
 
 The accompanying paper is in `docs/paper.tex` ("Learning to Probe Before
 Acting"). The dated experiment log is in `docs/findings.tex`.
@@ -24,18 +26,26 @@ Acting"). The dated experiment log is in `docs/findings.tex`.
   (a reading, `sigma`), the seeds grow and consume it, and if it ever
   crosses a hidden metastable limit a shower of new nuclei ruins the batch.
   The fastest safe recipe rides just below that limit, and the limit shows
-  up nowhere in the readings until it is crossed. The first turn, the
-  **probe run**, is where the model can find it, by crossing it on a
-  throwaway batch; the second turn, the **final run**, is the one that is
-  scored. The model is briefed as a control engineer would be: the goal and
-  the physics in words, what it observes and what it does not, the batch
-  record (the full-cooling logs of two earlier batches that showered at
-  different levels), what the probe run is for and what it offers. It never
-  sees the environment's source and is given no equation, so what it learns
-  about this batch, it learns by experiment. The probe run is optional: a
-  first reply that defines `policy(state)` is the controller and ends the
-  task, anything else is probe code (`configs/prompt_template.txt`,
-  `src/prompts.py`, task text in `scripts/seed_tasks/build_crystallizer_tasks.py`).
+  up nowhere in the readings until it is crossed. A **probe run** is
+  where the model can find it, by crossing it on a throwaway batch; the
+  **final run** is the one that is scored. The model is briefed as a
+  control engineer would be: the goal and the physics in words, what it
+  observes and what it does not, the batch record (the full-cooling logs of
+  two earlier batches that showered at different levels), what a probe run
+  is and what it offers, and what the final run is. It never sees the
+  environment's source and is given no equation, so what it learns about
+  this batch, it learns by experiment.
+- **How the model acts:** as a tool-using agent, in its own chat format
+  (`src/agent_loop.py`). `probe_run(code)` is its one tool; the chat
+  template writes the definition into the prompt. A reply without a tool
+  call is the final answer, and the controller in its code block is the
+  final run. The brief says what each runs on and how many replies the
+  model has, and nothing about whether to probe or when: the interface is
+  given, what the model does with it is what we measure and train. A call
+  that cannot be acted on gets a tool response that says why; the last
+  reply has to be the final answer (`configs/prompt_template.txt`,
+  `src/prompts.py`, `src/multi_turn.py`, task text in
+  `scripts/seed_tasks/build_crystallizer_tasks.py`).
 - **Loop:** a sequence of outer iterations. Each one trains a fresh LoRA on
   top of the merged previous adapters, then runs an eval pass on held-out
   scenarios.
@@ -83,11 +93,13 @@ paper.
 
 The study is a ladder of stages; each one is a go-or-stop check for the next.
 Stage 0 (is the environment worth it: hand-written controllers with and
-without the hidden limit) and Stage 0b (the hand-written probe run and final
-run through the real runner, redone from the brief alone on 2026-10-26) have
-passed. Stage 1 (frozen model, one turn) and Stage 2 (frozen model with a
-probe run) ran on 2026-10-25 under the earlier protocol-style prompt and are
-re-run under the brief. Stages 3 to 6 are the trained arms C to F of the
+without the hidden limit, and the hand-written probe run and final run
+through the real runner) has passed, most recently through the agent loop
+on 2026-11-25. Stage 1 (frozen model, one reply) and Stage 2 (frozen model
+with a probe run) were re-run under the agent loop on 2026-11-25
+(`docs/stage12_agent_loop.tex`): the frozen model probes in about nine first
+replies of ten, but with two replies it usually probes again and never
+answers, and its probes rarely return the limit. Stages 3 to 6 are the trained arms C to F of the
 paper, ending with our branched method with per-turn baselines. The full plan with pass criteria and status
 is the "Experiment plan" section of `docs/paper.tex`; the evidence is in
 `docs/findings.tex`.
@@ -145,7 +157,9 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `09_run_loop.py` | Outer loop, train + eval per iteration, orchestrator W&B run |
 | `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
-| `eval_frozen_baseline.py` | Stages 1 and 2: frozen model, one turn or probe run + final run, next to the blind and oracle references |
+| `eval_frozen_baseline.py` | Stages 1 and 2: frozen model through the agent loop, with one reply (the final answer) or more (`probe_run` on offer), next to the blind and oracle references |
+| `frozen_render.py` | Renders the frozen-model results into the LaTeX tables of the Stage 1 and 2 documents |
+| `render_brief_appendix.py` | Renders the paper's appendix (the prompt as the model receives it) from the code that builds it |
 | `stage0_gate.py` | Stage 0: the environment gate. Blind vs informed hand-written controllers (G1, G2) and the hand-written probe run + controller through the real execution path (G3); references on the held-out tasks |
 | `stage0_solution.py` | The hand-written probe variants and controller, from the brief alone (readings only), used by the gate's G3 |
 | `seed_tasks/build_crystallizer_tasks.py` | Regenerates the task files from the env source |
@@ -193,7 +207,9 @@ scripts/
   08_eval.py                      # eval subprocess
   09_run_loop.py                  # orchestrator
   01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
-  eval_frozen_baseline.py         # Stages 1-2: frozen model, one or two turns
+  eval_frozen_baseline.py         # Stages 1-2: frozen model through the agent loop
+  frozen_render.py                # renders the Stage 1-2 result files into LaTeX tables
+  render_brief_appendix.py        # renders the paper's prompt appendix from the code
   stage0_gate.py                  # Stage 0: the environment gate (search, G1-G3, references)
   stage0_solution.py              # the hand-written probe run and controller from the brief alone
   stage0_render.py                # renders the gate's JSON into the LaTeX tables of docs/stage0_gate.tex
@@ -203,13 +219,14 @@ scripts/
     crystallizer_utils.py         # offline rollouts + reference controllers (blind, oracle)
     build_crystallizer_tasks.py   # regenerates the task files from the env
     crystallizer_train.jsonl      # 24 training tasks: one batch + one hidden limit each
-    crystallizer_eval.jsonl       # 12 held-out tasks
+    crystallizer_eval.jsonl       # 48 held-out tasks
     crystallizer_smoke_train.jsonl  # 2 tasks for smoke runs
 src/
   branched_trainer.py             # current trainer (TRL 0.28 GRPOTrainer subclass)
-  multi_turn.py                   # rollout + per-turn advantages
+  agent_loop.py                   # the probe_run tool, the parser for the model's calls, the reader of the final answer
+  multi_turn.py                   # acting on a reply's calls, the rollout loop, per-turn advantages
   runner.py                       # sandboxed final-run / probe-run execution and scoring
-  prompts.py                      # multi-turn chat template rendering
+  prompts.py                      # the brief
   diversity.py                    # DiversityCallback (W&B diagnostics)
   dataset.py, config.py, progress.py, hf_generator.py, gcs_sync.py
 tests/                            # unit tests for trainer math, prompts, runner, env, task files
@@ -276,7 +293,7 @@ fast-success and normalised-time metrics are measured against it. The full
 env source is embedded in `env_code` so the runner can execute it inside its
 sandbox; the model never sees it. What the model sees is the brief, rendered
 by `src/prompts.py` from `intro`, `goal`, `state_spec`, `action_spec`,
-`unobserved`, `probe_spec` and `final_spec`. `build_crystallizer_tasks.py`
+`unobserved`, `earlier_batches` and `probe_spec`. `build_crystallizer_tasks.py`
 regenerates the files when the env source or the text changes.
 
 ## Training on GCP

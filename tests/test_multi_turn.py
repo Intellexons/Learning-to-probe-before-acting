@@ -5,16 +5,30 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.agent_loop import TOOL_PROBE, render_final_answer, render_tool_call  # noqa: E402
 from src.multi_turn import (  # noqa: E402
+    ACTION_FINAL,
+    ACTION_INVALID,
+    ACTION_PROBE,
     assemble_per_token_advantages,
     assemble_tool_mask,
     compute_branched_advantages,
     error_floor_reward,
     execute_turn,
-    format_tool_message,
     rollout_diagnostics,
+    run_rollout,
 )
 from src.runner import ERROR_PENALTY_PER_SCENARIO  # noqa: E402
+
+CONTROLLER = "def policy(state):\n    return (1.0, 0.0)\n"
+
+
+def _final(code: str = CONTROLLER) -> str:
+    return render_final_answer(code)
+
+
+def _probe(code: str) -> str:
+    return render_tool_call(TOOL_PROBE, code)
 
 
 def test_compute_branched_advantages_uniform_grid_zeros_advantages():
@@ -102,11 +116,6 @@ def test_rollout_diagnostics_uniform_grid_is_silent():
     assert diag["v1_signal_ratio"] == float("inf")
 
 
-def test_format_tool_message_role_user():
-    msg = format_tool_message("[tool] hello")
-    assert msg == {"role": "user", "content": "[tool] hello"}
-
-
 def test_error_floor_reward_scales_with_scenarios():
     assert error_floor_reward(1) == ERROR_PENALTY_PER_SCENARIO
     assert error_floor_reward(8) == ERROR_PENALTY_PER_SCENARIO * 8
@@ -145,86 +154,151 @@ class TinyEnv:
     }
 
 
-def test_execute_turn_last_turn_scores_the_controller():
-    task = _tiny_task_one_scenario()
-    completion = """Here goes:
-```python
-def policy(state):
-    return (1.0, 0.0)
-```
-"""
-    tr = execute_turn(completion, task, is_last_turn=True, timeout_policy=10, max_steps=10)
-    assert tr.mode == "policy"
-    # Reward integrates -1.0 over 5 steps = -5.0 (no goal in tiny env)
-    assert tr.reward == pytest.approx(-5.0, abs=0.01)
-    assert "total_reward" in tr.text
+def _run(text: str, *, last: bool):
+    return execute_turn(text, _tiny_task_one_scenario(), is_last_turn=last, timeout_policy=10, max_steps=10)
 
 
-def test_execute_turn_last_turn_accepts_bare_code():
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("def policy(state):\n    return (1.0, 0.0)\n", task,
-                      is_last_turn=True, timeout_policy=10, max_steps=10)
-    assert tr.mode == "policy"
-    assert tr.reward == pytest.approx(-5.0, abs=0.01)
+def test_a_reply_without_a_tool_call_is_the_final_answer_on_any_reply():
+    for last in (True, False):
+        tr = _run("Here goes:\n" + _final() + "\nThat is my controller.", last=last)
+        assert tr.action == ACTION_FINAL and tr.mode == "policy" and tr.ended is True
+        # Reward integrates -1.0 over 5 steps = -5.0 (no goal in tiny env)
+        assert tr.reward == pytest.approx(-5.0, abs=0.01)
+        assert tr.score["reward_total"] == tr.reward and tr.score["ran_successfully"]
+        assert tr.code == CONTROLLER.strip() and tr.messages == ()
+        assert "total_reward" in tr.text
 
 
-def test_execute_turn_last_turn_without_a_controller_is_at_the_floor():
-    """Probe-style code on the last turn is a controller without `def policy`:
-    validation fails and the trajectory sits at the error floor."""
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("```python\nprint('thinking')\n```", task, is_last_turn=True,
-                      timeout_policy=10, max_steps=10)
-    assert tr.mode == "policy"
-    assert tr.reward == error_floor_reward(1)
+def test_a_final_answer_as_bare_code_is_accepted():
+    tr = _run(CONTROLLER, last=True)
+    assert tr.action == ACTION_FINAL and tr.reward == pytest.approx(-5.0, abs=0.01)
 
 
-def test_execute_turn_last_turn_junk_is_at_the_floor():
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("no code here, just text", task, is_last_turn=True,
-                      timeout_policy=10, max_steps=10)
-    assert tr.mode == "policy"
-    assert tr.reward == error_floor_reward(1)
+def test_a_final_answer_without_a_controller_scores_the_floor():
+    for text in (_final("print('no policy here')"), "I would need more data to answer.", ""):
+        tr = _run(text, last=False)
+        assert tr.action == ACTION_FINAL and tr.ended is True
+        assert tr.reward == error_floor_reward(1)
+        assert tr.score["ran_successfully"] is False
 
 
-def test_execute_turn_controller_on_a_non_last_turn_is_scored_and_ends_the_task():
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("```python\ndef policy(state):\n    return (1.0, 0.0)\n```", task,
-                      is_last_turn=False, timeout_policy=10, max_steps=10)
-    assert tr.mode == "policy" and tr.ended is True
-    assert tr.reward == pytest.approx(-5.0, abs=0.01)
-    # a helper that is not called `policy` is still probe code
-    tr = execute_turn("def helper(x):\n    return x\nprint(helper(2))\n", task,
-                      is_last_turn=False, timeout_policy=10, max_steps=10)
-    assert tr.mode == "main" and tr.ended is False and "2" in tr.text
+def test_a_probe_run_returns_what_it_printed_and_no_reward():
+    tr = _run("Let me look.\n" + _probe("import math\nprint('answer:', math.sqrt(16))"), last=False)
+    assert tr.action == ACTION_PROBE and tr.mode == "main" and tr.ended is False
+    assert tr.reward is None and tr.score is None
+    assert tr.messages == ({"role": "tool", "content": "answer: 4.0\n"},)
+    assert "answer: 4.0" in tr.text
 
 
-def test_execute_turn_probe_turn_returns_stdout_no_reward():
-    task = _tiny_task_one_scenario()
-    completion = """```python
-import math
-print('answer:', math.sqrt(16))
-```
-"""
-    tr = execute_turn(completion, task, is_last_turn=False, timeout_policy=10, max_steps=10)
-    assert tr.mode == "main" and tr.ended is False
+def test_a_probe_run_sees_the_probe_env():
+    tr = _run(_probe("s, _ = env.reset()\nprint(sorted(s))"), last=False)
+    assert tr.action == ACTION_PROBE and "['gx', 'px']" in tr.text
+
+
+def test_a_probe_run_that_does_not_parse_gets_the_rejection_as_its_response():
+    """The call is well formed, its code is not: the sandbox's rejection is the
+    tool response, and credit comes from the continuations, not from a penalty."""
+    tr = _run(_probe("def broken(:"), last=False)
+    assert tr.action == ACTION_PROBE and tr.reward is None
+    assert tr.messages[0]["role"] == "tool" and "[probe run rejected: Syntax error" in tr.text
+
+
+def test_a_probe_run_that_crashes_gets_the_error_as_its_response():
+    tr = _run(_probe("print('before')\nundefined_name"), last=False)
+    assert tr.action == ACTION_PROBE and tr.reward is None
+    assert "before" in tr.text and "[probe run error" in tr.text and "NameError" in tr.text
+
+
+def test_what_a_reply_is_follows_from_the_tool_call_not_from_the_code():
+    """A probe run whose code defines `policy` is still a probe run, and a
+    reply that calls the tool is a probe run even if a controller sits in a
+    code block beside the call: the probe runs and the task goes on."""
+    tr = _run(_probe(CONTROLLER + "print('ran as a probe')"), last=False)
+    assert tr.action == ACTION_PROBE and tr.ended is False and "ran as a probe" in tr.text
+    tr = _run(_probe("print('probe output')") + "\nAnd my controller:\n" + _final(), last=False)
+    assert tr.action == ACTION_PROBE and tr.ended is False and tr.reward is None
+    assert "probe output" in tr.text
+
+
+def test_several_probe_runs_in_one_reply_each_get_a_response():
+    tr = _run(_probe("print('one')") + "\n" + _probe("print('two')"), last=False)
+    assert tr.action == ACTION_PROBE
+    assert [m["content"].strip() for m in tr.messages] == ["one", "two"]
+
+
+def test_a_call_that_cannot_be_acted_on_gets_a_response_that_says_why():
+    tr = _run('<tool_call>\n{"name": "probe_run", "arguments": {"code": "print("hi")"}}\n</tool_call>', last=False)
+    assert tr.action == ACTION_INVALID and tr.mode == "invalid" and tr.ended is False
     assert tr.reward is None
-    assert "answer:" in tr.text and "4.0" in tr.text
+    assert tr.messages[0]["role"] == "tool"
+    assert tr.messages[0]["content"].startswith("[tool call not acted on: the call is not valid JSON")
+    tr = _run('<tool_call>\n{"name": "final_run", "arguments": {"code": "x"}}\n</tool_call>', last=False)
+    assert tr.action == ACTION_INVALID and "there is no tool named 'final_run'" in tr.text
 
 
-def test_execute_turn_probe_turn_sees_the_probe_env():
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("s, _ = env.reset()\nprint(sorted(s))\n", task, is_last_turn=False,
-                      timeout_policy=10, max_steps=10)
-    assert tr.mode == "main" and tr.reward is None
-    assert "['gx', 'px']" in tr.text
+def test_the_last_reply_that_calls_a_tool_ends_the_task_at_the_floor():
+    for text, action in ((_probe("print('too late')"), ACTION_PROBE),
+                         ('<tool_call>\n{"name": "nope"}\n</tool_call>', ACTION_INVALID)):
+        tr = _run(text, last=True)
+        assert tr.action == action and tr.ended is True
+        assert tr.reward == error_floor_reward(1)
+        assert tr.score["ran_successfully"] is False and "no final run" in tr.score["errors"][0]
+        assert "too late" not in tr.text   # nothing is executed
 
 
-def test_execute_turn_probe_turn_junk_yields_a_rejection_message_not_a_reward():
-    """A probe run that does not parse still produces a tool message, so the
-    chat stays well-formed; its credit comes from the continuations, not from
-    an immediate penalty."""
-    task = _tiny_task_one_scenario()
-    tr = execute_turn("junk text", task, is_last_turn=False, timeout_policy=10, max_steps=10)
-    assert tr.mode == "main"
-    assert tr.reward is None
-    assert "[main rejected" in tr.text
+# ---------------------------------------------------------------------------
+# run_rollout: the loop evaluation runs
+# ---------------------------------------------------------------------------
+
+
+class _Scripted:
+    """Stands in for the model: returns the scripted replies in turn and keeps
+    what it was shown."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.seen = []
+
+    def __call__(self, messages, tools):
+        self.seen.append(([dict(m) for m in messages], tools))
+        return self.replies.pop(0)
+
+
+def test_rollout_probe_then_final_run():
+    gen = _Scripted([_probe("print('LIMIT=0.18')"), _final()])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 2, timeout_policy=10, max_steps=10)
+    assert [t.action for t in out["turns"]] == [ACTION_PROBE, ACTION_FINAL]
+    assert out["final_run"] is True and out["code"] == CONTROLLER.strip()
+    assert out["score"]["reward_total"] == pytest.approx(-5.0, abs=0.01)
+    assert [m["role"] for m in out["transcript"]] == ["user", "assistant", "tool", "assistant"]
+    assert out["transcript"][2]["content"].strip() == "LIMIT=0.18"
+    # the model was offered the tool on both replies, and saw the tool response on the second
+    assert [[t["function"]["name"] for t in tools] for _, tools in gen.seen] == [[TOOL_PROBE], [TOOL_PROBE]]
+    assert gen.seen[1][0][-1] == {"role": "tool", "content": "LIMIT=0.18\n"}
+
+
+def test_rollout_final_answer_straight_away_uses_one_reply():
+    gen = _Scripted([_final(), "never asked for"])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 2, timeout_policy=10, max_steps=10)
+    assert [t.action for t in out["turns"]] == [ACTION_FINAL]
+    assert len(gen.seen) == 1 and len(out["transcript"]) == 2
+
+
+def test_rollout_without_a_final_run_scores_the_floor():
+    gen = _Scripted([_probe("print(1)"), _probe("print(2)")])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 2, timeout_policy=10, max_steps=10)
+    assert out["final_run"] is False and out["code"] == ""
+    assert out["score"]["reward_total"] == error_floor_reward(1)
+
+
+def test_rollout_with_one_reply_offers_no_tool():
+    gen = _Scripted([_final()])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 1, timeout_policy=10, max_steps=10)
+    assert out["final_run"] is True
+    assert gen.seen[0][1] is None
+
+
+def test_rollout_one_reply_that_calls_a_tool_scores_the_floor():
+    gen = _Scripted([_probe("print(1)")])
+    out = run_rollout(gen, "the brief", _tiny_task_one_scenario(), 1, timeout_policy=10, max_steps=10)
+    assert out["final_run"] is False and out["score"]["reward_total"] == error_floor_reward(1)

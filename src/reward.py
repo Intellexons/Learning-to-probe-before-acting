@@ -1,11 +1,13 @@
 """Reward function for GRPO training.
 
 Bridges TRL's GRPOTrainer reward interface to the existing scoring pipeline.
+Single-turn training gives the model one reply, which is its final answer: it
+is read by the same `execute_turn` the agent loop uses, and an answer without
+a controller scores the error floor.
 """
 import logging
 
-from src.hf_generator import extract_code
-from src.runner import score_sample
+from src.multi_turn import execute_turn
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +37,6 @@ def make_reward_fn(task_map: dict, scoring_cfg: dict):
             else:
                 text = completion
 
-            code = extract_code(text)
-
             tid = task_id[i] if i < len(task_id) else None
             if tid is None or tid not in task_map:
                 logger.warning(f"Unknown task_id {tid}, assigning reward 0.0")
@@ -45,7 +45,8 @@ def make_reward_fn(task_map: dict, scoring_cfg: dict):
                 continue
 
             task = task_map[tid]
-            result = score_sample(code, task, timeout=timeout, max_steps=max_steps)
+            result = execute_turn(text, task, is_last_turn=True,
+                                  timeout_policy=timeout, max_steps=max_steps).score
             rewards.append(result["reward_total"])
             reward_fn.stats.append(
                 (result["reward_total"], bool(result.get("ran_successfully", False)))

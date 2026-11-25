@@ -73,11 +73,13 @@ def main():
         sys.exit(1)
 
     template = load_template("configs/prompt_template.txt")
+    # One reply and no tool: the reply is the final answer, read by the reward
+    # function with the agent loop's own `execute_turn`.
     task_map = {}
     dataset_rows = []
     for task in tasks:
         tid = task["task_id"]
-        prompt_text = render_prompt(template, task)
+        prompt_text = render_prompt(template, task, total_turns=1)
         task_map[tid] = task
         dataset_rows.append({
             "prompt": [{"role": "user", "content": prompt_text}],

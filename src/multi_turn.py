@@ -2,13 +2,13 @@
 
 The training-loop trick designed in the 2026-04-26 conversation:
 
-  For each prompt, generate G_1 first-turn variants (probe runs). For each
-  first-turn variant i, execute it in the sandbox and capture what it printed
-  to get the tool-result message, then generate G_2 second-turn continuations
-  (controllers). The turn position decides what a completion is: every turn
-  but the last is probe code, the last is the controller, so no mode
-  directive is needed. The final reward of the trajectory (i, j) is the
-  controller's reward in turn 2.
+  For each prompt, generate G_1 first replies. For each first reply i, act on
+  it (`execute_turn`): a reply without a tool call is the final answer and
+  ends the task there, a probe run returns what it printed as the tool
+  response. Then generate G_2 second replies after each first reply that did
+  not end the task. What a reply is follows from whether it calls the tool
+  (`src.agent_loop`), not from its position or the code in it. The final
+  reward of the trajectory (i, j) is the reward of its final run.
 
   Empirical values (no learned critic, all MC):
     V̂_0     = grand mean over all G_1 G_2 final rewards (initial-state baseline)
@@ -18,8 +18,8 @@ The training-loop trick designed in the 2026-04-26 conversation:
     A^(1)_i   = V̂_1^(i) - V̂_0     applied to turn-1 tokens of trajectory (i, j)
     A^(2)_{i,j} = R_{i,j} - V̂_1^(i)  applied to turn-2 tokens
 
-  Tool-result tokens (the user-role message TRL inserts between turn 1 and
-  turn 2) are masked out via tool_mask so they do not contribute to the loss.
+  Tool-response tokens (the messages between turn 1 and turn 2) are masked
+  out via tool_mask so they do not contribute to the loss.
 
 This module holds the pure functions for that math + the chat-message helpers
 that aren't tied to the trainer subclass. The trainer-side I/O (model.generate
@@ -30,23 +30,37 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass
 
+from src.agent_loop import (
+    ToolCall,
+    controller_from_answer,
+    parse_tool_calls,
+    tool_message,
+    tools_for,
+)
 from src.runner import (
     DEFAULT_ENV_CLASS,
     DEFAULT_MAX_STEPS,
     ERROR_PENALTY_PER_SCENARIO,
     MAIN_DEFAULT_TIMEOUT,
     POLICY_DEFAULT_TIMEOUT,
-    defines_policy,
-    extract_code,
+    error_floor_result,
     score_main_turn,
     score_policy_turn,
 )
 
-# Turn kinds, decided by position: every turn but the last is a probe run
-# ("main", arbitrary code whose stdout is returned), the last is the
-# controller ("policy"). Kept as constants so callers don't sprinkle literals.
+# What a reply was. A reply without a tool call is the final answer: the
+# final run. A reply with tool calls is a probe run if at least one of them
+# could be acted on.
+ACTION_FINAL = "final_run"
+ACTION_PROBE = "probe_run"
+ACTION_INVALID = "invalid"   # tool calls, none of which could be acted on
+
+# Turn kinds as the trainer records them: "policy" is a final run (scored, the
+# task ended), "main" a probe run (what it printed comes back), "invalid" a
+# reply whose calls could not be acted on.
 MODE_POLICY = "policy"
 MODE_MAIN = "main"
+MODE_INVALID = "invalid"
 
 
 # ---------------------------------------------------------------------------
@@ -55,9 +69,9 @@ MODE_MAIN = "main"
 
 
 def error_floor_reward(n_scenarios: int) -> float:
-    """Reward floor for an invalid last turn (mode != "policy") or a fully
-    errored policy. Matches the per-scenario error-floor convention so a
-    fully-rejected last turn scores the same as a fully-errored policy."""
+    """Reward floor for a task that ended without a final run, or whose
+    controller did not run. Matches the per-scenario error-floor convention,
+    so the two score the same."""
     return ERROR_PENALTY_PER_SCENARIO * n_scenarios
 
 
@@ -66,11 +80,8 @@ def _policy_tool_text(reward_total: float, n_scenarios: int) -> str:
 
 
 def _main_tool_text(stdout: str) -> str:
-    """Body of the tool-result message for a probe run: the captured stdout
-    verbatim, or "[empty output]" if blank. Callers wrap it with
-    `src.prompts.compose_turn_message`, which prepends "Output of your probe
-    run:" and appends the next turn's instructions.
-    """
+    """The tool response of a probe run: what it printed, verbatim, or
+    "[empty output]" if it printed nothing."""
     return stdout or "[empty output]"
 
 
@@ -81,28 +92,33 @@ def _main_tool_text(stdout: str) -> str:
 
 @dataclass(frozen=True)
 class ToolResult:
-    """Result of executing a single turn's code.
+    """What came of one reply.
 
-    `mode` is the turn kind ("main" for a probe run, "policy" for a
-    controller). `reward` is the policy-reward total (only for "policy").
-    `text` is the body of the user-role message that gets fed back to the
-    model as the next-turn prompt context. `ended` is True when the turn was a
-    controller: the scored batch has run and the task is over, whatever the
-    turn index.
+    `action` is what the reply was (ACTION_*), `mode` the same in the
+    trainer's words. `ended` is True when the task is over: the reply was the
+    final answer, or it was the last reply and was not. `reward` is the total
+    reward when the task ended (the error floor if there was no final run),
+    None otherwise. `score` is the full score dict behind that reward.
+    `messages` are the chat messages that follow the reply when the task goes
+    on: one tool response per call. `text` is their content joined, for logs
+    and for callers that read the probe output. `code` is the controller of
+    the final run, or else the code of the first probe run.
     """
     mode: str
     reward: float | None
     text: str
     ended: bool = False
+    action: str = ""
+    messages: tuple[dict, ...] = ()
+    code: str = ""
+    score: dict | None = None
+    calls: tuple[ToolCall, ...] = ()
 
 
-def _score_policy(
-    code: str, task: dict, timeout: int, max_steps: int,
-) -> tuple[float, str]:
-    """Score a policy turn → (reward_total, tool_text)."""
-    n_scenarios = len(task.get("scenarios", []))
-    score = score_policy_turn(code, task, timeout=timeout, max_steps=max_steps)
-    return score["reward_total"], _policy_tool_text(score["reward_total"], n_scenarios)
+_NO_FINAL_RUN = {
+    ACTION_PROBE: "the last reply called probe_run",
+    ACTION_INVALID: "the last reply held a tool call that could not be acted on",
+}
 
 
 def execute_turn(
@@ -115,37 +131,106 @@ def execute_turn(
     timeout_main: int = MAIN_DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> ToolResult:
-    """Run the code from one turn's completion and return a ToolResult.
+    """Act on one reply and return a ToolResult.
 
-    What the code is follows from its content and the turn position. A reply
-    that defines `def policy(state)` is the controller, on any turn: it is
-    validated and scored as the final run (validation failure or runtime
-    error at the error floor, see `score_sample`) and the task ends
-    (`ended=True`). On the **last turn** the reply must be the controller, so
-    it is scored as one whatever it contains. Any other reply before the last
-    turn is probe code: executed in the sandbox against the probe-run env and
-    its stdout returned as the tool text, `reward` None (turn-1 credit comes
-    from the branched V̂_1 estimate, not from the immediate tool result). A
-    probe run that fails to validate or errors still yields a tool message
-    ("[main rejected: ...]" / "[main error: ...]"), so the chat stays well-formed.
+    A reply **without a tool call** is the final answer, on any turn: the
+    controller in it (`agent_loop.controller_from_answer`) is scored as the
+    final run and the task ends. An answer without a controller, a controller
+    that fails validation and one that errors at runtime all score the error
+    floor (see `score_sample`).
+
+    A reply **with tool calls** is acted on call by call, in the order they
+    are written: each `probe_run` is executed in the sandbox against the probe
+    batch and what it printed is its tool response; a call that cannot be
+    acted on gets a response that says why. `reward` is None then: credit for
+    the first turn comes from the branched estimate, not from the tool
+    response.
+
+    The **last reply** has to be the final answer. If it calls a tool
+    instead, the task ends without a final run and scores the error floor;
+    nothing is executed.
     """
-    code = extract_code(raw_completion)
+    calls = tuple(parse_tool_calls(raw_completion))
+    n_scenarios = len(task.get("scenarios", []))
 
-    if is_last_turn or defines_policy(code):
-        reward, text = _score_policy(code, task, timeout_policy, max_steps)
-        return ToolResult(mode=MODE_POLICY, reward=reward, text=text, ended=True)
+    if not calls:
+        code = controller_from_answer(raw_completion)
+        score = score_policy_turn(code, task, timeout=timeout_policy, max_steps=max_steps)
+        return ToolResult(
+            mode=MODE_POLICY, reward=score["reward_total"],
+            text=_policy_tool_text(score["reward_total"], n_scenarios), ended=True,
+            action=ACTION_FINAL, code=code, score=score, calls=calls,
+        )
+
+    probes = [c for c in calls if c.error is None]
+    action, mode = (ACTION_PROBE, MODE_MAIN) if probes else (ACTION_INVALID, MODE_INVALID)
+    code = probes[0].code if probes else ""
+
+    if is_last_turn:
+        why = _NO_FINAL_RUN[action]
+        score = error_floor_result(task, [f"no final run: {why}"])
+        return ToolResult(mode=mode, reward=score["reward_total"], text=f"[no final run: {why}]",
+                          ended=True, action=action, code=code, score=score, calls=calls)
 
     # The probe run uses the task's (single) scenario: same hidden parameters
     # as the final run, on the scenario's probe batch.
     cal = scenario or (task.get("scenarios") or [{}])[0]
-    out = score_main_turn(
-        code,
-        env_code=task.get("env_code", ""),
-        scenario=cal,
-        env_class=task.get("env_class", DEFAULT_ENV_CLASS),
-        timeout=timeout_main,
-    )
-    return ToolResult(mode=MODE_MAIN, reward=None, text=_main_tool_text(out["stdout"]))
+    messages: list[dict] = []
+    for c in calls:
+        if c.error is not None:
+            messages.append(tool_message(f"[tool call not acted on: {c.error}]"))
+            continue
+        out = score_main_turn(
+            c.code,
+            env_code=task.get("env_code", ""),
+            scenario=cal,
+            env_class=task.get("env_class", DEFAULT_ENV_CLASS),
+            timeout=timeout_main,
+        )
+        messages.append(tool_message(_main_tool_text(out["stdout"])))
+    return ToolResult(mode=mode, reward=None, text="\n".join(m["content"] for m in messages),
+                      ended=False, action=action, messages=tuple(messages), code=code, calls=calls)
+
+
+def run_rollout(
+    generate,
+    brief: str,
+    task: dict,
+    total_turns: int,
+    *,
+    timeout_policy: int = POLICY_DEFAULT_TIMEOUT,
+    timeout_main: int = MAIN_DEFAULT_TIMEOUT,
+    max_steps: int = DEFAULT_MAX_STEPS,
+) -> dict:
+    """One task, from the brief to the end: the loop evaluation runs.
+
+    `generate(messages, tools)` returns the model's next reply as text
+    (`tools` is None when the model has a single reply). The loop gives the
+    model the brief and the tool, acts on each reply with `execute_turn`, and
+    stops when the task has ended, which the last reply always brings about.
+    Returns the transcript, the ToolResult of every reply, and the score of
+    the task.
+    """
+    tools = tools_for(total_turns)
+    messages: list[dict] = [{"role": "user", "content": brief}]
+    turns: list[ToolResult] = []
+    for turn in range(1, total_turns + 1):
+        raw = generate(messages, tools)
+        messages.append({"role": "assistant", "content": raw})
+        res = execute_turn(raw, task, is_last_turn=(turn == total_turns),
+                           timeout_policy=timeout_policy, timeout_main=timeout_main, max_steps=max_steps)
+        turns.append(res)
+        if res.ended:
+            break
+        messages.extend(res.messages)
+    last = turns[-1]
+    return {
+        "transcript": messages,
+        "turns": turns,
+        "score": last.score,
+        "final_run": last.mode == MODE_POLICY,
+        "code": last.code if last.mode == MODE_POLICY else "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -269,20 +354,3 @@ def assemble_tool_mask(
     treated as "model tokens (1) vs external tokens (0)" inside _compute_loss.
     """
     return [1] * turn1_len + [0] * tool_len + [1] * turn2_len
-
-
-# ---------------------------------------------------------------------------
-# Chat-message wrapper
-# ---------------------------------------------------------------------------
-
-
-def format_tool_message(text: str) -> dict:
-    """Wrap a tool-result text into a chat message.
-
-    We use role="user" (not "tool") because Qwen's chat template doesn't
-    have a dedicated tool-role pathway and we don't want to register an
-    actual tool-calling schema. The `[tool]` static prefix on the content
-    (added by `execute_turn` already) gives the model a stylistic marker
-    so it can recognize tool output without needing a schema change.
-    """
-    return {"role": "user", "content": text}

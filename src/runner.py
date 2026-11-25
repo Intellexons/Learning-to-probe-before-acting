@@ -60,9 +60,9 @@ DEFAULT_ENV_CLASS = "CrystallizerEnv"
 FAST_FACTOR = 1.25
 
 
-# Fenced-block matcher. A completion is one code block, fenced or bare; the turn
-# position decides what it is (probe code on every turn but the last, the
-# controller on the last), so no directive is needed.
+# Fenced-block matcher. The code of a tool call is a JSON string; if the model
+# wraps it in a Markdown fence anyway, the fence is dropped (see
+# `src.agent_loop.parse_tool_calls`).
 _FENCE_RE = re.compile(r"```(\w+)?\s*\n(.*?)```(?!\w)", re.DOTALL)
 _OPEN_FENCE_RE = re.compile(r"```\w*\s*\n(.*)\Z", re.DOTALL)
 
@@ -84,17 +84,6 @@ def extract_code(text: str) -> str:
     if m:
         return (m.group(1) or "").strip()
     return text.strip()
-
-
-def defines_policy(code: str) -> bool:
-    """Does the code define `policy` at top level? This is what makes a turn
-    the controller rather than probe code: a reply that defines
-    `def policy(state)` is run on the scored batch and ends the task."""
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return False
-    return any(isinstance(node, ast.FunctionDef) and node.name == "policy" for node in tree.body)
 
 
 def _check_sandbox_ast(tree: ast.AST) -> str | None:
@@ -600,13 +589,13 @@ def score_main_turn(
     """
     is_valid, error_msg = validate_main_code(code)
     if not is_valid:
-        return {"stdout": f"[main rejected: {error_msg}]", "error": error_msg}
+        return {"stdout": f"[probe run rejected: {error_msg}]", "error": error_msg}
     result = run_main_in_subprocess(
         code, env_code=env_code, scenario=scenario, env_class=env_class, timeout=timeout,
     )
     if result["error"]:
         return {
-            "stdout": f"{result['stdout']}\n[main error: {result['error']}]".strip(),
+            "stdout": f"{result['stdout']}\n[probe run error: {result['error']}]".strip(),
             "error": result["error"],
         }
     return {"stdout": result["stdout"], "error": None}
