@@ -1,0 +1,310 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\newcommand{\status}[1]{\hfill{\small\textsc{#1}}}
+
+\title{\textbf{Experiment plan: open items}}
+\author{}
+\date{2026-11-01}
+
+\begin{document}
+\maketitle
+
+This is the list of changes the experiment plan in \texttt{paper.tex}
+needs before Stage~3 starts, from a review of \texttt{paper.tex} and
+\texttt{methodology.tex} on 2026-11-01. Each item names the problem, where
+it shows, and the fix. Items are ordered by how much they change what gets
+run. The ones in \S\ref{sec:run} change the runs; the ones in
+\S\ref{sec:docs} change only the documents. Every item is \textsc{open}
+until ticked off here.
+
+Terms used below. An \emph{arm} is one configuration in the comparison
+(A to F in the paper's ablation table). A \emph{leaf} is one scored
+trajectory. \emph{Fast success} means the final run succeeds within
+$1.25\times$ the time-optimal batch time. The \emph{probe rate} is the
+fraction of first replies that are probe code rather than a controller.
+The \emph{blind reference} is the best hand-written controller that does
+not know the hidden limit; the \emph{oracle} is the one that does.
+
+\section{What holds up}
+
+Not to be changed.
+\begin{itemize}[leftmargin=1.5em]
+  \item The gating logic. Stage~0 proves the hidden limit is worth knowing
+  before any model runs; Stage~0b proves the runner carries the solution;
+  Stages~1 and~2 set the floor and the training target; Stage~3 checks the
+  plumbing against a known ceiling. Nothing downstream rests on an
+  unverified step.
+  \item The ablation isolates the claim. E against D tests the rollout
+  tree; F against E tests the per-turn baseline; the trained arms match on
+  leaves, and both equal-rollout and equal-wall-clock comparisons are
+  reported.
+  \item Fast success as the primary metric. Raw success is saturated by any
+  slow cautious controller.
+  \item The environment. The limit leaves no trace until it is crossed, so a
+  probe is the only way to learn it, and Stage~0 showed the gap between
+  blind and oracle is wide.
+  \item The immediate next step. Re-run Stages~1 and~2 under the optional
+  probe with the batch record and 1000-token turns, then decide on
+  Stage~3. Items~\ref{it:wilcoxon} to~\ref{it:checkpoint} should be settled
+  before Stage~3 starts, since they change what is run and how many seeds
+  it needs.
+\end{itemize}
+
+\section{Items that change what gets run}
+\label{sec:run}
+
+\begin{enumerate}[leftmargin=1.8em, itemsep=0.8em]
+
+\item \textbf{The statistical test cannot reach significance at three
+seeds.} \status{open}
+\label{it:wilcoxon}
+\\
+\emph{Problem.} The evaluation section specifies a paired Wilcoxon
+signed-rank test over per-seed fast-success rates with at least three
+seeds per arm. The test ranks the per-seed differences between two arms;
+with $n$ pairs the smallest possible two-sided $p$ is $2/2^{n}$, so three
+seeds cannot get below $0.25$.
+\begin{center}
+\small
+\begin{tabular}{@{}cc@{}}
+\toprule
+Seeds per arm & Smallest two-sided $p$ \\
+\midrule
+3 & 0.25 \\
+4 & 0.125 \\
+5 & 0.0625 \\
+6 & 0.031 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\emph{Fix.} One of: (a) six seeds per arm for the arms in the headline
+comparison (D and F at least); (b) pair over seed-by-batch units, so the
+test has seeds times held-out batches pairs; (c) drop the $p$-value and
+report the effect size with a bootstrap interval over seeds. Whichever is
+chosen, write it into \S\,Evaluating in \texttt{paper.tex} before the
+training runs are scheduled, because it sets the seed count.
+
+\item \textbf{The token budget is inconsistent across arms.} \status{open}
+\label{it:tokens}
+\\
+\emph{Problem.} The same quantity is set to four different values.
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Where & Value & Applies to \\
+\midrule
+\texttt{paper.tex}, Model and training paragraph & 400 per turn & stated for all training \\
+\texttt{paper.tex}, Appendix memory table & $T=400$ & memory arithmetic \\
+\texttt{configs/loop\_grpo\_crystallizer.yaml} & 400 & arm C (single-turn GRPO) \\
+\texttt{configs/loop\_grpo\_branched\_crystallizer.yaml} & 1000 per turn & arms E, F \\
+\texttt{scripts/05\_train\_grpo\_branched.py} default & 400 & if the config omits it \\
+Stage~1 and~2 as run & 600 & frozen arms A, B \\
+Stage~1 and~2 re-run (planned) & 1000 & frozen arms A, B \\
+\bottomrule
+\end{tabular}
+\end{center}
+Stage~1 lost 28 of 96 controllers to the cut at 600 tokens and Stage~2
+lost 44 of 96 probes. Arm~C at 400 would be handicapped against arm~A at
+1000 and could fail the plumbing check for the wrong reason.
+\\
+\emph{Fix.} 1000 tokens per turn everywhere: the single-turn config, the
+script default, the paper's paragraph, and the memory table (redo the
+arithmetic at $T=1000$ or state that the table is illustrative at 400).
+Arm~D's config, when it is written, inherits the same value.
+
+\item \textbf{No probe-rate gate before Stages~4 to~6.} \status{open}
+\label{it:probe-gate}
+\\
+\emph{Problem.} The probe is optional. If the frozen model under the
+re-run protocol almost never probes, arms D, E and F collapse to arm~C and
+the rollout tree carries no turn-1 signal to learn from. With $G_1=4$ and a
+probe rate of ten percent, about a third of prompts have at least one
+probing variant; at one percent, about four percent do. The extensions
+section already names ten percent as the threshold for a prompt variant
+to be trainable, but Stage~2's \emph{Decides} clause does not use it, and
+it also does not say what happens if arm~B comes out below arm~A.
+\\
+\emph{Fix.} Add to Stage~2: a probe rate under the optional protocol of
+at least ten percent is the gate for Stages~4 to~6; below it, the brief
+is changed (not the training) and Stage~2 is re-run. Add the reading for
+B below A: the probe run hurts, so the cause (budget, crashes, invented
+results) is fixed in the brief before training.
+
+\item \textbf{Checkpoint selection on the test set.} \status{open}
+\label{it:checkpoint}
+\\
+\emph{Problem.} Results are ``taken at the best checkpoint'' and reported
+on the 12 held-out batches. If the best checkpoint is chosen on those same
+batches, the reported number is optimistically biased, and more so for arms
+with noisier curves.
+\\
+\emph{Fix.} Choose the checkpoint on training reward or on a separate
+validation draw of batches, then evaluate the held-out set once. Write the
+rule into \S\,Evaluating.
+
+\item \textbf{The evaluation set is thin.} \status{open}
+\label{it:evalset}
+\\
+\emph{Problem.} Fast success depends strongly on where the limit sits in
+$[0.08, 0.25]$: at the bottom the blind controller is already fast, at the
+top the gap is largest. Twelve batches cover that range coarsely, and the
+per-batch rate is itself a sampled quantity at temperature $0.8$.
+\\
+\emph{Fix.} 36 to 48 held-out batches with limits stratified across the
+range (equal counts per tercile at least). Evaluation is inference only,
+so this is cheap. Report fast success per tercile as well as overall.
+
+\item \textbf{Add a frozen arm that is told the true limit.} \status{open}
+\label{it:informed-arm}
+\\
+\emph{Problem.} If arm~F fails, nothing in the current design says whether
+the model cannot write the ride-below-limit controller or cannot probe.
+The Stage~2 record at 600 tokens already shows the controller itself
+failing: setpoints of $0.18$ to $0.20$ with no margin, 24 of 96 batches
+ruined after a median of 20 steps.
+\\
+\emph{Fix.} One inference-only arm: the frozen model, single turn, with
+the true $\sigma_{\max}$ written into the brief. It is the model analogue
+of Stage~0's informed side. Its fast-success rate is the ceiling any
+probe-aware arm can reach with this model's controller-writing, and
+subtracting it from the oracle gives the controller gap; subtracting arm~B
+from it gives the probe gap. Add it to the ablation table as A$^{+}$ and
+to Stage~1.
+
+\item \textbf{Arms A to D form a two-by-two, not a chain.} \status{open}
+\label{it:2x2}
+\\
+\emph{Problem.} The factors are frozen versus trained and one turn versus
+two. The ablation table's ``what it isolates over the previous arm'' entry
+for arm~C compares it to arm~B, which changes both factors at once.
+\\
+\emph{Fix.} Present A, B, C, D as a grid. C against A is the effect of
+training without a probe; D against B is the effect of training with one;
+B against A and D against C are the effect of the probe, frozen and
+trained. E and F then extend D. Rewrite the table's last column
+accordingly.
+
+\item \textbf{Stages~4, 5 and~6 are one experiment, not three rungs.}
+\status{open}
+\label{it:one-experiment}
+\\
+\emph{Problem.} No stop condition is stated between Stage~4 and Stage~5
+or between~5 and~6, and none makes sense: the question is the comparison,
+and the arms share seeds. Only Stage~3 is a real gate, and it has no
+numeric threshold, unlike Stages~0 and~0b.
+\\
+\emph{Fix.} Give Stage~3 a gate: arm~C reaches the blind reference (mean
+reward about $+27$, fast success about $4$ to $7.5$ percent) within the
+step budget on at least two of three seeds; failing that, the reward or the
+plumbing is wrong and nothing else runs. Merge Stages~4 to~6 into one
+stage with three arms run together on the same seeds, and keep the
+\emph{Decides} text of the current Stage~6 as its decision rule.
+
+\item \textbf{The stress set contradicts the brief.} \status{open}
+\label{it:stress}
+\\
+\emph{Problem.} The brief tells the model the limit lies between $0.08$
+and $0.25$. A stress set with limits outside that range therefore tests
+what the model does when its stated prior is wrong, which is a different
+question from robustness.
+\\
+\emph{Fix.} Either widen the range stated in the brief so the stress set
+lies inside it, or keep the stress set and say in \S\,Evaluating that it
+measures behaviour under a wrong prior. Either way, drop the word
+``planned'' or schedule it.
+
+\end{enumerate}
+
+\section{Consistency fixes in the documents}
+\label{sec:docs}
+
+\begin{enumerate}[leftmargin=1.8em, itemsep=0.8em, resume]
+
+\item \textbf{A stale mechanism check.} \status{open}
+\label{it:mechanism}
+\\
+\emph{Problem.} The first diagnostic in \S\,Evaluating says that when
+turn~1 emits a policy its reward should improve faster under~F. That
+describes the old protocol, where a turn-1 policy was rehearsed and its
+reward fed back. Under the current protocol a turn-1 controller ends the
+task.
+\\
+\emph{Fix.} Replace it with: the probe rate over training, and the reward
+of probed against unprobed trajectories. Under~F the probed trajectories'
+turn-1 advantage should become positive before the probe rate rises;
+under~D it cannot be separated.
+
+\item \textbf{The tree weights a turn-1 controller as a full branch, and the
+paper does not say so.} \status{open}
+\label{it:replicate}
+\\
+\emph{Problem.} In \texttt{src/branched\_trainer.py} (the block commented
+``The model wrote the controller in turn 1''), a first reply that is a
+controller is entered into the reward grid $G_2$ times, so $\widehat V_0$
+weights it like a probing variant and its turn-1 tokens appear $G_2$ times
+in the loss. This is a reasonable choice, but it zeroes the within-prefix
+variance for those variants, which inflates the between/within signal
+ratio diagnostic whenever some variants probe and others do not.
+\\
+\emph{Fix.} State the choice in the Branched rollout subsection. Compute
+the signal ratio over probing variants only, or report it alongside the
+probe rate so the reader can tell the two apart.
+
+\item \textbf{Matched leaves is not matched first-turn samples.}
+\status{open}
+\label{it:matched}
+\\
+\emph{Problem.} Arm~D draws 16 independent first turns per prompt; arms~E
+and~F draw 4. That is exactly what E against D is meant to expose, but the
+table caption says only that leaf counts match.
+\\
+\emph{Fix.} One sentence in the caption: D has $G$ independent first-turn
+samples, E and F have $G_1$, and the E--D comparison is the price of that
+reduction against the saving in generate calls.
+
+\item \textbf{\texttt{methodology.tex} describes the old protocol.}
+\status{open}
+\label{it:methodology}
+\\
+\emph{Problem.} It has typed \texttt{policy}/\texttt{main} fences, a
+rehearsal turn with the reward fed back, and an error floor of $-200$.
+\texttt{paper.tex} has content-defined replies, an optional probe, and a
+floor of $-300$. The two contradict each other.
+\\
+\emph{Fix.} Retire \texttt{methodology.tex}, or add a line under its title
+saying it is superseded by \texttt{paper.tex} as of 2026-10-26 and is kept
+for the derivation of the per-turn loss decomposition only.
+
+\end{enumerate}
+
+\section{Order of work}
+
+\begin{enumerate}[leftmargin=1.8em]
+  \item Items~\ref{it:tokens} and~\ref{it:probe-gate}, because the Stage~1
+  and~2 re-runs need the 1000-token budget and the probe-rate gate is read
+  off their result.
+  \item Items~\ref{it:wilcoxon}, \ref{it:checkpoint} and~\ref{it:evalset},
+  because they fix the seed count, the checkpoint rule and the evaluation
+  set before any training run is scheduled.
+  \item Item~\ref{it:informed-arm}, inference only, alongside the Stage~1
+  re-run.
+  \item Items~\ref{it:2x2}, \ref{it:one-experiment} and~\ref{it:stress},
+  text changes to the plan, before Stage~3.
+  \item Items~\ref{it:mechanism} to~\ref{it:methodology}, document
+  consistency, at any time.
+\end{enumerate}
+
+\end{document}
