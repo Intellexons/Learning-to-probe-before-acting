@@ -135,3 +135,23 @@ def render_tool_call(name: str, code: str) -> str:
 def tool_message(text: str) -> dict:
     """The chat message that carries a tool response back to the model."""
     return {"role": "tool", "content": text}
+
+
+def system_message_with_tools(tokenizer, tools: list[dict]) -> dict:
+    """The system message the chat template writes when it is given `tools`,
+    as an explicit message.
+
+    For callers that hand a chat to code that renders it without tools (TRL's
+    stock GRPOTrainer): a chat that starts with this message renders to the
+    same text as the chat rendered with the tools, which is checked here.
+    """
+    probe = [{"role": "user", "content": "x"}]
+    with_tools = tokenizer.apply_chat_template(probe, tools=tools, tokenize=False, add_generation_prompt=True)
+    start, end = "<|im_start|>system\n", "<|im_end|>\n"
+    if not with_tools.startswith(start) or end not in with_tools:
+        raise RuntimeError("the chat template does not open with a ChatML system message")
+    message = {"role": "system", "content": with_tools[len(start):with_tools.index(end)]}
+    plain = tokenizer.apply_chat_template([message] + probe, tokenize=False, add_generation_prompt=True)
+    if plain != with_tools:
+        raise RuntimeError("the explicit system message does not reproduce the template's tool block")
+    return message

@@ -19,6 +19,7 @@ from src.dataset import load_jsonl
 from src.diversity import DiversityCallback
 from src.prompts import load_template, render_prompt
 from src.reward import make_reward_fn
+from src.agent_loop import system_message_with_tools, tools_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -73,14 +74,18 @@ def main():
         sys.exit(1)
 
     template = load_template("configs/prompt_template.txt")
+    # One reply, one tool: the reply is the final run. The stock trainer renders
+    # the chat without tools, so the tool block goes in as the system message
+    # the chat template would have written (same text, checked by the helper).
+    tool_block = system_message_with_tools(tokenizer, tools_for(1))
     task_map = {}
     dataset_rows = []
     for task in tasks:
         tid = task["task_id"]
-        prompt_text = render_prompt(template, task)
+        prompt_text = render_prompt(template, task, total_turns=1)
         task_map[tid] = task
         dataset_rows.append({
-            "prompt": [{"role": "user", "content": prompt_text}],
+            "prompt": [tool_block, {"role": "user", "content": prompt_text}],
             "task_id": tid,
         })
 

@@ -8,6 +8,14 @@ provenance macros per run. With --tokenizer, one more: the length of the first
 replies in tokens against a list of budgets, next to the token counts of the
 hand-written probe code and controller of Stage 0.
 
+Runs come in two protocols and the renderer reads both. In the code-block
+protocol (runs up to 2026-11-01) a reply was one code block, read by its
+contents; its first-reply table is first_replies.tex. In the agent loop (runs
+whose samples say `"protocol": "agent-loop"`) the model acts through the tool
+calls `probe_run` and `final_run`; its first-reply table is first_actions.tex,
+and the error table gains the ways a task can end without a final run. The
+fragments of a folder that holds only code-block runs come out as before.
+
 Each run directory holds stage<N>_summary.json (with its provenance block),
 stage<N>_samples.jsonl and the job log. Every fragment is headed by a comment
 naming the result files, commits and jobs; the document cites nothing visibly.
@@ -79,14 +87,25 @@ def outcome(r: dict) -> str:
     return "ruined"
 
 
+def is_agent_loop(r: dict) -> bool:
+    return r.get("protocol") == "agent-loop"
+
+
+def reply_cut_off(text: str, agent_loop: bool) -> bool:
+    """The token budget closed the reply mid-way: a tool call without its end
+    tag in the agent loop, a code fence never closed in the code-block protocol."""
+    if agent_loop:
+        return text.count("<tool_call>") > text.count("</tool_call>")
+    return text.count("```") % 2 == 1
+
+
 def cut_off(r: dict) -> bool:
-    """The last assistant message opens a code fence it never closes."""
+    """The last assistant message was cut off by the token budget."""
     t = r.get("transcript") or []
     msgs = [m["content"] for m in t if m.get("role") == "assistant"]
     if not msgs:
         return False
-    last = msgs[-1]
-    return last.count("```") % 2 == 1
+    return reply_cut_off(msgs[-1], is_agent_loop(r))
 
 
 def last_reply(r: dict) -> str:
@@ -114,7 +133,7 @@ def diagnostics(run: dict) -> dict:
         probed = [r for r in rows if r.get("probed")]
         d["probe_rate"] = len(probed) / n if n else None
         d["probe_crashed"] = mean(("Traceback" in (r.get("tool_output") or "") or "Error" in (r.get("tool_output") or "")) for r in probed) if probed else None
-        d["probe_cut_off"] = mean((first_reply(r).count("```") % 2 == 1) for r in probed) if probed else None
+        d["probe_cut_off"] = mean(reply_cut_off(first_reply(r), is_agent_loop(r)) for r in probed) if probed else None
         d["probe_chars_range"] = (min(len(first_reply(r)) for r in probed), max(len(first_reply(r)) for r in probed)) if probed else None
         ests = [r.get("estimate_error") for r in probed if r.get("estimate_error") is not None]
         d["estimate_within_0.01"] = (sum(e <= 0.01 for e in ests) / len(probed)) if probed else None
@@ -135,6 +154,68 @@ ERROR_KINDS = (
     "other runtime error",
 )
 FLAG_KEYS = ("done", "showered", "failure_reason")
+# The agent loop: a task can end without a final run, and a controller that was
+# handed in can fail validation. Listed before the runtime kinds they precede.
+AGENT_ERROR_KINDS = (
+    "no final run: the tool call was cut off by the token budget",
+    "no final run: the tool call is not valid JSON",
+    "no final run: no tool call in the reply",
+    "no final run: the last reply is a probe run",
+    "no final run: other (unknown tool, no code)",
+    "the controller does not parse",
+    "the controller defines no policy",
+)
+
+
+def agent_error_kind(r: dict) -> str | None:
+    """As `error_kind`, for a sample of the agent loop."""
+    import re
+    if r.get("ran"):
+        return None
+    if not r.get("generated"):
+        g = str(r.get("generation_error") or "")
+        if g.startswith("controller invalid"):
+            if "Syntax error" in g:
+                return AGENT_ERROR_KINDS[5]
+            if "No 'def policy" in g:
+                return AGENT_ERROR_KINDS[6]
+            return ERROR_KINDS[1]
+        last = (r.get("actions") or [""])[-1]
+        if last == "probe_run":
+            return AGENT_ERROR_KINDS[3]
+        if last == "none":
+            return AGENT_ERROR_KINDS[2]
+        why = " ".join(r.get("call_errors") or [])
+        if "cut off" in why and cut_off(r):
+            return AGENT_ERROR_KINDS[0]
+        if "not valid JSON" in why:
+            return AGENT_ERROR_KINDS[1]
+        return AGENT_ERROR_KINDS[4]
+    e = str((r.get("errors") or [""])[0])
+    e = re.sub(r"^s\d+: ", "", e)
+    if re.search(r"name 'env' is not defined|local variable 'env'", e):
+        return ERROR_KINDS[3]
+    if re.fullmatch(r"policy\(\) error: '(%s)'" % "|".join(FLAG_KEYS), e):
+        return ERROR_KINDS[2]
+    if "is not defined" in e:
+        return ERROR_KINDS[4]
+    if re.fullmatch(r"policy\(\) error: '[^']*'", e):
+        return ERROR_KINDS[5]
+    if "cannot access local variable" in e:
+        return ERROR_KINDS[6]
+    return ERROR_KINDS[8]
+
+
+def kinds_for(runs: list[dict]) -> tuple[str, ...]:
+    """The rows of the error table: the code-block kinds for code-block runs,
+    the agent-loop kinds for agent-loop runs, both for a mixed table."""
+    agent = [bool(r["rows"]) and is_agent_loop(r["rows"][0]) for r in runs]
+    if not any(agent):
+        return ERROR_KINDS
+    runtime = tuple(k for i, k in enumerate(ERROR_KINDS) if i not in (0, 7))
+    if all(agent):
+        return AGENT_ERROR_KINDS + runtime
+    return ERROR_KINDS + AGENT_ERROR_KINDS
 
 
 def error_kind(r: dict) -> str | None:
@@ -174,14 +255,14 @@ CODE_PATTERNS = (
 )
 
 
-def error_table(run: dict) -> dict:
+def error_table(run: dict, kind_names: tuple[str, ...] = ERROR_KINDS) -> dict:
     """Counts per error kind over the samples that did not run, and per code
     pattern over all samples (the controller code, whether it ran or not)."""
     import re
     rows = run["rows"]
-    kinds = {k: 0 for k in ERROR_KINDS}
+    kinds = {k: 0 for k in kind_names}
     for r in rows:
-        k = error_kind(r)
+        k = agent_error_kind(r) if is_agent_loop(r) else error_kind(r)
         if k is not None:
             kinds[k] += 1
     patterns = {name: sum(bool(re.search(rx, r.get("code") or "")) for r in rows) for name, rx in CODE_PATTERNS}
@@ -259,6 +340,55 @@ def first_reply_table(run: dict) -> dict:
     d["ctrl_env"] = len(sites)
     for key, site in (("ctrl_env_policy", "policy"), ("ctrl_env_top", "top"), ("ctrl_env_other", "other"), ("ctrl_env_comment", "comment")):
         d[key] = sites.count(site)
+    return d
+
+
+FIRST_ACTION_ROWS = (
+    ("final", "a final run (the controller straight away)"),
+    ("probe", "a probe run, whose output came back"),
+    ("probe_clean", "\\quad the probe code ran without an error"),
+    ("probe_near", "\\quad the output holds a number within 0.01 of the limit"),
+    ("probe_then_final_next", "\\quad the second reply is a final run"),
+    ("probe_final", "a probe run and a final run in one reply (the probe never read)"),
+    ("invalid", "a tool call that could not be acted on"),
+    ("invalid_cut", "\\quad cut off by the token budget"),
+    ("invalid_json", "\\quad not valid JSON"),
+    ("invalid_other", "\\quad other (unknown tool, no code)"),
+    ("none", "no tool call"),
+    ("none_fenced_policy", "\\quad a fenced code block that defines \\texttt{policy}"),
+    None,
+    ("no_final", "samples that ended without a final run"),
+)
+
+
+def first_action_table(run: dict) -> dict:
+    """What the first reply of a sample is under the agent loop, read from the
+    tool it calls (`first_action`), and how the samples that probed went on."""
+    rows = run["rows"]
+    two = run["stage"] == 2
+
+    def n(pred) -> int:
+        return sum(bool(pred(r)) for r in rows)
+
+    act = lambda r: r.get("first_action")
+    probed = [r for r in rows if act(r) == "probe_run"]
+    invalid = [r for r in rows if act(r) == "invalid"]
+    why = lambda r: " ".join(r.get("call_errors") or [])
+    d = {"n": len(rows), "final": n(lambda r: act(r) == "final_run"),
+         "probe": len(probed) if two else None,
+         "probe_clean": sum("[probe run rejected" not in (r.get("tool_output") or "")
+                            and "[probe run error" not in (r.get("tool_output") or "") for r in probed) if two else None,
+         "probe_near": sum(r.get("estimate_error") is not None and r["estimate_error"] <= 0.01 for r in probed) if two else None,
+         "probe_then_final_next": sum((r.get("actions") or [])[1:2] == ["final_run"] for r in probed) if two else None,
+         "probe_final": n(lambda r: act(r) == "probe_run+final_run") if two else None,
+         "invalid": len(invalid),
+         "invalid_cut": sum("cut off" in why(r) and reply_cut_off(first_reply(r), True) for r in invalid),
+         "invalid_json": sum("not valid JSON" in why(r) and not ("cut off" in why(r) and reply_cut_off(first_reply(r), True))
+                             for r in invalid),
+         "none": n(lambda r: act(r) == "none"),
+         "none_fenced_policy": n(lambda r: act(r) == "none" and re.search(r"```[^`]*def policy\b", first_reply(r), re.DOTALL)),
+         "no_final": n(lambda r: (r.get("actions") or [""])[-1] not in ("final_run", "probe_run+final_run"))}
+    d["invalid_other"] = d["invalid"] - d["invalid_cut"] - d["invalid_json"]
     return d
 
 
@@ -340,11 +470,12 @@ def main() -> None:
     write("by_third.tex", lines)
 
     # ---- why the samples that did not run failed; code patterns over all samples ----------
-    et = [error_table(r) for _, r in runs]
+    kind_names = kinds_for([r for _, r in runs])
+    et = [error_table(r, kind_names) for _, r in runs]
     lines = ["\\begin{tabular}{@{}l" + "r" * len(runs) + "@{}}", "\\toprule",
              " & " + " & ".join(tex(label) for label, _ in runs) + " \\\\", "\\midrule",
              "samples that did not run & " + " & ".join(str(e["errors"]) for e in et) + " \\\\"]
-    for k in ERROR_KINDS:
+    for k in kind_names:
         lines.append(f"\\quad {tex(k)} & " + " & ".join(str(e["kinds"][k]) for e in et) + " \\\\")
     lines.append("\\midrule")
     for name, _ in CODE_PATTERNS:
@@ -352,8 +483,28 @@ def main() -> None:
     lines += ["\\bottomrule", "\\end{tabular}"]
     write("errors.tex", lines)
     # ---- what the first reply of a Stage 2 sample is ---------------------------------------
-    two = [(label, r) for label, r in runs if r["stage"] == 2]
+    def agent(r: dict) -> bool:
+        return bool(r["rows"]) and is_agent_loop(r["rows"][0])
+
     n_fragments = 5
+    loop_runs = [(label, r) for label, r in runs if agent(r)]
+    if loop_runs:
+        ft = [first_action_table(r) for _, r in loop_runs]
+        lines = ["\\begin{tabular}{@{}l" + "r" * len(loop_runs) + "@{}}", "\\toprule",
+                 " & " + " & ".join(tex(label) for label, _ in loop_runs) + " \\\\", "\\midrule",
+                 "samples & " + " & ".join(str(f["n"]) for f in ft) + " \\\\", "\\midrule",
+                 "\\multicolumn{%d}{@{}l}{the first reply is} \\\\" % (1 + len(loop_runs))]
+        for row in FIRST_ACTION_ROWS:
+            if row is None:
+                lines.append("\\midrule")
+                continue
+            key, name = row
+            indent = "" if key == "no_final" else "\\quad "
+            lines.append(f"{indent}{name} & " + " & ".join("--" if f[key] is None else str(f[key]) for f in ft) + " \\\\")
+        lines += ["\\bottomrule", "\\end{tabular}"]
+        write("first_actions.tex", lines)
+        n_fragments += 1
+    two = [(label, r) for label, r in runs if r["stage"] == 2 and not agent(r)]
     if two:
         ft = [first_reply_table(r) for _, r in two]
         lines = ["\\begin{tabular}{@{}l" + "r" * len(two) + "@{}}", "\\toprule",
@@ -367,7 +518,7 @@ def main() -> None:
             lines.append(f"{name} & " + " & ".join(str(f[key]) for f in ft) + " \\\\")
         lines += ["\\bottomrule", "\\end{tabular}"]
         write("first_replies.tex", lines)
-        n_fragments = 6
+        n_fragments += 1
     # ---- first-reply lengths in tokens, against a list of budgets --------------------------
     if args.tokenizer:
         from tokenizers import Tokenizer
@@ -391,10 +542,21 @@ def main() -> None:
         # the hand-written solution of Stage 0, as it is sent through the sandbox
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from stage0_solution import GATE_VARIANT, PROBE_VARIANTS, controller_source, fence
+        if all(agent(r) for _, r in runs):
+            # as the tool calls the agent loop reads
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call
+            probe_reply = render_tool_call(TOOL_PROBE, PROBE_VARIANTS[GATE_VARIANT].strip("\n"))
+            final_reply = render_tool_call(TOOL_FINAL, controller_source(sum(RANGE) / 2).strip("\n"))
+            form = " as a tool call"
+        else:
+            probe_reply = fence(PROBE_VARIANTS[GATE_VARIANT])
+            final_reply = fence(controller_source(sum(RANGE) / 2))
+            form = ""
         span = 2 + len(TOKEN_BUDGETS)
         lines += ["\\midrule",
-                  f"Stage~0 hand-written probe code ({tex(GATE_VARIANT)}) & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(fence(PROBE_VARIANTS[GATE_VARIANT]))} tokens}} \\\\",
-                  f"Stage~0 hand-written controller & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(fence(controller_source(sum(RANGE) / 2)))} tokens}} \\\\",
+                  f"Stage~0 hand-written probe code ({tex(GATE_VARIANT)}){form} & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(probe_reply)} tokens}} \\\\",
+                  f"Stage~0 hand-written controller{form} & -- & \\multicolumn{{{span}}}{{l}}{{{ntok(final_reply)} tokens}} \\\\",
                   "\\bottomrule", "\\end{tabular}"]
         write("reply_tokens.tex", lines)
         n_fragments += 1

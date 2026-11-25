@@ -22,6 +22,7 @@ shows what the frozen model does with the probe run.
 usage:
   uv run python scripts/eval_frozen_baseline.py --turns 1 --n-samples 8
   uv run python scripts/eval_frozen_baseline.py --turns 2 --n-samples 8
+  uv run python scripts/eval_frozen_baseline.py --turns 4 --n-samples 8   # Stage 2 with four replies
 """
 from __future__ import annotations
 
@@ -148,8 +149,9 @@ def _mean_or_none(xs):
 def probe_estimate_error(tool_output: str, sigma_max: float):
     """How far the closest plausible level in the probe output is from the true
     limit: a diagnostic of what the probe found. Numbers in [0.03, 0.5] count as
-    candidate levels; None if the output holds none."""
-    nums = [float(x) for x in re.findall(r"(?<![\d.])0\.\d{2,6}(?![\d])", tool_output or "")]
+    candidate levels, at any precision (a model's probe prints unrounded
+    floats); None if the output holds none."""
+    nums = [float(x) for x in re.findall(r"(?<![\d.\-])0\.\d{2,}(?!\d)", tool_output or "")]
     nums = [x for x in nums if 0.03 <= x <= 0.5]
     return min(abs(x - sigma_max) for x in nums) if nums else None
 
@@ -157,8 +159,9 @@ def probe_estimate_error(tool_output: str, sigma_max: float):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--turns", type=int, default=1, choices=[1, 2],
-                        help="1 = Stage 1 (one reply: the final run), 2 = Stage 2 (two replies: a probe run is possible)")
+    parser.add_argument("--turns", type=int, default=1,
+                        help="the number of replies the model has: 1 = Stage 1 (the final run only), "
+                             "2 = Stage 2 (a probe run is possible); more than 2 is Stage 2 with a longer budget")
     parser.add_argument("--model-path", default="models/hf_base/iter_000")
     parser.add_argument("--task-file", default="scripts/seed_tasks/crystallizer_eval.jsonl")
     parser.add_argument("--n-samples", type=int, default=8, help="rollouts per task")
@@ -173,7 +176,10 @@ def main() -> None:
     args = parser.parse_args()
     prov = provenance(sys.argv)
 
-    stage = args.turns
+    if args.turns < 1:
+        parser.error("--turns must be at least 1")
+    turns = args.turns
+    stage = 1 if turns == 1 else 2   # the stage is whether a probe run is on offer; `turns` is the reply budget
     out_dir = Path(args.out_dir or f"data/frozen/stage{stage}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,8 +203,8 @@ def main() -> None:
         refs = reference_rows(task)
         rows = []
         for i in range(args.n_samples):
-            logger.info(f"{tid}: sample {i + 1}/{args.n_samples} ({stage} repl{'y' if stage == 1 else 'ies'})")
-            roll = rollout(model, tokenizer, template, task, stage,
+            logger.info(f"{tid}: sample {i + 1}/{args.n_samples} ({turns} repl{'y' if turns == 1 else 'ies'})")
+            roll = rollout(model, tokenizer, template, task, turns,
                            temperature=args.temperature, top_p=args.top_p,
                            max_tokens=args.max_tokens, timeout=args.timeout,
                            max_steps=args.max_steps)
@@ -254,7 +260,7 @@ def main() -> None:
 
     overall = {
         "provenance": prov,
-        "stage": stage, "turns": stage, "model": args.model_path,
+        "stage": stage, "turns": turns, "model": args.model_path,
         "task_file": args.task_file, "n_tasks": len(tasks), "n_samples_per_task": args.n_samples,
         "generated_rate": _mean(t["generated_rate"] for t in per_task),
         "ran_rate": _mean(t["ran_rate"] for t in per_task),
@@ -293,7 +299,7 @@ def main() -> None:
         json.dump(overall, f, indent=2)
 
     # Table
-    print(f"\n=== Stage {stage}: frozen model, {stage} repl{'y' if stage == 1 else 'ies'}, "
+    print(f"\n=== Stage {stage}: frozen model, {turns} repl{'y' if turns == 1 else 'ies'}, "
           f"{len(tasks)} tasks x {args.n_samples} samples ===")
     head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
             f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s} {'ride':>5s}")
