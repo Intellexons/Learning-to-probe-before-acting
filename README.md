@@ -146,8 +146,8 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
 | `eval_frozen_baseline.py` | Stages 1 and 2: frozen model, one turn or probe run + final run, next to the blind and oracle references |
-| `stage0_gate_crystal.py` | Stage 0: blind vs informed hand-written controllers on the crystallizer (the env-validity gate) |
-| `stage0b_two_turn.py` | Stage 0b: a hand-written probe run and final run, from the brief alone (readings only), through the real execution path |
+| `stage0_gate.py` | Stage 0: the environment gate. Blind vs informed hand-written controllers (G1, G2) and the hand-written probe run + controller through the real execution path (G3); references on the held-out tasks |
+| `stage0_solution.py` | The hand-written probe variants and controller, from the brief alone (readings only), used by the gate's G3 |
 | `seed_tasks/build_crystallizer_tasks.py` | Regenerates the task files from the env source |
 
 `09_run_loop.py` flags:
@@ -181,7 +181,8 @@ docs/
   paper.tex                       # method write-up
   findings.tex                    # dated experiment log
   methodology.tex
-  stage0/, stage0b/               # raw logs behind the Stage 0 and Stage 0b entries
+  stage0/<job>/                   # Stage 0 results: summary, JSON with provenance, job log, rendered tables
+  stage0_gate.tex                 # Stage 0 protocol and results, every table with its commit and job
 models/
   hf_base/iter_000/               # base weights downloaded by 00_setup_env.sh
   lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
@@ -193,8 +194,9 @@ scripts/
   09_run_loop.py                  # orchestrator
   01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
   eval_frozen_baseline.py         # Stages 1-2: frozen model, one or two turns
-  stage0_gate_crystal.py           # Stage 0: env-validity gate (blind vs informed controllers)
-  stage0b_two_turn.py             # Stage 0b: hand-written two-turn solution through the runner
+  stage0_gate.py                  # Stage 0: the environment gate (search, G1-G3, references)
+  stage0_solution.py              # the hand-written probe run and controller from the brief alone
+  stage0_render.py                # renders the gate's JSON into the LaTeX tables of docs/stage0_gate.tex
   gcp_*.sh                        # VM lifecycle + train/eval wrappers
   seed_tasks/
     crystallizer_env.py           # the environment (embedded in every prompt)

@@ -1,14 +1,14 @@
 """The hand-written probe run and final run through the real execution path.
 
 On the held-out task with the highest hidden limit (where a blind policy
-loses the most time): the readings-only probe from scripts/stage0b_two_turn.py
+loses the most time): the readings-only probe from scripts/stage0_solution.py
 goes through `execute_turn` (sandbox subprocess, probe-run env with the limit
 masked, probe batch), its printed bracket is pasted into the controller
 template, and the controller is scored with `score_sample`. This is the
 smallest end-to-end check that the runner carries the crystallizer: the hidden
 limit reaches the env, the probe sees the readings and the outcome flags and
 nothing else, and the time metrics come out right. The full Stage 0b
-measurement is scripts/stage0b_two_turn.py.
+measurement is G3 of scripts/stage0_gate.py.
 """
 import json
 import sys
@@ -21,9 +21,9 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "seed_tasks"))
 
 from src.multi_turn import execute_turn  # noqa: E402
 from src.runner import extract_code, score_main_turn, score_sample  # noqa: E402
-from stage0b_two_turn import CONTROLLER_TEMPLATE, PROBE_SOURCE  # noqa: E402
+from stage0_solution import PROBE_THREE_PASS as PROBE_SOURCE, controller_source  # noqa: E402
 from crystallizer_env import HiddenParams  # noqa: E402
-from crystallizer_utils import cautious_policy, run_episode  # noqa: E402
+from crystallizer_utils import run_cautious_episode  # noqa: E402
 
 EVAL = REPO_ROOT / "scripts" / "seed_tasks" / "crystallizer_eval.jsonl"
 
@@ -51,7 +51,7 @@ def test_hand_written_probe_and_final_run_through_execute_turn():
     assert smax - lo < 0.012, f"probe bracket too loose: lo={lo} sigma_max={smax}"
 
     # Turn 2: final run, scored the way the trainer scores it.
-    code = extract_code(_fence(CONTROLLER_TEMPLATE.format(sigma_hat=lo)))
+    code = extract_code(_fence(controller_source(lo)))
     res = score_sample(code, task, max_steps=600)
     sid = sc["scenario_id"]
     assert res["errors"] == []
@@ -61,7 +61,7 @@ def test_hand_written_probe_and_final_run_through_execute_turn():
     assert res["steps_per_scenario"][sid] <= 1.25 * sc["oracle_steps"]
 
     # And it beats the blind cautious controller on the same batch.
-    blind = run_episode(cautious_policy, seed=sc["seed"], hidden=HiddenParams(sigma_max=smax))
+    blind = run_cautious_episode(sc["seed"], HiddenParams(sigma_max=smax))
     assert res["reward_per_scenario"][sid] > blind["reward"]
     assert res["steps_per_scenario"][sid] < blind["steps"]
 

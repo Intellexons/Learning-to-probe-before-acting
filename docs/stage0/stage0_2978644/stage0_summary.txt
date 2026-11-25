@@ -1,0 +1,44 @@
+[    0.0s] Stage 0 gate: commit 2edeba7 (LORA4VR_GIT_COMMIT), host gx07, slurm 2978644, workers 32, quick=False
+[    0.0s] budget {'n_random': 300, 'topk': 6, 'n_climb': 120}, search batches 48, fresh batches 200, held-out tasks 48, anchors (0.08, 0.165, 0.25), gates {'g1_informed_fast_min': 0.9, 'g2_gap_min': 0.4, 'g3_fast_min': 0.95}
+[    1.3s] oracle: 992 (batch, limit) pairs
+[    1.3s] blind side: one controller per family, tuned across the range
+[   29.5s]   blind track   reward    44.5  success  88.5%  fast  10.5%  norm-time 0.556  steps  174.9  outcomes {'success': 177, 'shower': 23}  physical {'level': 0.10158407818849116}  [28s]
+[   32.4s]   blind linear  reward    -2.9  success  68.5%  fast   0.0%  norm-time 0.283  steps  199.8  outcomes {'shower': 63, 'success': 137}  physical {'rate_degC_per_min': 0.4470908818050986}  [3s]
+[   35.9s]   blind power   reward     7.8  success  82.0%  fast   0.0%  norm-time 0.333  steps  254.1  outcomes {'shower': 36, 'success': 164}  physical {'tau_min': 92.60963484028923, 'exponent': 1.598223306024789}  [4s]
+[   65.4s]   blind hybrid  reward    44.2  success  88.5%  fast  10.5%  norm-time 0.552  steps  176.1  outcomes {'success': 177, 'shower': 23}  physical {'tau_min': 52.49809920447183, 'exponent': 0.5, 'cap': 0.10145631400458796}  [29s]
+[   66.8s]   blind pwl     reward    17.3  success  90.0%  fast   0.0%  norm-time 0.371  steps  275.8  outcomes {'success': 180, 'shower': 20}  physical {'knot_times': [0.0, 0.0, 0.3782719487037975, 0.4776856786650291], 'levels': [0.3511052522077207, 0.3987142552319679, 0.9899739845480563, 0.4844077735405139, 0.0, 0.08887423885792849]}  [1s]
+[   66.8s] informed side: one controller per family per anchor, tuned at that limit
+[   95.5s]   informed sigma_max=0.080 track   reward    38.7  success 100.0%  fast 100.0%  norm-time 1.000  steps  271.1  outcomes {'success': 200}  physical {'level': 0.07997819682293704}  [29s]
+[   96.6s]   informed sigma_max=0.080 linear  reward   -82.8  success   0.0%  fast   0.0%  norm-time 0.000  steps    9.5  outcomes {'shower': 200}  physical {'rate_degC_per_min': 1.5}  [1s]
+[  101.5s]   informed sigma_max=0.080 power   reward   -64.3  success  94.5%  fast   0.0%  norm-time 0.426  steps  581.5  outcomes {'success': 189, 'shower': 8, 'timeout': 3}  physical {'tau_min': 195.62072448175195, 'exponent': 1.9654096052764163}  [5s]
+[  131.1s]   informed sigma_max=0.080 hybrid  reward    37.8  success 100.0%  fast 100.0%  norm-time 0.989  steps  274.0  outcomes {'success': 200}  physical {'tau_min': 10.0, 'exponent': 1.6748403810629542, 'cap': 0.0798624310577935}  [30s]
+[  131.9s]   informed sigma_max=0.080 pwl     reward   -82.5  success   0.0%  fast   0.0%  norm-time 0.000  steps    8.5  outcomes {'shower': 200}  physical {'knot_times': [0.5682117687970107, 0.7035652471103873, 0.7118193230308573, 0.9802534962419271], 'levels': [0.3862156159428378, 0.8843321713794662, 0.08698110466119968, 0.35230657821750555, 0.6907956810794138, 0.931695505135781]}  [1s]
+[  143.5s]   informed sigma_max=0.165 track   reward    84.3  success 100.0%  fast 100.0%  norm-time 1.000  steps  119.0  outcomes {'success': 200}  physical {'level': 0.1649871198325159}  [12s]
+[  146.5s]   informed sigma_max=0.165 linear  reward    42.0  success  97.0%  fast   0.0%  norm-time 0.471  steps  240.0  outcomes {'success': 194, 'shower': 6}  physical {'rate_degC_per_min': 0.498141252471402}  [3s]
+[  149.6s]   informed sigma_max=0.165 power   reward    53.2  success  99.5%  fast   0.0%  norm-time 0.538  steps  219.3  outcomes {'success': 199, 'shower': 1}  physical {'tau_min': 68.64075240956454, 'exponent': 1.5935660285208242}  [3s]
+[  162.8s]   informed sigma_max=0.165 hybrid  reward    84.0  success 100.0%  fast 100.0%  norm-time 0.991  steps  120.1  outcomes {'success': 200}  physical {'tau_min': 30.28580907572225, 'exponent': 0.5, 'cap': 0.1649131410407258}  [13s]
+[  164.0s]   informed sigma_max=0.165 pwl     reward   -85.1  success   0.0%  fast   0.0%  norm-time 0.000  steps   16.9  outcomes {'shower': 200}  physical {'knot_times': [0.4213445296121191, 0.6567276459488973, 0.6885654222957559, 0.705464867729622], 'levels': [0.0668571864109756, 0.0787014888842783, 0.5797533680484149, 0.6628931574968343, 0.2199717916934646, 0.5494291609871866]}  [1s]
+[  173.2s]   informed sigma_max=0.250 track   reward    91.3  success 100.0%  fast 100.0%  norm-time 1.000  steps   95.7  outcomes {'success': 200}  physical {'level': 0.2499791396879463}  [9s]
+[  175.4s]   informed sigma_max=0.250 linear  reward    77.3  success  97.0%  fast  13.5%  norm-time 0.744  steps  122.2  outcomes {'success': 194, 'shower': 6}  physical {'rate_degC_per_min': 1.066149300262513}  [2s]
+[  177.9s]   informed sigma_max=0.250 power   reward    81.9  success  99.5%  fast  27.5%  norm-time 0.768  steps  123.6  outcomes {'success': 199, 'shower': 1}  physical {'tau_min': 35.96143975674886, 'exponent': 1.2158159715929022}  [3s]
+[  186.8s]   informed sigma_max=0.250 hybrid  reward    91.0  success 100.0%  fast 100.0%  norm-time 0.989  steps   96.7  outcomes {'success': 200}  physical {'tau_min': 10.098519300091285, 'exponent': 0.7185587494072792, 'cap': 0.2497815868424137}  [9s]
+[  190.0s]   informed sigma_max=0.250 pwl     reward    85.7  success 100.0%  fast  86.5%  norm-time 0.837  steps  114.2  outcomes {'success': 200}  physical {'knot_times': [0.10305364382096979, 0.12284762990465023, 0.5869788925338206, 0.9930403431663719], 'levels': [0.9884584952329415, 0.4608733902341108, 0.0, 0.0, 0.8522098956478714, 0.9506510952271506]}  [3s]
+[  190.0s] cautious blind reference: rides a hair under the bottom of the range
+[  197.9s]   cautious reward    38.7  success 100.0%  fast   7.5%  norm-time 0.502  steps  271.0  outcomes {'success': 200}
+[  197.9s] best blind family track {'level': 0.10158407818849116}: fast 10.5% over the range, at anchors [0, 0, 0]
+[  197.9s] best informed at anchors: 0.080: track fast 100.0%, 0.165: track fast 100.0%, 0.250: track fast 100.0%
+[  197.9s] G1 informed fast >= 90% at every anchor: PASS
+[  197.9s] G2 gap +90 pp (need >= 40): PASS
+[  197.9s] G3: hand-written probe run and controller through the sandbox
+[  242.9s]   three-pass  reward    76.7  success 100.0%  fast 100.0%  norm-time 0.950  steps  144.4  outcomes {'success': 200}  probe failures 0  probe error {'median': 0.004925000000000013, 'p90': 0.008650000000000019, 'max': 0.010670000000000013}  [42s]
+[  252.6s]   one-pass    reward    76.7  success 100.0%  fast 100.0%  norm-time 0.950  steps  144.4  outcomes {'success': 200}  probe failures 0  probe error {'median': 0.005034999999999998, 'p90': 0.008709999999999996, 'max': 0.011190000000000005}  [10s]
+[  262.2s]   creep-0.005 reward    77.5  success 100.0%  fast 100.0%  norm-time 0.964  steps  141.6  outcomes {'success': 200}  probe failures 0  probe error {'median': 0.0026149999999999923, 'p90': 0.004599999999999993, 'max': 0.0325}  [10s]
+[  273.2s]   creep-0.001 reward    74.3  success 100.0%  fast  77.5%  norm-time 0.880  steps  152.4  outcomes {'success': 200}  probe failures 0  probe error {'median': 0.013469999999999996, 'p90': 0.07878000000000002, 'max': 0.10894000000000001}  [11s]
+[  273.2s] G3 three-pass fast >= 95% at every anchor, no probe failure: [100.0, 100.0, 100.0] -> PASS
+[  273.2s] references on the 48 held-out tasks
+[  278.3s]   oracle           reward    79.7  success 100.0%  fast 100.0%  norm-time 1.000  steps  134.3  outcomes {'success': 48}
+[  278.3s]   cautious         reward    38.4  success 100.0%  fast   4.2%  norm-time 0.493  steps  272.0  outcomes {'success': 48}
+[  278.3s]   blind_searched   reward    46.2  success  89.6%  fast  10.4%  norm-time 0.563  steps  176.5  outcomes {'success': 43, 'shower': 5}
+[  278.3s]   probe_controller reward    77.1  success 100.0%  fast 100.0%  norm-time 0.951  steps  143.1  outcomes {'success': 48}
+[  278.3s] wrote /scratch/2978644/out/stage0_results.json and stage0_rows.json; total 278s
+[  278.3s] VERDICT G1 PASS  G2 PASS  G3 PASS

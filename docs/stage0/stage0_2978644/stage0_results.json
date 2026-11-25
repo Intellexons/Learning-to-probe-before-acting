@@ -1,0 +1,4887 @@
+{
+ "provenance": {
+  "commit": "2edeba7c173ce738e608d56eb7a575122e4a02bd",
+  "commit_source": "LORA4VR_GIT_COMMIT",
+  "dirty_tree": null,
+  "branch": null,
+  "command": "scripts/stage0_gate.py --out /scratch/2978644/out --workers 32",
+  "cwd": "/sc/home/nima.hamidisiboni/work/lora4vr",
+  "hostname": "gx07",
+  "platform": "Linux-6.8.0-137-generic-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "started_utc": "2026-11-01T16:46:15+00:00",
+  "slurm": {
+   "cpus_per_task": "32",
+   "job_id": "2978644",
+   "job_name": "stage0",
+   "job_nodelist": "gx07",
+   "submit_dir": "/sc/home/nima.hamidisiboni/work/lora4vr"
+  }
+ },
+ "config": {
+  "env": {
+   "dt": 20.0,
+   "max_steps": 600,
+   "sol_c0": 0.2,
+   "sol_c1": 0.006,
+   "sol_c2": 0.0001,
+   "k_g": 1.5e-06,
+   "g": 1.5,
+   "rho": 2000.0,
+   "seed_size": 0.0001,
+   "T0_min": 55.0,
+   "T0_max": 65.0,
+   "T_target_min": 18.0,
+   "T_target_max": 25.0,
+   "seed_loading_min": 0.03,
+   "seed_loading_max": 0.06,
+   "max_rate": 1.5,
+   "T_min": 15.0,
+   "T_max": 70.0,
+   "T_tol": 0.25,
+   "sigma_tol": 0.02,
+   "dissolved_frac": 0.3,
+   "success_bonus": 120.0,
+   "fail_penalty": 80.0,
+   "time_weight": 0.3
+  },
+  "fast_factor": 1.25,
+  "anchors": [
+   0.08,
+   0.165,
+   0.25
+  ],
+  "sigma_max_range": [
+   0.08,
+   0.25
+  ],
+  "n_strata": 3,
+  "search_seeds": [
+   20000,
+   20047,
+   48
+  ],
+  "fresh_seeds": [
+   30000,
+   30199,
+   200
+  ],
+  "budget": {
+   "n_random": 300,
+   "topk": 6,
+   "n_climb": 120
+  },
+  "search_seed": 0,
+  "gates": {
+   "g1_informed_fast_min": 0.9,
+   "g2_gap_min": 0.4,
+   "g3_fast_min": 0.95
+  },
+  "families": {
+   "track": 1,
+   "linear": 1,
+   "power": 2,
+   "hybrid": 3,
+   "pwl": 10
+  },
+  "controller_margin": 0.003,
+  "probe_variants": [
+   "three-pass",
+   "one-pass",
+   "creep-0.005",
+   "creep-0.001"
+  ],
+  "gate_variant": "three-pass",
+  "inputs": {
+   "crystallizer_eval.jsonl": "201d522e92870d98d1295442fb00683f3407a856e5b8e988b94a5fbac1669549",
+   "n_eval_tasks": 48
+  }
+ },
+ "search": {
+  "blind": {
+   "track": {
+    "params": [
+     0.2472244793590641
+    ],
+    "physical": {
+     "level": 0.10158407818849116
+    },
+    "search_reward": 44.960416666666866,
+    "eval": {
+     "n": 200,
+     "reward": 44.53600000000018,
+     "success": 0.885,
+     "fast": 0.105,
+     "norm_time": 0.5558138901488994,
+     "min_norm_time": 0.0,
+     "steps": 174.88,
+     "outcomes": {
+      "success": 177,
+      "shower": 23
+     }
+    },
+    "eval_by_third": {
+     "low": {
+      "n": 67,
+      "reward": 12.705970149253854,
+      "success": 0.6567164179104478,
+      "fast": 0.31343283582089554,
+      "norm_time": 0.541984554296113,
+      "min_norm_time": 0.0,
+      "steps": 128.7910447761194,
+      "outcomes": {
+       "success": 44,
+       "shower": 23
+      }
+     },
+     "middle": {
+      "n": 67,
+      "reward": 60.23731343283603,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.6102726744103587,
+      "min_norm_time": 0.5208333333333334,
+      "steps": 199.2089552238806,
+      "outcomes": {
+       "success": 67
+      }
+     },
+     "high": {
+      "n": 66,
+      "reward": 60.90909090909111,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.5145688440370647,
+      "min_norm_time": 0.43946188340807174,
+      "steps": 196.96969696969697,
+      "outcomes": {
+       "success": 66
+      }
+     }
+    },
+    "eval_at_anchors": {
+     "0.08": {
+      "n": 200,
+      "reward": -82.5425,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 8.475,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "0.165": {
+      "n": 200,
+      "reward": 61.05450000000021,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.6073078744109843,
+      "min_norm_time": 0.5695652173913044,
+      "steps": 196.485,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "0.25": {
+      "n": 200,
+      "reward": 61.05450000000021,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.48984039226505866,
+      "min_norm_time": 0.42016806722689076,
+      "steps": 196.485,
+      "outcomes": {
+       "success": 200
+      }
+     }
+    },
+    "seconds": 28.149248047266155,
+    "n_evaluations": 1020
+   },
+   "linear": {
+    "params": [
+     0.2885749201385801
+    ],
+    "physical": {
+     "rate_degC_per_min": 0.4470908818050986
+    },
+    "search_reward": -4.537499999999697,
+    "eval": {
+     "n": 200,
+     "reward": -2.9459999999997177,
+     "success": 0.685,
+     "fast": 0.0,
+     "norm_time": 0.2827267562649153,
+     "min_norm_time": 0.0,
+     "steps": 199.82,
+     "outcomes": {
+      "shower": 63,
+      "success": 137
+     }
+    },
+    "eval_by_third": {
+     "low": {
+      "n": 67,
+      "reward": -73.80447761194024,
+      "success": 0.14925373134328357,
+      "fast": 0.0,
+      "norm_time": 0.07092793769314915,
+      "min_norm_time": 0.0,
+      "steps": 78.85074626865672,
+      "outcomes": {
+       "shower": 57,
+       "success": 10
+      }
+     },
+     "middle": {
+      "n": 67,
+      "reward": 26.932835820895892,
+      "success": 0.9104477611940298,
+      "fast": 0.0,
+      "norm_time": 0.40525975414274773,
+      "min_norm_time": 0.0,
+      "steps": 250.52238805970148,
+      "outcomes": {
+       "success": 61,
+       "shower": 6
+      }
+     },
+     "high": {
+      "n": 66,
+      "reward": 38.654545454545875,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.3733450893936056,
+      "min_norm_time": 0.32371794871794873,
+      "steps": 271.1515151515151,
+      "outcomes": {
+       "success": 66
+      }
+     }
+    },
+    "eval_at_anchors": {
+     "0.08": {
+      "n": 200,
+      "reward": -89.00299999999999,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 30.01,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "0.165": {
+      "n": 200,
+      "reward": 38.716500000000416,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.44171587692973246,
+      "min_norm_time": 0.3685897435897436,
+      "steps": 270.945,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "0.25": {
+      "n": 200,
+      "reward": 38.716500000000416,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.35445640324180144,
+      "min_norm_time": 0.321656050955414,
+      "steps": 270.945,
+      "outcomes": {
+       "success": 200
+      }
+     }
+    },
+    "seconds": 2.93654506187886,
+    "n_evaluations": 1020
+   },
+   "power": {
+    "params": [
+     0.434787551790996,
+     0.313778087435654
+    ],
+    "physical": {
+     "tau_min": 92.60963484028923,
+     "exponent": 1.598223306024789
+    },
+    "search_reward": 7.000000000000373,
+    "eval": {
+     "n": 200,
+     "reward": 7.780500000000378,
+     "success": 0.82,
+     "fast": 0.0,
+     "norm_time": 0.3331175755689773,
+     "min_norm_time": 0.0,
+     "steps": 254.065,
+     "outcomes": {
+      "shower": 36,
+      "success": 164
+     }
+    },
+    "eval_by_third": {
+     "low": {
+      "n": 67,
+      "reward": -42.062686567163986,
+      "success": 0.4626865671641791,
+      "fast": 0.0,
+      "norm_time": 0.23533901211329694,
+      "min_norm_time": 0.0,
+      "steps": 182.0,
+      "outcomes": {
+       "shower": 36,
+       "success": 31
+      }
+     },
+     "middle": {
+      "n": 67,
+      "reward": 32.820895522388525,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.4167623270320167,
+      "min_norm_time": 0.3470790378006873,
+      "steps": 290.5970149253731,
+      "outcomes": {
+       "success": 67
+      }
+     },
+     "high": {
+      "n": 66,
+      "reward": 32.95909090909138,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.3474655362281735,
+      "min_norm_time": 0.29553264604810997,
+      "steps": 290.1363636363636,
+      "outcomes": {
+       "success": 66
+      }
+     }
+    },
+    "eval_at_anchors": {
+     "0.08": {
+      "n": 200,
+      "reward": -102.64700000000002,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 75.49,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "0.165": {
+      "n": 200,
+      "reward": 32.94600000000047,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.4100015157679702,
+      "min_norm_time": 0.35494880546075086,
+      "steps": 290.18,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "0.25": {
+      "n": 200,
+      "reward": 32.94600000000047,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.3297021941633169,
+      "min_norm_time": 0.28668941979522183,
+      "steps": 290.18,
+      "outcomes": {
+       "success": 200
+      }
+     }
+    },
+    "seconds": 3.50712231406942,
+    "n_evaluations": 1020
+   },
+   "hybrid": {
+    "params": [
+     0.22367420633932542,
+     0.0,
+     0.24683731516541804
+    ],
+    "physical": {
+     "tau_min": 52.49809920447183,
+     "exponent": 0.5,
+     "cap": 0.10145631400458796
+    },
+    "search_reward": 44.57916666666686,
+    "eval": {
+     "n": 200,
+     "reward": 44.156500000000186,
+     "success": 0.885,
+     "fast": 0.105,
+     "norm_time": 0.5520746336814454,
+     "min_norm_time": 0.0,
+     "steps": 176.145,
+     "outcomes": {
+      "success": 177,
+      "shower": 23
+     }
+    },
+    "eval_by_third": {
+     "low": {
+      "n": 67,
+      "reward": 12.329850746268782,
+      "success": 0.6567164179104478,
+      "fast": 0.31343283582089554,
+      "norm_time": 0.5380378579819495,
+      "min_norm_time": 0.0,
+      "steps": 130.044776119403,
+      "outcomes": {
+       "success": 44,
+       "shower": 23
+      }
+     },
+     "middle": {
+      "n": 67,
+      "reward": 59.852238805970366,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.6063128285881132,
+      "min_norm_time": 0.5186721991701245,
+      "steps": 200.49253731343285,
+      "outcomes": {
+       "success": 67
+      }
+     },
+     "high": {
+      "n": 66,
+      "reward": 60.53181818181839,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.5112641020620435,
+      "min_norm_time": 0.43555555555555553,
+      "steps": 198.22727272727272,
+      "outcomes": {
+       "success": 66
+      }
+     }
+    },
+    "eval_at_anchors": {
+     "0.08": {
+      "n": 200,
+      "reward": -82.8425,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 9.475,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "0.165": {
+      "n": 200,
+      "reward": 60.66000000000021,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.6032244432764167,
+      "min_norm_time": 0.5659574468085107,
+      "steps": 197.8,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "0.25": {
+      "n": 200,
+      "reward": 60.66000000000021,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.486538303208255,
+      "min_norm_time": 0.41841004184100417,
+      "steps": 197.8,
+      "outcomes": {
+       "success": 200
+      }
+     }
+    },
+    "seconds": 29.498466327786446,
+    "n_evaluations": 1020
+   },
+   "pwl": {
+    "params": [
+     0.0,
+     0.3782719487037975,
+     0.4776856786650291,
+     0.0,
+     0.3511052522077207,
+     0.3987142552319679,
+     0.9899739845480563,
+     0.4844077735405139,
+     0.0,
+     0.08887423885792849
+    ],
+    "physical": {
+     "knot_times": [
+      0.0,
+      0.0,
+      0.3782719487037975,
+      0.4776856786650291
+     ],
+     "levels": [
+      0.3511052522077207,
+      0.3987142552319679,
+      0.9899739845480563,
+      0.4844077735405139,
+      0.0,
+      0.08887423885792849
+     ]
+    },
+    "search_reward": 16.929166666667108,
+    "eval": {
+     "n": 200,
+     "reward": 17.264500000000446,
+     "success": 0.9,
+     "fast": 0.0,
+     "norm_time": 0.3708453112683357,
+     "min_norm_time": 0.0,
+     "steps": 275.785,
+     "outcomes": {
+      "success": 180,
+      "shower": 20
+     }
+    },
+    "eval_by_third": {
+     "low": {
+      "n": 67,
+      "reward": -7.9850746268653285,
+      "success": 0.7014925373134329,
+      "fast": 0.0,
+      "norm_time": 0.3724432394669604,
+      "min_norm_time": 0.0,
+      "steps": 227.61194029850745,
+      "outcomes": {
+       "success": 47,
+       "shower": 20
+      }
+     },
+     "middle": {
+      "n": 67,
+      "reward": 29.919402985075124,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.40334906861583075,
+      "min_norm_time": 0.33554817275747506,
+      "steps": 300.2686567164179,
+      "outcomes": {
+       "success": 67
+      }
+     },
+     "high": {
+      "n": 66,
+      "reward": 30.050000000000495,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.33622693351697175,
+      "min_norm_time": 0.2866666666666667,
+      "steps": 299.8333333333333,
+      "outcomes": {
+       "success": 66
+      }
+     }
+    },
+    "eval_at_anchors": {
+     "0.08": {
+      "n": 200,
+      "reward": -95.441,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 51.47,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "0.165": {
+      "n": 200,
+      "reward": 30.036000000000495,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.39674917082067584,
+      "min_norm_time": 0.3432343234323432,
+      "steps": 299.88,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "0.25": {
+      "n": 200,
+      "reward": 30.036000000000495,
+      "success": 1.0,
+      "fast": 0.0,
+      "norm_time": 0.3190420701551038,
+      "min_norm_time": 0.27722772277227725,
+      "steps": 299.88,
+      "outcomes": {
+       "success": 200
+      }
+     }
+    },
+    "seconds": 1.4127737078815699,
+    "n_evaluations": 1020
+   }
+  },
+  "informed": {
+   "0.08": {
+    "track": {
+     "params": [
+      0.18175211158465768
+     ],
+     "physical": {
+      "level": 0.07997819682293704
+     },
+     "search_reward": 37.493750000000425,
+     "eval": {
+      "n": 200,
+      "reward": 38.665500000000414,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 0.9995432271073035,
+      "min_norm_time": 0.9957264957264957,
+      "steps": 271.115,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 28.694749432150275,
+     "n_evaluations": 1020
+    },
+    "linear": {
+     "params": [
+      1.0
+     ],
+     "physical": {
+      "rate_degC_per_min": 1.5
+     },
+     "search_reward": -82.85625,
+     "eval": {
+      "n": 200,
+      "reward": -82.8425,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 9.475,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "seconds": 1.051866534166038,
+     "n_evaluations": 1020
+    },
+    "power": {
+     "params": [
+      0.976951181482905,
+      0.41868845865040466
+     ],
+     "physical": {
+      "tau_min": 195.62072448175195,
+      "exponent": 1.9654096052764163
+     },
+     "search_reward": -66.31666666666759,
+     "eval": {
+      "n": 200,
+      "reward": -64.265000000001,
+      "success": 0.945,
+      "fast": 0.0,
+      "norm_time": 0.4255047467537225,
+      "min_norm_time": 0.0,
+      "steps": 581.55,
+      "outcomes": {
+       "success": 189,
+       "shower": 8,
+       "timeout": 3
+      }
+     },
+     "seconds": 4.898746836930513,
+     "n_evaluations": 1020
+    },
+    "hybrid": {
+     "params": [
+      0.0,
+      0.33566868030370123,
+      0.18140130623573789
+     ],
+     "physical": {
+      "tau_min": 10.0,
+      "exponent": 1.6748403810629542,
+      "cap": 0.0798624310577935
+     },
+     "search_reward": 36.62500000000043,
+     "eval": {
+      "n": 200,
+      "reward": 37.79100000000042,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 0.9888297138780091,
+      "min_norm_time": 0.9834710743801653,
+      "steps": 274.03,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 29.63489236170426,
+     "n_evaluations": 1020
+    },
+    "pwl": {
+     "params": [
+      0.7035652471103873,
+      0.9802534962419271,
+      0.5682117687970107,
+      0.7118193230308573,
+      0.3862156159428378,
+      0.8843321713794662,
+      0.08698110466119968,
+      0.35230657821750555,
+      0.6907956810794138,
+      0.931695505135781
+     ],
+     "physical": {
+      "knot_times": [
+       0.5682117687970107,
+       0.7035652471103873,
+       0.7118193230308573,
+       0.9802534962419271
+      ],
+      "levels": [
+       0.3862156159428378,
+       0.8843321713794662,
+       0.08698110466119968,
+       0.35230657821750555,
+       0.6907956810794138,
+       0.931695505135781
+      ]
+     },
+     "search_reward": -82.55624999999999,
+     "eval": {
+      "n": 200,
+      "reward": -82.5425,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 8.475,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "seconds": 0.8082639207132161,
+     "n_evaluations": 1020
+    }
+   },
+   "0.165": {
+    "track": {
+     "params": [
+      0.4393549085833815
+     ],
+     "physical": {
+      "level": 0.1649871198325159
+     },
+     "search_reward": 83.75624999999998,
+     "eval": {
+      "n": 200,
+      "reward": 84.30149999999998,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 1.0,
+      "min_norm_time": 1.0,
+      "steps": 118.995,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 11.531588642857969,
+     "n_evaluations": 1020
+    },
+    "linear": {
+     "params": [
+      0.3230684138320284
+     ],
+     "physical": {
+      "rate_degC_per_min": 0.498141252471402
+     },
+     "search_reward": 44.57500000000036,
+     "eval": {
+      "n": 200,
+      "reward": 41.997000000000334,
+      "success": 0.97,
+      "fast": 0.0,
+      "norm_time": 0.4705413977706754,
+      "min_norm_time": 0.0,
+      "steps": 240.01,
+      "outcomes": {
+       "success": 194,
+       "shower": 6
+      }
+     },
+     "seconds": 3.031351591926068,
+     "n_evaluations": 1020
+    },
+    "power": {
+     "params": [
+      0.3086355389977081,
+      0.3124474367202355
+     ],
+     "physical": {
+      "tau_min": 68.64075240956454,
+      "exponent": 1.5935660285208242
+     },
+     "search_reward": 54.20000000000027,
+     "eval": {
+      "n": 200,
+      "reward": 53.21000000000027,
+      "success": 0.995,
+      "fast": 0.0,
+      "norm_time": 0.537852591653715,
+      "min_norm_time": 0.0,
+      "steps": 219.3,
+      "outcomes": {
+       "success": 199,
+       "shower": 1
+      }
+     },
+     "seconds": 3.1587492460384965,
+     "n_evaluations": 1020
+    },
+    "hybrid": {
+     "params": [
+      0.10676741618801183,
+      0.0,
+      0.4391307304264418
+     ],
+     "physical": {
+      "tau_min": 30.28580907572225,
+      "exponent": 0.5,
+      "cap": 0.1649131410407258
+     },
+     "search_reward": 83.44375,
+     "eval": {
+      "n": 200,
+      "reward": 83.97599999999998,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 0.9908828039411103,
+      "min_norm_time": 0.9629629629629629,
+      "steps": 120.08,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 13.11453350726515,
+     "n_evaluations": 1020
+    },
+    "pwl": {
+     "params": [
+      0.4213445296121191,
+      0.6885654222957559,
+      0.6567276459488973,
+      0.705464867729622,
+      0.0668571864109756,
+      0.0787014888842783,
+      0.5797533680484149,
+      0.6628931574968343,
+      0.2199717916934646,
+      0.5494291609871866
+     ],
+     "physical": {
+      "knot_times": [
+       0.4213445296121191,
+       0.6567276459488973,
+       0.6885654222957559,
+       0.705464867729622
+      ],
+      "levels": [
+       0.0668571864109756,
+       0.0787014888842783,
+       0.5797533680484149,
+       0.6628931574968343,
+       0.2199717916934646,
+       0.5494291609871866
+      ]
+     },
+     "search_reward": -85.1125,
+     "eval": {
+      "n": 200,
+      "reward": -85.079,
+      "success": 0.0,
+      "fast": 0.0,
+      "norm_time": 0.0,
+      "min_norm_time": 0.0,
+      "steps": 16.93,
+      "outcomes": {
+       "shower": 200
+      }
+     },
+     "seconds": 1.2422470287419856,
+     "n_evaluations": 1020
+    }
+   },
+   "0.25": {
+    "track": {
+     "params": [
+      0.6969064839028676
+     ],
+     "physical": {
+      "level": 0.2499791396879463
+     },
+     "search_reward": 90.84999999999995,
+     "eval": {
+      "n": 200,
+      "reward": 91.29899999999996,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 0.9998941769316909,
+      "min_norm_time": 0.9893617021276596,
+      "steps": 95.67,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 9.210975433699787,
+     "n_evaluations": 1020
+    },
+    "linear": {
+     "params": [
+      0.7068576353125088
+     ],
+     "physical": {
+      "rate_degC_per_min": 1.066149300262513
+     },
+     "search_reward": 81.87500000000001,
+     "eval": {
+      "n": 200,
+      "reward": 77.34,
+      "success": 0.97,
+      "fast": 0.135,
+      "norm_time": 0.7436184627861813,
+      "min_norm_time": 0.0,
+      "steps": 122.2,
+      "outcomes": {
+       "success": 194,
+       "shower": 6
+      }
+     },
+     "seconds": 2.1700186990201473,
+     "n_evaluations": 1020
+    },
+    "power": {
+     "params": [
+      0.13663915661446766,
+      0.2045188490265435
+     ],
+     "physical": {
+      "tau_min": 35.96143975674886,
+      "exponent": 1.2158159715929022
+     },
+     "search_reward": 83.05,
+     "eval": {
+      "n": 200,
+      "reward": 81.93199999999999,
+      "success": 0.995,
+      "fast": 0.275,
+      "norm_time": 0.7680949178247615,
+      "min_norm_time": 0.0,
+      "steps": 123.56,
+      "outcomes": {
+       "success": 199,
+       "shower": 1
+      }
+     },
+     "seconds": 2.5316407713107765,
+     "n_evaluations": 1020
+    },
+    "hybrid": {
+     "params": [
+      0.0005185226320593904,
+      0.062445356973508316,
+      0.6963078389164051
+     ],
+     "physical": {
+      "tau_min": 10.098519300091285,
+      "exponent": 0.7185587494072792,
+      "cap": 0.2497815868424137
+     },
+     "search_reward": 90.53124999999996,
+     "eval": {
+      "n": 200,
+      "reward": 90.99449999999996,
+      "success": 1.0,
+      "fast": 1.0,
+      "norm_time": 0.9893696131317149,
+      "min_norm_time": 0.9777777777777777,
+      "steps": 96.685,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 8.929873786866665,
+     "n_evaluations": 1020
+    },
+    "pwl": {
+     "params": [
+      0.5869788925338206,
+      0.9930403431663719,
+      0.12284762990465023,
+      0.10305364382096979,
+      0.9884584952329415,
+      0.4608733902341108,
+      0.0,
+      0.0,
+      0.8522098956478714,
+      0.9506510952271506
+     ],
+     "physical": {
+      "knot_times": [
+       0.10305364382096979,
+       0.12284762990465023,
+       0.5869788925338206,
+       0.9930403431663719
+      ],
+      "levels": [
+       0.9884584952329415,
+       0.4608733902341108,
+       0.0,
+       0.0,
+       0.8522098956478714,
+       0.9506510952271506
+      ]
+     },
+     "search_reward": 85.68749999999996,
+     "eval": {
+      "n": 200,
+      "reward": 85.73849999999997,
+      "success": 1.0,
+      "fast": 0.865,
+      "norm_time": 0.8373048686531616,
+      "min_norm_time": 0.75,
+      "steps": 114.205,
+      "outcomes": {
+       "success": 200
+      }
+     },
+     "seconds": 3.190504905767739,
+     "n_evaluations": 1020
+    }
+   }
+  }
+ },
+ "cautious": {
+  "eval": {
+   "n": 200,
+   "reward": 38.701500000000415,
+   "success": 1.0,
+   "fast": 0.075,
+   "norm_time": 0.5021747175867094,
+   "min_norm_time": 0.31715210355987056,
+   "steps": 270.995,
+   "outcomes": {
+    "success": 200
+   }
+  },
+  "eval_by_third": {
+   "low": {
+    "n": 67,
+    "reward": 40.105970149254134,
+    "success": 1.0,
+    "fast": 0.22388059701492538,
+    "norm_time": 0.6888217315752544,
+    "min_norm_time": 0.5241935483870968,
+    "steps": 266.3134328358209,
+    "outcomes": {
+     "success": 67
+    }
+   },
+   "middle": {
+    "n": 67,
+    "reward": 37.531343283582515,
+    "success": 1.0,
+    "fast": 0.0,
+    "norm_time": 0.4425629802069673,
+    "min_norm_time": 0.37650602409638556,
+    "steps": 274.8955223880597,
+    "outcomes": {
+     "success": 67
+    }
+   },
+   "high": {
+    "n": 66,
+    "reward": 38.46363636363678,
+    "success": 1.0,
+    "fast": 0.0,
+    "norm_time": 0.3732146640595911,
+    "min_norm_time": 0.31715210355987056,
+    "steps": 271.7878787878788,
+    "outcomes": {
+     "success": 66
+    }
+   }
+  },
+  "eval_at_anchors": {
+   "0.08": {
+    "n": 200,
+    "reward": 38.701500000000415,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 1.0,
+    "min_norm_time": 1.0,
+    "steps": 270.995,
+    "outcomes": {
+     "success": 200
+    }
+   },
+   "0.165": {
+    "n": 200,
+    "reward": 38.701500000000415,
+    "success": 1.0,
+    "fast": 0.0,
+    "norm_time": 0.4406505053539324,
+    "min_norm_time": 0.4117647058823529,
+    "steps": 270.995,
+    "outcomes": {
+     "success": 200
+    }
+   },
+   "0.25": {
+    "n": 200,
+    "reward": 38.701500000000415,
+    "success": 1.0,
+    "fast": 0.0,
+    "norm_time": 0.3555015378090779,
+    "min_norm_time": 0.3058103975535168,
+    "steps": 270.995,
+    "outcomes": {
+     "success": 200
+    }
+   }
+  }
+ },
+ "verdicts": {
+  "best_blind_family": "track",
+  "best_blind_physical": {
+   "level": 0.10158407818849116
+  },
+  "blind_fast_range": 0.105,
+  "blind_success_range": 0.885,
+  "blind_fast_at_anchors": {
+   "0.08": 0.0,
+   "0.165": 0.0,
+   "0.25": 0.0
+  },
+  "best_informed": {
+   "0.08": {
+    "family": "track",
+    "n": 200,
+    "reward": 38.665500000000414,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9995432271073035,
+    "min_norm_time": 0.9957264957264957,
+    "steps": 271.115,
+    "outcomes": {
+     "success": 200
+    }
+   },
+   "0.165": {
+    "family": "track",
+    "n": 200,
+    "reward": 84.30149999999998,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 1.0,
+    "min_norm_time": 1.0,
+    "steps": 118.995,
+    "outcomes": {
+     "success": 200
+    }
+   },
+   "0.25": {
+    "family": "track",
+    "n": 200,
+    "reward": 91.29899999999996,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9998941769316909,
+    "min_norm_time": 0.9893617021276596,
+    "steps": 95.67,
+    "outcomes": {
+     "success": 200
+    }
+   }
+  },
+  "informed_mean_fast": 1.0,
+  "gap_pp": 89.5,
+  "G1": true,
+  "G2": true,
+  "G3": true,
+  "g3_fast_at_anchors": {
+   "0.08": 1.0,
+   "0.165": 1.0,
+   "0.25": 1.0
+  }
+ },
+ "g3": {
+  "three-pass": {
+   "range": {
+    "n": 200,
+    "reward": 76.68450000000006,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9502125724869953,
+    "min_norm_time": 0.8290598290598291,
+    "steps": 144.385,
+    "outcomes": {
+     "success": 200
+    },
+    "probe_failures": 0,
+    "probe_error": {
+     "median": 0.004925000000000013,
+     "p90": 0.008650000000000019,
+     "max": 0.010670000000000013
+    },
+    "bracket_width_max": 0.011060000000000014
+   },
+   "range_by_third": {
+    "low": {
+     "n": 67,
+     "reward": 58.85820895522411,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9069801127604986,
+     "min_norm_time": 0.8290598290598291,
+     "steps": 203.80597014925374,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.005530000000000007,
+      "p90": 0.009440000000000004,
+      "max": 0.010079999999999992
+     },
+     "bracket_width_max": 0.011020000000000002
+    },
+    "middle": {
+     "n": 67,
+     "reward": 82.14626865671642,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9609146327970033,
+     "min_norm_time": 0.9141104294478528,
+     "steps": 126.17910447761194,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.005070000000000019,
+      "p90": 0.008580000000000004,
+      "max": 0.010670000000000013
+     },
+     "bracket_width_max": 0.011060000000000014
+    },
+    "high": {
+     "n": 66,
+     "reward": 89.23636363636359,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9832358567431276,
+     "min_norm_time": 0.9649122807017544,
+     "steps": 102.54545454545455,
+     "outcomes": {
+      "success": 66
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.00396500000000001,
+      "p90": 0.0071199999999999875,
+      "max": 0.009090000000000015
+     },
+     "bracket_width_max": 0.010219999999999979
+    }
+   },
+   "seconds": 41.84006865601987,
+   "anchors": {
+    "0.08": {
+     "n": 200,
+     "reward": 34.12500000000046,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9466918671829577,
+     "min_norm_time": 0.9423076923076923,
+     "steps": 286.25,
+     "outcomes": {
+      "success": 200
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.004965000000000004,
+      "p90": 0.009000000000000008,
+      "max": 0.010220000000000007
+     },
+     "bracket_width_max": 0.01088
+    },
+    "0.165": {
+     "n": 200,
+     "reward": 82.84199999999998,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.961199512081101,
+     "min_norm_time": 0.9236111111111112,
+     "steps": 123.86,
+     "outcomes": {
+      "success": 200
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.00470000000000001,
+      "p90": 0.008340000000000014,
+      "max": 0.010120000000000018
+     },
+     "bracket_width_max": 0.011009999999999992
+    },
+    "0.25": {
+     "n": 200,
+     "reward": 91.06049999999996,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9916966922727274,
+     "min_norm_time": 0.9775280898876404,
+     "steps": 96.465,
+     "outcomes": {
+      "success": 200
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.002840000000000009,
+      "p90": 0.0063600000000000045,
+      "max": 0.008369999999999989
+     },
+     "bracket_width_max": 0.15720000000000003
+    }
+   }
+  },
+  "one-pass": {
+   "range": {
+    "n": 200,
+    "reward": 76.67550000000007,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9500151033400444,
+    "min_norm_time": 0.8290598290598291,
+    "steps": 144.415,
+    "outcomes": {
+     "success": 200
+    },
+    "probe_failures": 0,
+    "probe_error": {
+     "median": 0.005034999999999998,
+     "p90": 0.008709999999999996,
+     "max": 0.011190000000000005
+    },
+    "bracket_width_max": 0.16732000000000002
+   },
+   "range_by_third": {
+    "low": {
+     "n": 67,
+     "reward": 58.84477611940321,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9068295174023472,
+     "min_norm_time": 0.8290598290598291,
+     "steps": 203.8507462686567,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.005530000000000007,
+      "p90": 0.009440000000000004,
+      "max": 0.010079999999999992
+     },
+     "bracket_width_max": 0.011020000000000002
+    },
+    "middle": {
+     "n": 67,
+     "reward": 82.14626865671642,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9609146327970033,
+     "min_norm_time": 0.9141104294478528,
+     "steps": 126.17910447761194,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.005070000000000019,
+      "p90": 0.008580000000000004,
+      "max": 0.010670000000000013
+     },
+     "bracket_width_max": 0.011060000000000014
+    },
+    "high": {
+     "n": 66,
+     "reward": 89.22272727272723,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.982790342494733,
+     "min_norm_time": 0.9649122807017544,
+     "steps": 102.5909090909091,
+     "outcomes": {
+      "success": 66
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.004144999999999996,
+      "p90": 0.00738999999999998,
+      "max": 0.011190000000000005
+     },
+     "bracket_width_max": 0.16732000000000002
+    }
+   },
+   "seconds": 9.681095151230693
+  },
+  "creep-0.005": {
+   "range": {
+    "n": 200,
+    "reward": 77.53350000000005,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9637163066989602,
+    "min_norm_time": 0.8871595330739299,
+    "steps": 141.555,
+    "outcomes": {
+     "success": 200
+    },
+    "probe_failures": 0,
+    "probe_error": {
+     "median": 0.0026149999999999923,
+     "p90": 0.004599999999999993,
+     "max": 0.0325
+    },
+    "bracket_width_max": 0.18768
+   },
+   "range_by_third": {
+    "low": {
+     "n": 67,
+     "reward": 61.020895522388265,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9384102081934299,
+     "min_norm_time": 0.8871595330739299,
+     "steps": 196.59701492537314,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.0023900000000000032,
+      "p90": 0.004279999999999992,
+      "max": 0.004830000000000001
+     },
+     "bracket_width_max": 0.004970000000000002
+    },
+    "middle": {
+     "n": 67,
+     "reward": 82.58059701492537,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9717545901645804,
+     "min_norm_time": 0.9487179487179487,
+     "steps": 124.73134328358209,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.0023799999999999932,
+      "p90": 0.004149999999999987,
+      "max": 0.0047800000000000065
+     },
+     "bracket_width_max": 0.004909999999999998
+    },
+    "high": {
+     "n": 66,
+     "reward": 89.17272727272723,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9812457553000815,
+     "min_norm_time": 0.9158878504672897,
+     "steps": 102.75757575757575,
+     "outcomes": {
+      "success": 66
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.0032049999999999856,
+      "p90": 0.016630000000000006,
+      "max": 0.0325
+     },
+     "bracket_width_max": 0.18768
+    }
+   },
+   "seconds": 9.552774696145207
+  },
+  "creep-0.001": {
+   "range": {
+    "n": 200,
+    "reward": 74.28750000000008,
+    "success": 1.0,
+    "fast": 0.775,
+    "norm_time": 0.8803685132169025,
+    "min_norm_time": 0.620253164556962,
+    "steps": 152.375,
+    "outcomes": {
+     "success": 200
+    },
+    "probe_failures": 0,
+    "probe_error": {
+     "median": 0.013469999999999996,
+     "p90": 0.07878000000000002,
+     "max": 0.10894000000000001
+    },
+    "bracket_width_max": 0.26263000000000003
+   },
+   "range_by_third": {
+    "low": {
+     "n": 67,
+     "reward": 62.3641791044778,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9588700884880003,
+     "min_norm_time": 0.933852140077821,
+     "steps": 192.11940298507463,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.00046000000000001595,
+      "p90": 0.0008299999999999974,
+      "max": 0.000910000000000008
+     },
+     "bracket_width_max": 0.0009699999999999986
+    },
+    "middle": {
+     "n": 67,
+     "reward": 79.93880597014928,
+     "success": 1.0,
+     "fast": 0.9552238805970149,
+     "norm_time": 0.907444283369943,
+     "min_norm_time": 0.7611940298507462,
+     "steps": 133.53731343283582,
+     "outcomes": {
+      "success": 67
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.013569999999999999,
+      "p90": 0.03456000000000001,
+      "max": 0.05008000000000001
+     },
+     "bracket_width_max": 0.26263000000000003
+    },
+    "high": {
+     "n": 66,
+     "reward": 80.65454545454547,
+     "success": 1.0,
+     "fast": 0.36363636363636365,
+     "norm_time": 0.7731915110439139,
+     "min_norm_time": 0.620253164556962,
+     "steps": 131.15151515151516,
+     "outcomes": {
+      "success": 66
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.06549499999999998,
+      "p90": 0.09736,
+      "max": 0.10894000000000001
+     },
+     "bracket_width_max": 0.26217
+    }
+   },
+   "seconds": 11.048732508905232
+  }
+ },
+ "references": {
+  "per_task": [
+   {
+    "task_id": "crystallizer_eval_s10000",
+    "seed": 10000,
+    "sigma_max": 0.1254,
+    "third": "low",
+    "oracle": {
+     "seed": 10000,
+     "sigma_max": 0.1254,
+     "third": "low",
+     "oracle_steps": 145,
+     "steps": 145,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 76.50000000000006,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10000,
+     "sigma_max": 0.1254,
+     "third": "low",
+     "oracle_steps": 145,
+     "steps": 255,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5686274509803921,
+     "reward": 43.50000000000037,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10000,
+     "sigma_max": 0.1254,
+     "third": "low",
+     "oracle_steps": 145,
+     "steps": 185,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7837837837837838,
+     "reward": 64.50000000000017,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10000",
+     "seed": 10000,
+     "probe_seed": 110000,
+     "sigma_max": 0.1254,
+     "third": "low",
+     "oracle_steps": 145,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.12206,
+     "hi": 0.13206,
+     "probe_error": 0.0033400000000000096,
+     "bracket_width": 0.010000000000000009,
+     "steps": 154,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9415584415584416,
+     "reward": 73.80000000000008,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10001",
+    "seed": 10001,
+    "sigma_max": 0.1923,
+    "third": "middle",
+    "oracle": {
+     "seed": 10001,
+     "sigma_max": 0.1923,
+     "third": "middle",
+     "oracle_steps": 105,
+     "steps": 105,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 88.49999999999994,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10001,
+     "sigma_max": 0.1923,
+     "third": "middle",
+     "oracle_steps": 105,
+     "steps": 264,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.3977272727272727,
+     "reward": 40.800000000000395,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10001,
+     "sigma_max": 0.1923,
+     "third": "middle",
+     "oracle_steps": 105,
+     "steps": 191,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5497382198952879,
+     "reward": 62.70000000000019,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10001",
+     "seed": 10001,
+     "probe_seed": 110001,
+     "sigma_max": 0.1923,
+     "third": "middle",
+     "oracle_steps": 105,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.18294,
+     "hi": 0.19232,
+     "probe_error": 0.009360000000000007,
+     "bracket_width": 0.00938,
+     "steps": 109,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.963302752293578,
+     "reward": 87.29999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10002",
+    "seed": 10002,
+    "sigma_max": 0.2179,
+    "third": "high",
+    "oracle": {
+     "seed": 10002,
+     "sigma_max": 0.2179,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 102,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 89.39999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10002,
+     "sigma_max": 0.2179,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 230,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4434782608695652,
+     "reward": 51.0000000000003,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10002,
+     "sigma_max": 0.2179,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 171,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5964912280701754,
+     "reward": 68.70000000000013,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10002",
+     "seed": 10002,
+     "probe_seed": 110002,
+     "sigma_max": 0.2179,
+     "third": "high",
+     "oracle_steps": 102,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.21645,
+     "hi": 0.22365,
+     "probe_error": 0.0014500000000000068,
+     "bracket_width": 0.007199999999999984,
+     "steps": 103,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9902912621359223,
+     "reward": 89.09999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10003",
+    "seed": 10003,
+    "sigma_max": 0.1288,
+    "third": "low",
+    "oracle": {
+     "seed": 10003,
+     "sigma_max": 0.1288,
+     "third": "low",
+     "oracle_steps": 158,
+     "steps": 158,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 72.6000000000001,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10003,
+     "sigma_max": 0.1288,
+     "third": "low",
+     "oracle_steps": 158,
+     "steps": 293,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5392491467576792,
+     "reward": 32.10000000000048,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10003,
+     "sigma_max": 0.1288,
+     "third": "low",
+     "oracle_steps": 158,
+     "steps": 211,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7488151658767772,
+     "reward": 56.700000000000244,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10003",
+     "seed": 10003,
+     "probe_seed": 110003,
+     "sigma_max": 0.1288,
+     "third": "low",
+     "oracle_steps": 158,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.12412,
+     "hi": 0.13457,
+     "probe_error": 0.004680000000000004,
+     "bracket_width": 0.010450000000000001,
+     "steps": 170,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9294117647058824,
+     "reward": 69.00000000000013,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10004",
+    "seed": 10004,
+    "sigma_max": 0.168,
+    "third": "middle",
+    "oracle": {
+     "seed": 10004,
+     "sigma_max": 0.168,
+     "third": "middle",
+     "oracle_steps": 123,
+     "steps": 123,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 83.1,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10004,
+     "sigma_max": 0.168,
+     "third": "middle",
+     "oracle_steps": 123,
+     "steps": 290,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4241379310344828,
+     "reward": 33.00000000000047,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10004,
+     "sigma_max": 0.168,
+     "third": "middle",
+     "oracle_steps": 123,
+     "steps": 209,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5885167464114832,
+     "reward": 57.30000000000024,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10004",
+     "seed": 10004,
+     "probe_seed": 110004,
+     "sigma_max": 0.168,
+     "third": "middle",
+     "oracle_steps": 123,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.15783,
+     "hi": 0.16821,
+     "probe_error": 0.010170000000000012,
+     "bracket_width": 0.01038,
+     "steps": 132,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9318181818181818,
+     "reward": 80.40000000000002,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10005",
+    "seed": 10005,
+    "sigma_max": 0.2238,
+    "third": "high",
+    "oracle": {
+     "seed": 10005,
+     "sigma_max": 0.2238,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 93,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.09999999999997,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10005,
+     "sigma_max": 0.2238,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 250,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.372,
+     "reward": 45.000000000000355,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10005,
+     "sigma_max": 0.2238,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 181,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5138121546961326,
+     "reward": 65.70000000000016,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10005",
+     "seed": 10005,
+     "probe_seed": 110005,
+     "sigma_max": 0.2238,
+     "third": "high",
+     "oracle_steps": 93,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.2185,
+     "hi": 0.22565,
+     "probe_error": 0.005299999999999999,
+     "bracket_width": 0.00714999999999999,
+     "steps": 95,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9789473684210527,
+     "reward": 91.49999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10006",
+    "seed": 10006,
+    "sigma_max": 0.0939,
+    "third": "low",
+    "oracle": {
+     "seed": 10006,
+     "sigma_max": 0.0939,
+     "third": "low",
+     "oracle_steps": 243,
+     "steps": 243,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 47.100000000000335,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10006,
+     "sigma_max": 0.0939,
+     "third": "low",
+     "oracle_steps": 243,
+     "steps": 304,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7993421052631579,
+     "reward": 28.80000000000051,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10006,
+     "sigma_max": 0.0939,
+     "third": "low",
+     "oracle_steps": 243,
+     "steps": 10,
+     "success": false,
+     "fast": false,
+     "norm_time": 0.0,
+     "reward": -83.0,
+     "failure_reason": "shower"
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10006",
+     "seed": 10006,
+     "probe_seed": 110006,
+     "sigma_max": 0.0939,
+     "third": "low",
+     "oracle_steps": 243,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.09064,
+     "hi": 0.10071,
+     "probe_error": 0.003259999999999999,
+     "bracket_width": 0.010069999999999996,
+     "steps": 267,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9101123595505618,
+     "reward": 39.900000000000404,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10007",
+    "seed": 10007,
+    "sigma_max": 0.159,
+    "third": "middle",
+    "oracle": {
+     "seed": 10007,
+     "sigma_max": 0.159,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 122,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 83.39999999999999,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10007,
+     "sigma_max": 0.159,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 278,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.43884892086330934,
+     "reward": 36.600000000000435,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10007,
+     "sigma_max": 0.159,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 201,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6069651741293532,
+     "reward": 59.700000000000216,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10007",
+     "seed": 10007,
+     "probe_seed": 110007,
+     "sigma_max": 0.159,
+     "third": "middle",
+     "oracle_steps": 122,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.15368,
+     "hi": 0.16242,
+     "probe_error": 0.005319999999999991,
+     "bracket_width": 0.008739999999999998,
+     "steps": 128,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.953125,
+     "reward": 81.60000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10008",
+    "seed": 10008,
+    "sigma_max": 0.2445,
+    "third": "high",
+    "oracle": {
+     "seed": 10008,
+     "sigma_max": 0.2445,
+     "third": "high",
+     "oracle_steps": 100,
+     "steps": 100,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 89.99999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10008,
+     "sigma_max": 0.2445,
+     "third": "high",
+     "oracle_steps": 100,
+     "steps": 319,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.31347962382445144,
+     "reward": 24.30000000000055,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10008,
+     "sigma_max": 0.2445,
+     "third": "high",
+     "oracle_steps": 100,
+     "steps": 231,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4329004329004329,
+     "reward": 50.7000000000003,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10008",
+     "seed": 10008,
+     "probe_seed": 110008,
+     "sigma_max": 0.2445,
+     "third": "high",
+     "oracle_steps": 100,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.24111,
+     "hi": 0.24887,
+     "probe_error": 0.003390000000000004,
+     "bracket_width": 0.007760000000000017,
+     "steps": 102,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9803921568627451,
+     "reward": 89.39999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10009",
+    "seed": 10009,
+    "sigma_max": 0.096,
+    "third": "low",
+    "oracle": {
+     "seed": 10009,
+     "sigma_max": 0.096,
+     "third": "low",
+     "oracle_steps": 225,
+     "steps": 225,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 52.500000000000284,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10009,
+     "sigma_max": 0.096,
+     "third": "low",
+     "oracle_steps": 225,
+     "steps": 289,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7785467128027682,
+     "reward": 33.300000000000466,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10009,
+     "sigma_max": 0.096,
+     "third": "low",
+     "oracle_steps": 225,
+     "steps": 10,
+     "success": false,
+     "fast": false,
+     "norm_time": 0.0,
+     "reward": -83.0,
+     "failure_reason": "shower"
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10009",
+     "seed": 10009,
+     "probe_seed": 110009,
+     "sigma_max": 0.096,
+     "third": "low",
+     "oracle_steps": 225,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.09182,
+     "hi": 0.1022,
+     "probe_error": 0.004180000000000003,
+     "bracket_width": 0.01038,
+     "steps": 250,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9,
+     "reward": 45.000000000000355,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10010",
+    "seed": 10010,
+    "sigma_max": 0.1416,
+    "third": "middle",
+    "oracle": {
+     "seed": 10010,
+     "sigma_max": 0.1416,
+     "third": "middle",
+     "oracle_steps": 126,
+     "steps": 126,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 82.2,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10010,
+     "sigma_max": 0.1416,
+     "third": "middle",
+     "oracle_steps": 126,
+     "steps": 251,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.50199203187251,
+     "reward": 44.70000000000036,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10010,
+     "sigma_max": 0.1416,
+     "third": "middle",
+     "oracle_steps": 126,
+     "steps": 182,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6923076923076923,
+     "reward": 65.40000000000016,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10010",
+     "seed": 10010,
+     "probe_seed": 110010,
+     "sigma_max": 0.1416,
+     "third": "middle",
+     "oracle_steps": 126,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.13957,
+     "hi": 0.15049,
+     "probe_error": 0.002030000000000004,
+     "bracket_width": 0.010920000000000013,
+     "steps": 131,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9618320610687023,
+     "reward": 80.70000000000002,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10011",
+    "seed": 10011,
+    "sigma_max": 0.2254,
+    "third": "high",
+    "oracle": {
+     "seed": 10011,
+     "sigma_max": 0.2254,
+     "third": "high",
+     "oracle_steps": 106,
+     "steps": 106,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 88.19999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10011,
+     "sigma_max": 0.2254,
+     "third": "high",
+     "oracle_steps": 106,
+     "steps": 301,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.3521594684385382,
+     "reward": 29.7000000000005,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10011,
+     "sigma_max": 0.2254,
+     "third": "high",
+     "oracle_steps": 106,
+     "steps": 217,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.48847926267281105,
+     "reward": 54.90000000000026,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10011",
+     "seed": 10011,
+     "probe_seed": 110011,
+     "sigma_max": 0.2254,
+     "third": "high",
+     "oracle_steps": 106,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.22001,
+     "hi": 0.22809,
+     "probe_error": 0.005389999999999978,
+     "bracket_width": 0.008079999999999976,
+     "steps": 109,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9724770642201835,
+     "reward": 87.29999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10012",
+    "seed": 10012,
+    "sigma_max": 0.1243,
+    "third": "low",
+    "oracle": {
+     "seed": 10012,
+     "sigma_max": 0.1243,
+     "third": "low",
+     "oracle_steps": 160,
+     "steps": 160,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 72.0000000000001,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10012,
+     "sigma_max": 0.1243,
+     "third": "low",
+     "oracle_steps": 160,
+     "steps": 281,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5693950177935944,
+     "reward": 35.70000000000044,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10012,
+     "sigma_max": 0.1243,
+     "third": "low",
+     "oracle_steps": 160,
+     "steps": 203,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7881773399014779,
+     "reward": 59.10000000000022,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10012",
+     "seed": 10012,
+     "probe_seed": 110012,
+     "sigma_max": 0.1243,
+     "third": "low",
+     "oracle_steps": 160,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.11407,
+     "hi": 0.12455,
+     "probe_error": 0.010229999999999989,
+     "bracket_width": 0.01047999999999999,
+     "steps": 182,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8791208791208791,
+     "reward": 65.40000000000016,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10013",
+    "seed": 10013,
+    "sigma_max": 0.1493,
+    "third": "middle",
+    "oracle": {
+     "seed": 10013,
+     "sigma_max": 0.1493,
+     "third": "middle",
+     "oracle_steps": 137,
+     "steps": 137,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 78.90000000000003,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10013,
+     "sigma_max": 0.1493,
+     "third": "middle",
+     "oracle_steps": 137,
+     "steps": 294,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.46598639455782315,
+     "reward": 31.80000000000048,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10013,
+     "sigma_max": 0.1493,
+     "third": "middle",
+     "oracle_steps": 137,
+     "steps": 212,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6462264150943396,
+     "reward": 56.40000000000025,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10013",
+     "seed": 10013,
+     "probe_seed": 110013,
+     "sigma_max": 0.1493,
+     "third": "middle",
+     "oracle_steps": 137,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.14876,
+     "hi": 0.15831,
+     "probe_error": 0.0005399999999999849,
+     "bracket_width": 0.009550000000000003,
+     "steps": 140,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9785714285714285,
+     "reward": 78.00000000000004,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10014",
+    "seed": 10014,
+    "sigma_max": 0.2404,
+    "third": "high",
+    "oracle": {
+     "seed": 10014,
+     "sigma_max": 0.2404,
+     "third": "high",
+     "oracle_steps": 101,
+     "steps": 101,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 89.69999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10014,
+     "sigma_max": 0.2404,
+     "third": "high",
+     "oracle_steps": 101,
+     "steps": 320,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.315625,
+     "reward": 24.000000000000554,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10014,
+     "sigma_max": 0.2404,
+     "third": "high",
+     "oracle_steps": 101,
+     "steps": 231,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.43722943722943725,
+     "reward": 50.7000000000003,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10014",
+     "seed": 10014,
+     "probe_seed": 110014,
+     "sigma_max": 0.2404,
+     "third": "high",
+     "oracle_steps": 101,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.23797,
+     "hi": 0.24468,
+     "probe_error": 0.0024300000000000155,
+     "bracket_width": 0.0067100000000000215,
+     "steps": 103,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9805825242718447,
+     "reward": 89.09999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10015",
+    "seed": 10015,
+    "sigma_max": 0.0973,
+    "third": "low",
+    "oracle": {
+     "seed": 10015,
+     "sigma_max": 0.0973,
+     "third": "low",
+     "oracle_steps": 233,
+     "steps": 233,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 50.10000000000031,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10015,
+     "sigma_max": 0.0973,
+     "third": "low",
+     "oracle_steps": 233,
+     "steps": 306,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.761437908496732,
+     "reward": 28.200000000000514,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10015,
+     "sigma_max": 0.0973,
+     "third": "low",
+     "oracle_steps": 233,
+     "steps": 10,
+     "success": false,
+     "fast": false,
+     "norm_time": 0.0,
+     "reward": -83.0,
+     "failure_reason": "shower"
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10015",
+     "seed": 10015,
+     "probe_seed": 110015,
+     "sigma_max": 0.0973,
+     "third": "low",
+     "oracle_steps": 233,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.09086,
+     "hi": 0.10125,
+     "probe_error": 0.006440000000000001,
+     "bracket_width": 0.01039000000000001,
+     "steps": 268,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8694029850746269,
+     "reward": 39.600000000000406,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10016",
+    "seed": 10016,
+    "sigma_max": 0.143,
+    "third": "middle",
+    "oracle": {
+     "seed": 10016,
+     "sigma_max": 0.143,
+     "third": "middle",
+     "oracle_steps": 125,
+     "steps": 125,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 82.5,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10016,
+     "sigma_max": 0.143,
+     "third": "middle",
+     "oracle_steps": 125,
+     "steps": 251,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.49800796812749004,
+     "reward": 44.70000000000036,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10016,
+     "sigma_max": 0.143,
+     "third": "middle",
+     "oracle_steps": 125,
+     "steps": 182,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6868131868131868,
+     "reward": 65.40000000000016,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10016",
+     "seed": 10016,
+     "probe_seed": 110016,
+     "sigma_max": 0.143,
+     "third": "middle",
+     "oracle_steps": 125,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.14094,
+     "hi": 0.15092,
+     "probe_error": 0.0020599999999999785,
+     "bracket_width": 0.009979999999999989,
+     "steps": 129,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9689922480620154,
+     "reward": 81.30000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10017",
+    "seed": 10017,
+    "sigma_max": 0.2482,
+    "third": "high",
+    "oracle": {
+     "seed": 10017,
+     "sigma_max": 0.2482,
+     "third": "high",
+     "oracle_steps": 92,
+     "steps": 92,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.39999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10017,
+     "sigma_max": 0.2482,
+     "third": "high",
+     "oracle_steps": 92,
+     "steps": 230,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4,
+     "reward": 51.0000000000003,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10017,
+     "sigma_max": 0.2482,
+     "third": "high",
+     "oracle_steps": 92,
+     "steps": 168,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5476190476190477,
+     "reward": 69.60000000000012,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10017",
+     "seed": 10017,
+     "probe_seed": 110017,
+     "sigma_max": 0.2482,
+     "third": "high",
+     "oracle_steps": 92,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.24468,
+     "hi": 0.24992,
+     "probe_error": 0.0035199999999999954,
+     "bracket_width": 0.005239999999999995,
+     "steps": 92,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.39999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10018",
+    "seed": 10018,
+    "sigma_max": 0.1215,
+    "third": "low",
+    "oracle": {
+     "seed": 10018,
+     "sigma_max": 0.1215,
+     "third": "low",
+     "oracle_steps": 144,
+     "steps": 144,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 76.80000000000005,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10018,
+     "sigma_max": 0.1215,
+     "third": "low",
+     "oracle_steps": 144,
+     "steps": 244,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5901639344262295,
+     "reward": 46.80000000000034,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10018,
+     "sigma_max": 0.1215,
+     "third": "low",
+     "oracle_steps": 144,
+     "steps": 177,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8135593220338984,
+     "reward": 66.90000000000015,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10018",
+     "seed": 10018,
+     "probe_seed": 110018,
+     "sigma_max": 0.1215,
+     "third": "low",
+     "oracle_steps": 144,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.11675,
+     "hi": 0.12767,
+     "probe_error": 0.00474999999999999,
+     "bracket_width": 0.01092,
+     "steps": 155,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9290322580645162,
+     "reward": 73.50000000000009,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10019",
+    "seed": 10019,
+    "sigma_max": 0.1459,
+    "third": "middle",
+    "oracle": {
+     "seed": 10019,
+     "sigma_max": 0.1459,
+     "third": "middle",
+     "oracle_steps": 147,
+     "steps": 147,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 75.90000000000006,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10019,
+     "sigma_max": 0.1459,
+     "third": "middle",
+     "oracle_steps": 147,
+     "steps": 315,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4666666666666667,
+     "reward": 25.50000000000054,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10019,
+     "sigma_max": 0.1459,
+     "third": "middle",
+     "oracle_steps": 147,
+     "steps": 227,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6475770925110133,
+     "reward": 51.90000000000029,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10019",
+     "seed": 10019,
+     "probe_seed": 110019,
+     "sigma_max": 0.1459,
+     "third": "middle",
+     "oracle_steps": 147,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.14569,
+     "hi": 0.15507,
+     "probe_error": 0.00021000000000001573,
+     "bracket_width": 0.009380000000000027,
+     "steps": 151,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9735099337748344,
+     "reward": 74.70000000000007,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10020",
+    "seed": 10020,
+    "sigma_max": 0.2138,
+    "third": "high",
+    "oracle": {
+     "seed": 10020,
+     "sigma_max": 0.2138,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 93,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.09999999999997,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10020,
+     "sigma_max": 0.2138,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 252,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.36904761904761907,
+     "reward": 44.40000000000036,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10020,
+     "sigma_max": 0.2138,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 184,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5054347826086957,
+     "reward": 64.80000000000017,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10020",
+     "seed": 10020,
+     "probe_seed": 110020,
+     "sigma_max": 0.2138,
+     "third": "high",
+     "oracle_steps": 93,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.21136,
+     "hi": 0.21843,
+     "probe_error": 0.0024399999999999977,
+     "bracket_width": 0.007070000000000021,
+     "steps": 94,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9893617021276596,
+     "reward": 91.79999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10021",
+    "seed": 10021,
+    "sigma_max": 0.093,
+    "third": "low",
+    "oracle": {
+     "seed": 10021,
+     "sigma_max": 0.093,
+     "third": "low",
+     "oracle_steps": 202,
+     "steps": 202,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 59.40000000000022,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10021,
+     "sigma_max": 0.093,
+     "third": "low",
+     "oracle_steps": 202,
+     "steps": 247,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8178137651821862,
+     "reward": 45.90000000000035,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10021,
+     "sigma_max": 0.093,
+     "third": "low",
+     "oracle_steps": 202,
+     "steps": 10,
+     "success": false,
+     "fast": false,
+     "norm_time": 0.0,
+     "reward": -83.0,
+     "failure_reason": "shower"
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10021",
+     "seed": 10021,
+     "probe_seed": 110021,
+     "sigma_max": 0.093,
+     "third": "low",
+     "oracle_steps": 202,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.08479,
+     "hi": 0.09574,
+     "probe_error": 0.008209999999999995,
+     "bracket_width": 0.010950000000000001,
+     "steps": 240,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8416666666666667,
+     "reward": 48.00000000000033,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10022",
+    "seed": 10022,
+    "sigma_max": 0.1602,
+    "third": "middle",
+    "oracle": {
+     "seed": 10022,
+     "sigma_max": 0.1602,
+     "third": "middle",
+     "oracle_steps": 108,
+     "steps": 108,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 87.59999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10022,
+     "sigma_max": 0.1602,
+     "third": "middle",
+     "oracle_steps": 108,
+     "steps": 236,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4576271186440678,
+     "reward": 49.200000000000315,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10022,
+     "sigma_max": 0.1602,
+     "third": "middle",
+     "oracle_steps": 108,
+     "steps": 172,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.627906976744186,
+     "reward": 68.40000000000013,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10022",
+     "seed": 10022,
+     "probe_seed": 110022,
+     "sigma_max": 0.1602,
+     "third": "middle",
+     "oracle_steps": 108,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.15629,
+     "hi": 0.16532,
+     "probe_error": 0.003909999999999997,
+     "bracket_width": 0.009029999999999982,
+     "steps": 112,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9642857142857143,
+     "reward": 86.39999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10023",
+    "seed": 10023,
+    "sigma_max": 0.2413,
+    "third": "high",
+    "oracle": {
+     "seed": 10023,
+     "sigma_max": 0.2413,
+     "third": "high",
+     "oracle_steps": 95,
+     "steps": 95,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 91.49999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10023,
+     "sigma_max": 0.2413,
+     "third": "high",
+     "oracle_steps": 95,
+     "steps": 250,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.38,
+     "reward": 45.000000000000355,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10023,
+     "sigma_max": 0.2413,
+     "third": "high",
+     "oracle_steps": 95,
+     "steps": 182,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.521978021978022,
+     "reward": 65.40000000000016,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10023",
+     "seed": 10023,
+     "probe_seed": 110023,
+     "sigma_max": 0.2413,
+     "third": "high",
+     "oracle_steps": 95,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.23937,
+     "hi": 0.24486,
+     "probe_error": 0.0019299999999999873,
+     "bracket_width": 0.005489999999999995,
+     "steps": 95,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 91.49999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10024",
+    "seed": 10024,
+    "sigma_max": 0.0864,
+    "third": "low",
+    "oracle": {
+     "seed": 10024,
+     "sigma_max": 0.0864,
+     "third": "low",
+     "oracle_steps": 265,
+     "steps": 265,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 40.5000000000004,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10024,
+     "sigma_max": 0.0864,
+     "third": "low",
+     "oracle_steps": 265,
+     "steps": 295,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8983050847457628,
+     "reward": 31.500000000000483,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10024,
+     "sigma_max": 0.0864,
+     "third": "low",
+     "oracle_steps": 265,
+     "steps": 9,
+     "success": false,
+     "fast": false,
+     "norm_time": 0.0,
+     "reward": -82.7,
+     "failure_reason": "shower"
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10024",
+     "seed": 10024,
+     "probe_seed": 110024,
+     "sigma_max": 0.0864,
+     "third": "low",
+     "oracle_steps": 265,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.08113,
+     "hi": 0.09156,
+     "probe_error": 0.005270000000000011,
+     "bracket_width": 0.010430000000000009,
+     "steps": 305,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8688524590163934,
+     "reward": 28.50000000000051,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10025",
+    "seed": 10025,
+    "sigma_max": 0.1638,
+    "third": "middle",
+    "oracle": {
+     "seed": 10025,
+     "sigma_max": 0.1638,
+     "third": "middle",
+     "oracle_steps": 107,
+     "steps": 107,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 87.89999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10025,
+     "sigma_max": 0.1638,
+     "third": "middle",
+     "oracle_steps": 107,
+     "steps": 239,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4476987447698745,
+     "reward": 48.300000000000324,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10025,
+     "sigma_max": 0.1638,
+     "third": "middle",
+     "oracle_steps": 107,
+     "steps": 174,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6149425287356322,
+     "reward": 67.80000000000014,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10025",
+     "seed": 10025,
+     "probe_seed": 110025,
+     "sigma_max": 0.1638,
+     "third": "middle",
+     "oracle_steps": 107,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.15924,
+     "hi": 0.16912,
+     "probe_error": 0.0045600000000000085,
+     "bracket_width": 0.00988,
+     "steps": 112,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9553571428571429,
+     "reward": 86.39999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10026",
+    "seed": 10026,
+    "sigma_max": 0.2014,
+    "third": "high",
+    "oracle": {
+     "seed": 10026,
+     "sigma_max": 0.2014,
+     "third": "high",
+     "oracle_steps": 108,
+     "steps": 108,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 87.59999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10026,
+     "sigma_max": 0.2014,
+     "third": "high",
+     "oracle_steps": 108,
+     "steps": 280,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.38571428571428573,
+     "reward": 36.00000000000044,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10026,
+     "sigma_max": 0.2014,
+     "third": "high",
+     "oracle_steps": 108,
+     "steps": 202,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5346534653465347,
+     "reward": 59.40000000000022,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10026",
+     "seed": 10026,
+     "probe_seed": 110026,
+     "sigma_max": 0.2014,
+     "third": "high",
+     "oracle_steps": 108,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.19584,
+     "hi": 0.20322,
+     "probe_error": 0.005560000000000009,
+     "bracket_width": 0.007380000000000025,
+     "steps": 111,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.972972972972973,
+     "reward": 86.69999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10027",
+    "seed": 10027,
+    "sigma_max": 0.1148,
+    "third": "low",
+    "oracle": {
+     "seed": 10027,
+     "sigma_max": 0.1148,
+     "third": "low",
+     "oracle_steps": 195,
+     "steps": 195,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 61.5000000000002,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10027,
+     "sigma_max": 0.1148,
+     "third": "low",
+     "oracle_steps": 195,
+     "steps": 317,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6151419558359621,
+     "reward": 24.900000000000546,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10027,
+     "sigma_max": 0.1148,
+     "third": "low",
+     "oracle_steps": 195,
+     "steps": 228,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8552631578947368,
+     "reward": 51.60000000000029,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10027",
+     "seed": 10027,
+     "probe_seed": 110027,
+     "sigma_max": 0.1148,
+     "third": "low",
+     "oracle_steps": 195,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.10754,
+     "hi": 0.11748,
+     "probe_error": 0.0072600000000000026,
+     "bracket_width": 0.009940000000000004,
+     "steps": 220,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8863636363636364,
+     "reward": 54.00000000000027,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10028",
+    "seed": 10028,
+    "sigma_max": 0.171,
+    "third": "middle",
+    "oracle": {
+     "seed": 10028,
+     "sigma_max": 0.171,
+     "third": "middle",
+     "oracle_steps": 120,
+     "steps": 120,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 83.99999999999999,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10028,
+     "sigma_max": 0.171,
+     "third": "middle",
+     "oracle_steps": 120,
+     "steps": 297,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.40404040404040403,
+     "reward": 30.90000000000049,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10028,
+     "sigma_max": 0.171,
+     "third": "middle",
+     "oracle_steps": 120,
+     "steps": 215,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5581395348837209,
+     "reward": 55.500000000000256,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10028",
+     "seed": 10028,
+     "probe_seed": 110028,
+     "sigma_max": 0.171,
+     "third": "middle",
+     "oracle_steps": 120,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.16232,
+     "hi": 0.17162,
+     "probe_error": 0.008680000000000021,
+     "bracket_width": 0.009300000000000003,
+     "steps": 128,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9375,
+     "reward": 81.60000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10029",
+    "seed": 10029,
+    "sigma_max": 0.2193,
+    "third": "high",
+    "oracle": {
+     "seed": 10029,
+     "sigma_max": 0.2193,
+     "third": "high",
+     "oracle_steps": 96,
+     "steps": 96,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 91.19999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10029,
+     "sigma_max": 0.2193,
+     "third": "high",
+     "oracle_steps": 96,
+     "steps": 271,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.35424354243542433,
+     "reward": 38.700000000000415,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10029,
+     "sigma_max": 0.2193,
+     "third": "high",
+     "oracle_steps": 96,
+     "steps": 197,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4873096446700508,
+     "reward": 60.900000000000205,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10029",
+     "seed": 10029,
+     "probe_seed": 110029,
+     "sigma_max": 0.2193,
+     "third": "high",
+     "oracle_steps": 96,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.21312,
+     "hi": 0.22135,
+     "probe_error": 0.006179999999999991,
+     "bracket_width": 0.008229999999999987,
+     "steps": 98,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9795918367346939,
+     "reward": 90.59999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10030",
+    "seed": 10030,
+    "sigma_max": 0.1157,
+    "third": "low",
+    "oracle": {
+     "seed": 10030,
+     "sigma_max": 0.1157,
+     "third": "low",
+     "oracle_steps": 150,
+     "steps": 150,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 75.00000000000007,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10030,
+     "sigma_max": 0.1157,
+     "third": "low",
+     "oracle_steps": 150,
+     "steps": 236,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.635593220338983,
+     "reward": 49.200000000000315,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10030,
+     "sigma_max": 0.1157,
+     "third": "low",
+     "oracle_steps": 150,
+     "steps": 173,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8670520231213873,
+     "reward": 68.10000000000014,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10030",
+     "seed": 10030,
+     "probe_seed": 110030,
+     "sigma_max": 0.1157,
+     "third": "low",
+     "oracle_steps": 150,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.10986,
+     "hi": 0.11978,
+     "probe_error": 0.005839999999999998,
+     "bracket_width": 0.009919999999999998,
+     "steps": 163,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9202453987730062,
+     "reward": 71.10000000000011,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10031",
+    "seed": 10031,
+    "sigma_max": 0.1412,
+    "third": "middle",
+    "oracle": {
+     "seed": 10031,
+     "sigma_max": 0.1412,
+     "third": "middle",
+     "oracle_steps": 150,
+     "steps": 150,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 75.00000000000007,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10031,
+     "sigma_max": 0.1412,
+     "third": "middle",
+     "oracle_steps": 150,
+     "steps": 309,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4854368932038835,
+     "reward": 27.300000000000523,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10031,
+     "sigma_max": 0.1412,
+     "third": "middle",
+     "oracle_steps": 150,
+     "steps": 223,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.672645739910314,
+     "reward": 53.10000000000028,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10031",
+     "seed": 10031,
+     "probe_seed": 110031,
+     "sigma_max": 0.1412,
+     "third": "middle",
+     "oracle_steps": 150,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.13586,
+     "hi": 0.14509,
+     "probe_error": 0.005339999999999984,
+     "bracket_width": 0.009229999999999988,
+     "steps": 160,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9375,
+     "reward": 72.0000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10032",
+    "seed": 10032,
+    "sigma_max": 0.217,
+    "third": "high",
+    "oracle": {
+     "seed": 10032,
+     "sigma_max": 0.217,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 102,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 89.39999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10032,
+     "sigma_max": 0.217,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 296,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.34459459459459457,
+     "reward": 31.200000000000486,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10032,
+     "sigma_max": 0.217,
+     "third": "high",
+     "oracle_steps": 102,
+     "steps": 214,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4766355140186916,
+     "reward": 55.80000000000025,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10032",
+     "seed": 10032,
+     "probe_seed": 110032,
+     "sigma_max": 0.217,
+     "third": "high",
+     "oracle_steps": 102,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.2165,
+     "hi": 0.2233,
+     "probe_error": 0.0005000000000000004,
+     "bracket_width": 0.0068000000000000005,
+     "steps": 103,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9902912621359223,
+     "reward": 89.09999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10033",
+    "seed": 10033,
+    "sigma_max": 0.1305,
+    "third": "low",
+    "oracle": {
+     "seed": 10033,
+     "sigma_max": 0.1305,
+     "third": "low",
+     "oracle_steps": 132,
+     "steps": 132,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 80.40000000000002,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10033,
+     "sigma_max": 0.1305,
+     "third": "low",
+     "oracle_steps": 132,
+     "steps": 236,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.559322033898305,
+     "reward": 49.200000000000315,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10033,
+     "sigma_max": 0.1305,
+     "third": "low",
+     "oracle_steps": 132,
+     "steps": 173,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7630057803468208,
+     "reward": 68.10000000000014,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10033",
+     "seed": 10033,
+     "probe_seed": 110033,
+     "sigma_max": 0.1305,
+     "third": "low",
+     "oracle_steps": 132,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.12166,
+     "hi": 0.13184,
+     "probe_error": 0.00884,
+     "bracket_width": 0.010180000000000008,
+     "steps": 145,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9103448275862069,
+     "reward": 76.50000000000006,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10034",
+    "seed": 10034,
+    "sigma_max": 0.152,
+    "third": "middle",
+    "oracle": {
+     "seed": 10034,
+     "sigma_max": 0.152,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 114,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 85.79999999999997,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10034,
+     "sigma_max": 0.152,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 230,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4956521739130435,
+     "reward": 51.0000000000003,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10034,
+     "sigma_max": 0.152,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 169,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6745562130177515,
+     "reward": 69.30000000000013,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10034",
+     "seed": 10034,
+     "probe_seed": 110034,
+     "sigma_max": 0.152,
+     "third": "middle",
+     "oracle_steps": 114,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.14826,
+     "hi": 0.15804,
+     "probe_error": 0.0037399999999999933,
+     "bracket_width": 0.009780000000000011,
+     "steps": 118,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9661016949152542,
+     "reward": 84.59999999999998,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10035",
+    "seed": 10035,
+    "sigma_max": 0.2484,
+    "third": "high",
+    "oracle": {
+     "seed": 10035,
+     "sigma_max": 0.2484,
+     "third": "high",
+     "oracle_steps": 90,
+     "steps": 90,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.99999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10035,
+     "sigma_max": 0.2484,
+     "third": "high",
+     "oracle_steps": 90,
+     "steps": 245,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.3673469387755102,
+     "reward": 46.50000000000034,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10035,
+     "sigma_max": 0.2484,
+     "third": "high",
+     "oracle_steps": 90,
+     "steps": 178,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5056179775280899,
+     "reward": 66.60000000000015,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10035",
+     "seed": 10035,
+     "probe_seed": 110035,
+     "sigma_max": 0.2484,
+     "third": "high",
+     "oracle_steps": 90,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.24149,
+     "hi": 0.2506,
+     "probe_error": 0.0069099999999999995,
+     "bracket_width": 0.00910999999999998,
+     "steps": 91,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.989010989010989,
+     "reward": 92.69999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10036",
+    "seed": 10036,
+    "sigma_max": 0.1279,
+    "third": "low",
+    "oracle": {
+     "seed": 10036,
+     "sigma_max": 0.1279,
+     "third": "low",
+     "oracle_steps": 154,
+     "steps": 154,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 73.80000000000008,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10036,
+     "sigma_max": 0.1279,
+     "third": "low",
+     "oracle_steps": 154,
+     "steps": 278,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5539568345323741,
+     "reward": 36.600000000000435,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10036,
+     "sigma_max": 0.1279,
+     "third": "low",
+     "oracle_steps": 154,
+     "steps": 201,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7661691542288557,
+     "reward": 59.700000000000216,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10036",
+     "seed": 10036,
+     "probe_seed": 110036,
+     "sigma_max": 0.1279,
+     "third": "low",
+     "oracle_steps": 154,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.12285,
+     "hi": 0.13291,
+     "probe_error": 0.005050000000000013,
+     "bracket_width": 0.01006,
+     "steps": 165,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9333333333333333,
+     "reward": 70.50000000000011,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10037",
+    "seed": 10037,
+    "sigma_max": 0.1596,
+    "third": "middle",
+    "oracle": {
+     "seed": 10037,
+     "sigma_max": 0.1596,
+     "third": "middle",
+     "oracle_steps": 110,
+     "steps": 110,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 86.99999999999996,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10037,
+     "sigma_max": 0.1596,
+     "third": "middle",
+     "oracle_steps": 110,
+     "steps": 240,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4583333333333333,
+     "reward": 48.00000000000033,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10037,
+     "sigma_max": 0.1596,
+     "third": "middle",
+     "oracle_steps": 110,
+     "steps": 174,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.632183908045977,
+     "reward": 67.80000000000014,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10037",
+     "seed": 10037,
+     "probe_seed": 110037,
+     "sigma_max": 0.1596,
+     "third": "middle",
+     "oracle_steps": 110,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.15024,
+     "hi": 0.15999,
+     "probe_error": 0.00935999999999998,
+     "bracket_width": 0.009749999999999981,
+     "steps": 117,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9401709401709402,
+     "reward": 84.89999999999998,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10038",
+    "seed": 10038,
+    "sigma_max": 0.2428,
+    "third": "high",
+    "oracle": {
+     "seed": 10038,
+     "sigma_max": 0.2428,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 93,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 92.09999999999997,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10038,
+     "sigma_max": 0.2428,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 258,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.36046511627906974,
+     "reward": 42.60000000000038,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10038,
+     "sigma_max": 0.2428,
+     "third": "high",
+     "oracle_steps": 93,
+     "steps": 187,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.49732620320855614,
+     "reward": 63.900000000000176,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10038",
+     "seed": 10038,
+     "probe_seed": 110038,
+     "sigma_max": 0.2428,
+     "third": "high",
+     "oracle_steps": 93,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.23545,
+     "hi": 0.24398,
+     "probe_error": 0.007349999999999995,
+     "bracket_width": 0.00853000000000001,
+     "steps": 94,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9893617021276596,
+     "reward": 91.79999999999995,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10039",
+    "seed": 10039,
+    "sigma_max": 0.1212,
+    "third": "low",
+    "oracle": {
+     "seed": 10039,
+     "sigma_max": 0.1212,
+     "third": "low",
+     "oracle_steps": 156,
+     "steps": 156,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 73.20000000000009,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10039,
+     "sigma_max": 0.1212,
+     "third": "low",
+     "oracle_steps": 156,
+     "steps": 261,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5977011494252874,
+     "reward": 41.70000000000039,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10039,
+     "sigma_max": 0.1212,
+     "third": "low",
+     "oracle_steps": 156,
+     "steps": 190,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.8210526315789474,
+     "reward": 63.000000000000185,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10039",
+     "seed": 10039,
+     "probe_seed": 110039,
+     "sigma_max": 0.1212,
+     "third": "low",
+     "oracle_steps": 156,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.11582,
+     "hi": 0.12521,
+     "probe_error": 0.005379999999999996,
+     "bracket_width": 0.009389999999999982,
+     "steps": 169,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9230769230769231,
+     "reward": 69.30000000000013,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10040",
+    "seed": 10040,
+    "sigma_max": 0.1604,
+    "third": "middle",
+    "oracle": {
+     "seed": 10040,
+     "sigma_max": 0.1604,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 122,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 83.39999999999999,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10040,
+     "sigma_max": 0.1604,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 271,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.45018450184501846,
+     "reward": 38.700000000000415,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10040,
+     "sigma_max": 0.1604,
+     "third": "middle",
+     "oracle_steps": 122,
+     "steps": 196,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6224489795918368,
+     "reward": 61.2000000000002,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10040",
+     "seed": 10040,
+     "probe_seed": 110040,
+     "sigma_max": 0.1604,
+     "third": "middle",
+     "oracle_steps": 122,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.1538,
+     "hi": 0.16355,
+     "probe_error": 0.006599999999999995,
+     "bracket_width": 0.009750000000000009,
+     "steps": 128,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.953125,
+     "reward": 81.60000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10041",
+    "seed": 10041,
+    "sigma_max": 0.2427,
+    "third": "high",
+    "oracle": {
+     "seed": 10041,
+     "sigma_max": 0.2427,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 99,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 90.29999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10041,
+     "sigma_max": 0.2427,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 307,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.32247557003257327,
+     "reward": 27.900000000000517,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10041,
+     "sigma_max": 0.2427,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 222,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.44594594594594594,
+     "reward": 53.400000000000276,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10041",
+     "seed": 10041,
+     "probe_seed": 110041,
+     "sigma_max": 0.2427,
+     "third": "high",
+     "oracle_steps": 99,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.23977,
+     "hi": 0.24601,
+     "probe_error": 0.002929999999999988,
+     "bracket_width": 0.0062399999999999956,
+     "steps": 101,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9801980198019802,
+     "reward": 89.69999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10042",
+    "seed": 10042,
+    "sigma_max": 0.1072,
+    "third": "low",
+    "oracle": {
+     "seed": 10042,
+     "sigma_max": 0.1072,
+     "third": "low",
+     "oracle_steps": 199,
+     "steps": 199,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 60.30000000000021,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10042,
+     "sigma_max": 0.1072,
+     "third": "low",
+     "oracle_steps": 199,
+     "steps": 295,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.6745762711864407,
+     "reward": 31.500000000000483,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10042,
+     "sigma_max": 0.1072,
+     "third": "low",
+     "oracle_steps": 199,
+     "steps": 213,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9342723004694836,
+     "reward": 56.10000000000025,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10042",
+     "seed": 10042,
+     "probe_seed": 110042,
+     "sigma_max": 0.1072,
+     "third": "low",
+     "oracle_steps": 199,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.10347,
+     "hi": 0.11391,
+     "probe_error": 0.003729999999999997,
+     "bracket_width": 0.010439999999999991,
+     "steps": 216,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9212962962962963,
+     "reward": 55.20000000000026,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10043",
+    "seed": 10043,
+    "sigma_max": 0.1737,
+    "third": "middle",
+    "oracle": {
+     "seed": 10043,
+     "sigma_max": 0.1737,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 114,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 85.79999999999997,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10043,
+     "sigma_max": 0.1737,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 279,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.40860215053763443,
+     "reward": 36.30000000000044,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10043,
+     "sigma_max": 0.1737,
+     "third": "middle",
+     "oracle_steps": 114,
+     "steps": 201,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5671641791044776,
+     "reward": 59.700000000000216,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10043",
+     "seed": 10043,
+     "probe_seed": 110043,
+     "sigma_max": 0.1737,
+     "third": "middle",
+     "oracle_steps": 114,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.17313,
+     "hi": 0.18225,
+     "probe_error": 0.0005699999999999872,
+     "bracket_width": 0.00911999999999999,
+     "steps": 116,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9827586206896551,
+     "reward": 85.19999999999997,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10044",
+    "seed": 10044,
+    "sigma_max": 0.2245,
+    "third": "high",
+    "oracle": {
+     "seed": 10044,
+     "sigma_max": 0.2245,
+     "third": "high",
+     "oracle_steps": 104,
+     "steps": 104,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 88.79999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10044,
+     "sigma_max": 0.2245,
+     "third": "high",
+     "oracle_steps": 104,
+     "steps": 254,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4094488188976378,
+     "reward": 43.80000000000037,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10044,
+     "sigma_max": 0.2245,
+     "third": "high",
+     "oracle_steps": 104,
+     "steps": 187,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5561497326203209,
+     "reward": 63.900000000000176,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10044",
+     "seed": 10044,
+     "probe_seed": 110044,
+     "sigma_max": 0.2245,
+     "third": "high",
+     "oracle_steps": 104,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.22074,
+     "hi": 0.22589,
+     "probe_error": 0.0037600000000000133,
+     "bracket_width": 0.005150000000000016,
+     "steps": 105,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9904761904761905,
+     "reward": 88.49999999999994,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10045",
+    "seed": 10045,
+    "sigma_max": 0.1344,
+    "third": "low",
+    "oracle": {
+     "seed": 10045,
+     "sigma_max": 0.1344,
+     "third": "low",
+     "oracle_steps": 128,
+     "steps": 128,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 81.60000000000001,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10045,
+     "sigma_max": 0.1344,
+     "third": "low",
+     "oracle_steps": 128,
+     "steps": 229,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5589519650655022,
+     "reward": 51.300000000000296,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10045,
+     "sigma_max": 0.1344,
+     "third": "low",
+     "oracle_steps": 128,
+     "steps": 169,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.757396449704142,
+     "reward": 69.30000000000013,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10045",
+     "seed": 10045,
+     "probe_seed": 110045,
+     "sigma_max": 0.1344,
+     "third": "low",
+     "oracle_steps": 128,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.13133,
+     "hi": 0.14111,
+     "probe_error": 0.0030699999999999894,
+     "bracket_width": 0.009780000000000011,
+     "steps": 133,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.9624060150375939,
+     "reward": 80.10000000000002,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10046",
+    "seed": 10046,
+    "sigma_max": 0.1375,
+    "third": "middle",
+    "oracle": {
+     "seed": 10046,
+     "sigma_max": 0.1375,
+     "third": "middle",
+     "oracle_steps": 156,
+     "steps": 156,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 73.20000000000009,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10046,
+     "sigma_max": 0.1375,
+     "third": "middle",
+     "oracle_steps": 156,
+     "steps": 303,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.5148514851485149,
+     "reward": 29.100000000000506,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10046,
+     "sigma_max": 0.1375,
+     "third": "middle",
+     "oracle_steps": 156,
+     "steps": 219,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.7123287671232876,
+     "reward": 54.30000000000027,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10046",
+     "seed": 10046,
+     "probe_seed": 110046,
+     "sigma_max": 0.1375,
+     "third": "middle",
+     "oracle_steps": 156,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.13708,
+     "hi": 0.14762,
+     "probe_error": 0.0004200000000000037,
+     "bracket_width": 0.010539999999999994,
+     "steps": 160,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.975,
+     "reward": 72.0000000000001,
+     "failure_reason": null,
+     "errors": []
+    }
+   },
+   {
+    "task_id": "crystallizer_eval_s10047",
+    "seed": 10047,
+    "sigma_max": 0.2315,
+    "third": "high",
+    "oracle": {
+     "seed": 10047,
+     "sigma_max": 0.2315,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 99,
+     "success": true,
+     "fast": true,
+     "norm_time": 1.0,
+     "reward": 90.29999999999995,
+     "failure_reason": null
+    },
+    "cautious": {
+     "seed": 10047,
+     "sigma_max": 0.2315,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 281,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.35231316725978645,
+     "reward": 35.70000000000044,
+     "failure_reason": null
+    },
+    "blind_searched": {
+     "seed": 10047,
+     "sigma_max": 0.2315,
+     "third": "high",
+     "oracle_steps": 99,
+     "steps": 203,
+     "success": true,
+     "fast": false,
+     "norm_time": 0.4876847290640394,
+     "reward": 59.10000000000022,
+     "failure_reason": null
+    },
+    "probe_controller": {
+     "task_id": "crystallizer_eval_s10047",
+     "seed": 10047,
+     "probe_seed": 110047,
+     "sigma_max": 0.2315,
+     "third": "high",
+     "oracle_steps": 99,
+     "variant": "three-pass",
+     "probe_failed": false,
+     "lo": 0.22975,
+     "hi": 0.23261,
+     "probe_error": 0.0017500000000000016,
+     "bracket_width": 0.0028600000000000014,
+     "steps": 100,
+     "success": true,
+     "fast": true,
+     "norm_time": 0.99,
+     "reward": 89.99999999999996,
+     "failure_reason": null,
+     "errors": []
+    }
+   }
+  ],
+  "oracle": {
+   "overall": {
+    "n": 48,
+    "reward": 79.70000000000003,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 1.0,
+    "min_norm_time": 1.0,
+    "steps": 134.33333333333334,
+    "outcomes": {
+     "success": 48
+    }
+   },
+   "by_third": {
+    "low": {
+     "n": 16,
+     "reward": 65.83125000000015,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 1.0,
+     "min_norm_time": 1.0,
+     "steps": 180.5625,
+     "outcomes": {
+      "success": 16
+     }
+    },
+    "middle": {
+     "n": 16,
+     "reward": 82.7625,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 1.0,
+     "min_norm_time": 1.0,
+     "steps": 124.125,
+     "outcomes": {
+      "success": 16
+     }
+    },
+    "high": {
+     "n": 16,
+     "reward": 90.50624999999995,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 1.0,
+     "min_norm_time": 1.0,
+     "steps": 98.3125,
+     "outcomes": {
+      "success": 16
+     }
+    }
+   }
+  },
+  "cautious": {
+   "overall": {
+    "n": 48,
+    "reward": 38.393750000000416,
+    "success": 1.0,
+    "fast": 0.041666666666666664,
+    "norm_time": 0.4932564698788697,
+    "min_norm_time": 0.31347962382445144,
+    "steps": 272.0208333333333,
+    "outcomes": {
+     "success": 48
+    }
+   },
+   "by_third": {
+    "low": {
+     "n": 16,
+     "reward": 38.13750000000042,
+     "success": 1.0,
+     "fast": 0.125,
+     "norm_time": 0.6573827847957098,
+     "min_norm_time": 0.5392491467576792,
+     "steps": 272.875,
+     "outcomes": {
+      "success": 16
+     }
+    },
+    "middle": {
+     "n": 16,
+     "reward": 38.49375000000042,
+     "success": 1.0,
+     "fast": 0.0,
+     "norm_time": 0.45723712445533304,
+     "min_norm_time": 0.3977272727272727,
+     "steps": 271.6875,
+     "outcomes": {
+      "success": 16
+     }
+    },
+    "high": {
+     "n": 16,
+     "reward": 38.550000000000416,
+     "success": 1.0,
+     "fast": 0.0,
+     "norm_time": 0.365149500385566,
+     "min_norm_time": 0.31347962382445144,
+     "steps": 271.5,
+     "outcomes": {
+      "success": 16
+     }
+    }
+   }
+  },
+  "blind_searched": {
+   "overall": {
+    "n": 48,
+    "reward": 46.20416666666685,
+    "success": 0.8958333333333334,
+    "fast": 0.10416666666666667,
+    "norm_time": 0.5632140842382674,
+    "min_norm_time": 0.0,
+    "steps": 176.54166666666666,
+    "outcomes": {
+     "success": 43,
+     "shower": 5
+    }
+   },
+   "by_third": {
+    "low": {
+     "n": 16,
+     "reward": 16.775000000000134,
+     "success": 0.6875,
+     "fast": 0.3125,
+     "norm_time": 0.5561591943087694,
+     "min_norm_time": 0.0,
+     "steps": 135.75,
+     "outcomes": {
+      "success": 11,
+      "shower": 5
+     }
+    },
+    "middle": {
+     "n": 16,
+     "reward": 60.993750000000205,
+     "success": 1.0,
+     "fast": 0.0,
+     "norm_time": 0.6312788346449713,
+     "min_norm_time": 0.5497382198952879,
+     "steps": 196.6875,
+     "outcomes": {
+      "success": 16
+     }
+    },
+    "high": {
+     "n": 16,
+     "reward": 60.843750000000206,
+     "success": 1.0,
+     "fast": 0.0,
+     "norm_time": 0.5022042237610614,
+     "min_norm_time": 0.4329004329004329,
+     "steps": 197.1875,
+     "outcomes": {
+      "success": 16
+     }
+    }
+   }
+  },
+  "probe_controller": {
+   "overall": {
+    "n": 48,
+    "reward": 77.06875000000007,
+    "success": 1.0,
+    "fast": 1.0,
+    "norm_time": 0.9508985419590048,
+    "min_norm_time": 0.8416666666666667,
+    "steps": 143.10416666666666,
+    "outcomes": {
+     "success": 48
+    },
+    "probe_failures": 0,
+    "probe_error": {
+     "median": 0.004620000000000006,
+     "p90": 0.008680000000000021,
+     "max": 0.010229999999999989
+    },
+    "bracket_width_max": 0.010950000000000001
+   },
+   "by_third": {
+    "low": {
+     "n": 16,
+     "reward": 59.96250000000021,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9078890152640603,
+     "min_norm_time": 0.8416666666666667,
+     "steps": 200.125,
+     "outcomes": {
+      "success": 16
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.005160000000000012,
+      "p90": 0.008209999999999995,
+      "max": 0.010229999999999989
+     },
+     "bracket_width_max": 0.010950000000000001
+    },
+    "middle": {
+     "n": 16,
+     "reward": 81.16875000000002,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9589344199067155,
+     "min_norm_time": 0.9318181818181818,
+     "steps": 129.4375,
+     "outcomes": {
+      "success": 16
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.004235000000000003,
+      "p90": 0.00935999999999998,
+      "max": 0.010170000000000012
+     },
+     "bracket_width_max": 0.010920000000000013
+    },
+    "high": {
+     "n": 16,
+     "reward": 90.07499999999996,
+     "success": 1.0,
+     "fast": 1.0,
+     "norm_time": 0.9858721907062385,
+     "min_norm_time": 0.9724770642201835,
+     "steps": 99.75,
+     "outcomes": {
+      "success": 16
+     },
+     "probe_failures": 0,
+     "probe_error": {
+      "median": 0.0034549999999999997,
+      "p90": 0.006179999999999991,
+      "max": 0.007349999999999995
+     },
+     "bracket_width_max": 0.00910999999999998
+    }
+   }
+  }
+ },
+ "seconds": 278.2601499557495
+}

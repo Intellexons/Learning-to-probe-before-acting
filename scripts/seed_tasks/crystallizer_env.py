@@ -19,8 +19,9 @@ crystals grow for dt seconds, driven by the supersaturation at the new T; the
 supersaturation at the end of the step, the value the state reports, is
 compared with the hidden limit. Everything is deterministic given the seed,
 so a controller that knows sigma_max and the growth law can predict the next
-sigma exactly; one that knows only the readings can hold sigma just under the
-limit by feedback, since the tested value is the reported one.
+sigma exactly (`peek(action)` returns it without taking the step); one that
+knows only the readings can hold sigma just under the limit by feedback, since
+the tested value is the reported one.
 
 sigma_max is the hidden parameter. It appears nowhere except in the shower
 test, so the observation carries no information about it until it is crossed.
@@ -138,34 +139,51 @@ class CrystallizerEnv:
             "sigma": float(self.sigma()),
         }
 
-    def step(self, action):
-        if self.done:
-            return self.observe(), 0.0, True, False, {}
-        c = self.config
+    def _clip_action(self, action) -> float:
         try:
             a = float(action)
         except Exception:
             a = 0.0
         if not math.isfinite(a):
             a = 0.0
-        self.rate_cmd = max(-1.0, min(1.0, a))
+        return max(-1.0, min(1.0, a))
 
-        # 1. jacket moves the temperature (a < 0 cools, a > 0 heats)
-        self.T = max(c.T_min, min(c.T_max, self.T + self.rate_cmd * c.max_rate * c.dt / 60.0))
+    def _advance(self, T: float, c: float, m_c: float, a: float):
+        """One step's arithmetic from the state (T, c, m_c) under the clipped action `a`:
+        the jacket moves T, then the crystals grow or dissolve for dt seconds driven by the
+        supersaturation at the new temperature. Pure: returns (T', c', m_c') and touches
+        nothing. `step` and `peek` both use it, so a lookahead is exact by construction."""
+        cfg = self.config
+        T2 = max(cfg.T_min, min(cfg.T_max, T + a * cfg.max_rate * cfg.dt / 60.0))
+        sol = solubility(T2, cfg)
+        sigma = c / sol - 1.0
+        L = (max(m_c, 0.0) / (cfg.rho * self.N)) ** (1.0 / 3.0)
+        area_mass = cfg.rho * self.N * 3.0 * L * L            # d(m_c)/dL
+        rate = cfg.k_g * abs(sigma) ** cfg.g
+        excess = c - sol
+        if sigma >= 0.0:
+            dm = min(area_mass * rate * cfg.dt, max(excess, 0.0))
+        else:
+            dm = -min(area_mass * rate * cfg.dt, m_c, max(-excess, 0.0))
+        return T2, c - dm, m_c + dm
 
+    def peek(self, action) -> float:
+        """The supersaturation the state would report after `action`, without taking it.
+        A controller that knows the dynamics uses it to hold the end-of-step sigma at a
+        level; the oracle holds it at the hidden limit."""
+        T2, c2, _ = self._advance(self.T, self.c, self.m_c, self._clip_action(action))
+        return c2 / solubility(T2, self.config) - 1.0
+
+    def step(self, action):
+        if self.done:
+            return self.observe(), 0.0, True, False, {}
+        c = self.config
+        self.rate_cmd = self._clip_action(action)
+
+        # 1. the jacket moves the temperature (a < 0 cools, a > 0 heats);
         # 2. growth or dissolution for dt seconds, driven by the supersaturation at the
         #    new temperature (mass-conserving, cannot cross saturation)
-        sigma = self.sigma()
-        L = self.crystal_size()
-        area_mass = c.rho * self.N * 3.0 * L * L            # d(m_c)/dL
-        rate = c.k_g * abs(sigma) ** c.g
-        excess = self.c - solubility(self.T, c)
-        if sigma >= 0.0:
-            dm = min(area_mass * rate * c.dt, max(excess, 0.0))
-        else:
-            dm = -min(area_mass * rate * c.dt, self.m_c, max(-excess, 0.0))
-        self.m_c += dm
-        self.c -= dm
+        self.T, self.c, self.m_c = self._advance(self.T, self.c, self.m_c, self.rate_cmd)
         self.t += 1
 
         # 3. the shower test, on the supersaturation the state reports
