@@ -182,6 +182,21 @@ import json
 import math
 import random
 
+# --- The result travels on the real stdout as one JSON line at the end. The
+#     model's controller may print (the brief does not forbid it); its output
+#     goes to a sink so it cannot corrupt the result line. ---
+import sys as _sys
+class _Sink:
+    def write(self, s):
+        return len(s)
+    def flush(self):
+        pass
+def _emit(line, _out=_sys.stdout):
+    _out.write(line + "\\n")
+    _out.flush()
+_sys.stdout = _Sink()
+del _sys, _Sink
+
 # --- Environment, built in a private namespace. The policy code below sees its
 #     own names, `math`, `random` and nothing of the environment's source. ---
 def _build_env_factory(env_src, env_class, hidden):
@@ -240,7 +255,7 @@ def _run_episode(seed, max_steps):
         success = None
     return {{"reward": total_reward, "steps": steps, "success": success, "peak_sigma": peak_sigma, "error": None}}
 
-print(json.dumps(_run_episode({seed}, {max_steps})))
+_emit(json.dumps(_run_episode({seed}, {max_steps})))
 '''
 
 
@@ -387,7 +402,9 @@ def run_policy_in_subprocess(
             "error": f"Process error: {outcome.stderr_tail()}",
         }
     try:
-        result = json.loads(outcome.stdout.strip())
+        # The result is the last non-empty line; anything before it is stray output.
+        lines = [ln for ln in outcome.stdout.splitlines() if ln.strip()]
+        result = json.loads(lines[-1] if lines else "")
         result.setdefault("success", None)
         result.setdefault("steps", 0)
         return result

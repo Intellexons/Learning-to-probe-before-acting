@@ -63,8 +63,8 @@ Stage & What it asks & Status & Entry \\
 \midrule
 0  & Is the environment worth it: does the hidden limit need a probe run? & passed on the current environment (clean rebuild, run 2); earlier passes were on the previous environment & 2026-11-01, Stage 0 rebuilt \\
 0b & Does the hand-written probe run + final run survive the real runner? & folded into Stage 0 as gate G3 on 2026-11-01; passed & 2026-11-01, Stage 0 rebuilt \\
-1  & Frozen model, one turn, no probe run (arm A) & done under the brief on 12 tasks; to be re-run on the 48-task eval set & 2026-10-26, the brief \\
-2  & Frozen model with a probe run (arm B) & done under the brief on 12 tasks; to be re-run on the 48-task eval set & 2026-10-26, the brief \\
+1  & Frozen model, one turn, no probe run (arm A) & re-run on the 48-task set with the 4B base and Qwen3-8B (non-thinking); both far below the cautious blind reference, the 8B worse than the 4B & 2026-11-01, Stages 1 and 2 re-run \\
+2  & Frozen model with a probe run (arm B) & re-run as above; about six percent of first replies are probe code and every one is cut off by the 1000-token budget, so no probe runs & 2026-11-01, Stages 1 and 2 re-run \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
@@ -1118,5 +1118,135 @@ row. Locally, \texttt{scripts/stage0\_gate.py --out <dir> --workers <n>} runs
 the same thing, \texttt{--quick} as a smoke test; \texttt{tests/test\_stage0\_gate.py}
 covers the pieces.
 \end{sloppypar}
+
+
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section*{2026-11-01 \quad Stages 1 and 2 re-run on the 48-task set: the 4B
+base against Qwen3-8B; a sandbox bug fixed on the way}
+% ============================================================
+
+\commit{bea2bf8} $\cdot$ \textit{\texttt{Qwen3-4B-Instruct-2507} and
+\texttt{Qwen3-8B} in non-thinking mode, frozen; four A30 jobs of 47 to 70
+minutes; no training}
+
+\subsection*{Setup / motivation}
+
+Stage~0's rebuild moved the held-out set to 48 tasks (16 per third of the
+limit's range), so the frozen-model stages had to be re-run; the user asked
+for a larger model beside the 4B base and chose \texttt{Qwen3-8B} with
+thinking switched off (\texttt{enable\_thinking=False} in the chat template,
+as its model card instructs). Four runs: Stage~1 (one turn, no probe
+section) and Stage~2 (the two-turn protocol with the optional probe run) for
+each model, 4 samples per task at temperature $0.8$, top-$p$ $0.95$, 1000 new
+tokens per turn, the brief with the two quench logs and the stated range.
+\texttt{scripts/eval\_frozen\_baseline.py} now embeds the provenance block in
+its summary and the job scripts take the model, the sample count and the
+commit; \texttt{scripts/frozen\_render.py} renders the result JSON into the
+tables of \texttt{docs/stage12\_frozen.tex}, the full account.
+
+A first round (commit \texttt{9a83f4e}, jobs 2979823, 2979824, 2979828,
+2979829) exposed a bug in the scoring sandbox: the final run returned its
+result as the whole stdout of the subprocess parsed as JSON, so a controller
+that printed anything was floored at $-300$ (``Output parse error''). The
+brief does not forbid printing in the controller, and the 8B prints far more
+often than the 4B (38 of 192 Stage~2 controllers against 5), so the bug cost
+it 11 of 192 samples in Stage~2 and 1 in Stage~1, and would have taught a
+trained policy never to print. Commit \texttt{bea2bf8} keeps the real stdout
+for the one result line, sends the controller's prints to a sink, and reads
+the last line; the new test fails on the old runner. All four runs were
+redrawn on the fixed commit (round 2, jobs 2980889, 2980890, 2980891,
+2980892; the numbers below). Round 1's summaries and logs are kept under
+\texttt{docs/stage12/superseded/}; its samples remain on the cluster.
+
+\subsection*{Results}
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12/tables/comparison.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commit and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{stage12/tables/errors.tex}}
+\end{center}
+
+Both frozen models sit far below the cautious blind controller ($+38$):
+the 4B at $-84$ (one turn) and $-66$ (two turns), the 8B at $-207$ and
+$-192$; fast success is at most one sample in a hundred. The 8B is worse on
+every column because 91 and 90 of its 192 samples never run: undefined names
+(\texttt{L} never read from the state, an \texttt{initial\_L} never set),
+\texttt{state['done']} read although the brief states it is not a state key,
+and in Stage~2 \texttt{env} called inside the controller although the brief
+states the controller has none. Neither model uses the probe run: 12 and 11
+first replies of 192 are probe code, every one cut off by the 1000-token
+budget and rejected by the sandbox, so no probe ran and no probe output holds
+a number near the limit. The 4B's Stage~2 gain over Stage~1 comes from
+shorter replies (cut-offs $17.7\%$ to $3.6\%$), not from information: its
+success rate falls from $27\%$ to $23\%$. By third, the 4B succeeds on about
+half the high-limit batches and almost none of the low-limit ones (a fixed
+moderate cooling rate); the 8B mostly times out. Round~1's numbers agree
+within sampling noise (4B $-85$ and $-53$, 8B $-209$ and $-195$).
+
+\subsection*{Interpretation}
+
+The frozen base is the floor the training stages start from, and it is the
+whole scale below the blind reference. The larger model does not help: in
+non-thinking mode it writes longer code with more invented names and more
+breaches of the brief's stated rules, and it gives no better start at twice
+the memory. The probe rate of a frozen model is about six percent, and it is
+measured with the token budget as a confound: no probe reply the frozen
+models write fits in 1000 tokens, so ``does the frozen model probe'' cannot
+be separated from ``can its probe run''.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Decide the per-turn token budget before Stage~3 (todo item~2): raise it
+  so a probe reply can run, or keep 1000 and state the confound. The user's
+  call; it changes the protocol.
+\item Train the 4B base (Stage~3 onwards); drop the 8B.
+\item Rewrite the paper's Stage~1 and~2 status paragraphs from
+  \texttt{docs/stage12\_frozen.tex} together with the Stage~0 rewrite; the
+  paper still carries the 12-task numbers of 2026-10-26.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+Why the Stage~2 brief draws shorter controller replies from the 4B than the
+Stage~1 brief (median 2\,086 against 2\,999 characters); whether the 8B in
+thinking mode would respect the brief's rules, at a cost in tokens the
+protocol does not budget for.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{bea2bf8}, \texttt{hpc push . lora4vr}, then one job per run, with
+\texttt{MODEL\_PATH=models/hf\_base/iter\_000} for the 4B base and
+\texttt{models/hf\_base/qwen3-8b} for the 8B (\texttt{hf download Qwen/Qwen3-8B}
+on the run node):
+\end{sloppypar}
+\begin{scriptsize}
+\begin{verbatim}
+hpc submit lora4vr jobs/hpi/stage1.sbatch --job-name=stage1-<tag> \
+    --export=ALL,LORA4VR_GIT_COMMIT=bea2bf8b366b8a5551b5b3a9a86baaacf3b9d242,MODEL_PATH=<path>,N_SAMPLES=4
+hpc submit lora4vr jobs/hpi/stage2.sbatch --job-name=stage2-<tag> \
+    --export=ALL,LORA4VR_GIT_COMMIT=bea2bf8b366b8a5551b5b3a9a86baaacf3b9d242,MODEL_PATH=<path>,N_SAMPLES=4
+hpc pull lora4vr/results/<jobname>_<jobid> docs/stage12/
+uv run python scripts/frozen_render.py --out docs/stage12/tables \
+    stage1-4b=docs/stage12/stage1-4b_2980889 stage2-4b=docs/stage12/stage2-4b_2980890 \
+    stage1-8b=docs/stage12/stage1-8b_2980891 stage2-8b=docs/stage12/stage2-8b_2980892
+\end{verbatim}
+\end{scriptsize}
+Jobs 2980889 (stage1-4b), 2980890 (stage2-4b), 2980891 (stage1-8b), 2980892
+(stage2-8b), all on gx17v1. Each result directory holds the job log,
+\texttt{stage<N>\_summary.json} with its provenance block and per-task rows,
+and \texttt{stage<N>\_samples.jsonl} with every sample's transcript, probe
+code, tool output, controller and outcome. The sandbox bug is pinned by
+\texttt{tests/test\_runner\_modes.py}, test
+\texttt{test\_policy\_that\_prints\_is\_scored\_normally}.
 
 \end{document}
