@@ -50,14 +50,13 @@ from trl import GRPOTrainer
 from trl.models.utils import disable_gradient_checkpointing
 from trl.trainer.utils import pad, use_adapter
 
-from src.prompts import compose_turn_message
+from src.agent_loop import tools_for
 from src.multi_turn import (
     ToolResult,
     assemble_per_token_advantages,
     assemble_tool_mask,
     compute_branched_advantages,
     execute_turn,
-    format_tool_message,
     rollout_diagnostics,
 )
 from src.runner import ERROR_PENALTY_PER_SCENARIO
@@ -149,7 +148,7 @@ class BranchedGRPOTrainer(GRPOTrainer):
         g1: int,
         g2: int,
         task_map: dict[str, dict],
-        prompt_turn2_map: dict[str, str] | None = None,
+        chat_tools: list[dict] | None = None,
         max_turn_tokens: int = 400,
         scoring_timeout: int = 30,
         scoring_max_steps: int = 600,
@@ -180,13 +179,11 @@ class BranchedGRPOTrainer(GRPOTrainer):
         # `(B, K, |V|)` LM-head gradient tensor — the dominant backward
         # term per Appendix A of the paper — by reducing B.
         self.loss_micro_batch_size = loss_micro_batch_size
-        # Per-task pre-rendered turn-2 prompt body. The eval pipeline
-        # (`scripts/eval_frozen_baseline.py:198-203`) re-renders the turn-2
-        # prompt and prepends it to the tool-result message; training matches
-        # that contract so the model's chat history during rollouts is
-        # byte-identical to what was measured at frozen baseline.
-        # Empty dict => skip the prepend (legacy behaviour).
-        self.prompt_turn2_map = prompt_turn2_map or {}
+        # The tools the chat template writes into the prompt: the two of the
+        # agent loop (`src.agent_loop`), as evaluation offers them for a
+        # two-reply task, so the model's chat during rollouts is the chat that
+        # was measured at the frozen baseline.
+        self.chat_tools = chat_tools if chat_tools is not None else tools_for(2)
         self.max_turn_tokens = max_turn_tokens
         self.scoring_timeout = scoring_timeout
         self.scoring_max_steps = scoring_max_steps
@@ -218,20 +215,31 @@ class BranchedGRPOTrainer(GRPOTrainer):
         prefix_messages: list[dict],
         n_samples: int,
     ) -> list[tuple[list[int], list[int], str]]:
-        """Generate `n_samples` continuations for a chat prefix.
+        """Generate `n_samples` replies to a chat prefix.
 
         Returns a list of (prompt_ids, new_token_ids, decoded_text) triples.
         prompt_ids is the full tokenized prefix (same for every sample);
         new_token_ids is each sample's new tokens only.
         """
         tokenizer = self.processing_class
-        device = self.accelerator.device
         prompt_text = tokenizer.apply_chat_template(
-            prefix_messages, tokenize=False, add_generation_prompt=True
+            prefix_messages, tools=self.chat_tools, tokenize=False, add_generation_prompt=True
         )
-        inputs = tokenizer(prompt_text, return_tensors="pt").to(device)
-        prompt_ids = inputs.input_ids[0].tolist()
-        prompt_len = inputs.input_ids.shape[1]
+        prompt_ids = tokenizer(prompt_text, return_tensors="pt").input_ids[0].tolist()
+        return self._generate_from_ids(prompt_ids, n_samples)
+
+    def _generate_from_ids(
+        self,
+        prompt_ids: list[int],
+        n_samples: int,
+    ) -> list[tuple[list[int], list[int], str]]:
+        """Generate `n_samples` continuations of a token prefix. Same return
+        shape as `_generate_one_turn`. The second reply is sampled from the
+        ids the loss will condition on, so the two cannot drift apart."""
+        tokenizer = self.processing_class
+        device = self.accelerator.device
+        input_ids = torch.tensor([prompt_ids], device=device)
+        prompt_len = input_ids.shape[1]
         pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
 
         # Temporarily disable gradient checkpointing so the model can use its
@@ -243,7 +251,8 @@ class BranchedGRPOTrainer(GRPOTrainer):
             self.model, self.args.gradient_checkpointing_kwargs
         ):
             out = self.model.generate(
-                **inputs,
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
                 max_new_tokens=self.max_turn_tokens,
                 temperature=self.temperature,
                 top_p=self.top_p,
@@ -264,19 +273,24 @@ class BranchedGRPOTrainer(GRPOTrainer):
             results.append((prompt_ids, new_ids, text))
         return results
 
-    def _tokenize_tool_message(self, tool_msg: dict) -> list[int]:
-        """Tokenize the user-role tool-result message on its own.
+    def _between_reply_ids(
+        self,
+        prompt_messages: list[dict],
+        turn1_text: str,
+        turn1_ids: list[int],
+        messages: tuple[dict, ...] | list[dict],
+    ) -> list[int]:
+        """The tokens between the end of the first reply and the start of the
+        second: the end-of-turn marker if the model did not write it itself
+        (a reply cut by the token budget), the tool responses as the chat
+        template renders them, and the header of the next reply.
 
-        This is an approximation — the chat template adds role-tokens around
-        each message, so tokenize-the-difference would be more accurate. For
-        Qwen's ChatML this is close enough. If we ever switch templates,
-        revisit.
+        `prompt_ids + turn1_ids + these` is the exact prefix the second reply
+        is sampled from. None of these tokens is the model's, so all of them
+        are masked out of the loss.
         """
-        tokenizer = self.processing_class
-        text = tokenizer.apply_chat_template(
-            [tool_msg], tokenize=False, add_generation_prompt=False
-        )
-        return tokenizer(text, add_special_tokens=False).input_ids
+        return between_reply_ids(self.processing_class, self.chat_tools,
+                                 prompt_messages, turn1_text, turn1_ids, messages)
 
     # ------------------------------------------------------------------
     # Branched rollout phases (one prompt at a time)
@@ -338,21 +352,15 @@ class BranchedGRPOTrainer(GRPOTrainer):
         t_phase = time.monotonic()
         rewards_grid: list[list[float]] = []
         trajectories: list[_Trajectory] = []
-        # The turn-2 user message is the probe output followed by the final-turn
-        # instructions, composed by the same helper eval uses
-        # (`src.prompts.compose_turn_message`), so training and eval see
-        # byte-identical messages. With an empty prompt_turn2 (legacy callers
-        # that don't provide it), fall back to the body only.
-        prompt_turn2 = self.prompt_turn2_map.get(task["task_id"], "")
         for i, ((p_ids, t1_ids, t1_text), tr1) in enumerate(zip(turn1_outputs, turn1_results)):
             if tr1.ended:
-                # The model wrote the controller in turn 1: this variant is a
-                # leaf with one reward and no second turn. Its row of the grid
+                # The first reply held the final run: this variant is a leaf
+                # with one reward and no second reply. Its row of the grid
                 # holds that reward g2 times, so V_1^(i) is its reward, its
                 # turn-1 advantage is V_1^(i) - V_0, and its turn-1 tokens
                 # weigh as much in the loss as a probe variant's do (which
                 # appear once per continuation). No turn-2 tokens, no tool
-                # message, no generate call.
+                # response, no generate call.
                 reward = tr1.reward if tr1.reward is not None else 0.0
                 rewards_grid.append([reward] * self.g2)
                 for j in range(self.g2):
@@ -369,18 +377,11 @@ class BranchedGRPOTrainer(GRPOTrainer):
                         reward=reward,
                     ))
                 continue
-            if prompt_turn2:
-                user_content = compose_turn_message(prompt_turn2, tr1.text)
-            else:
-                user_content = tr1.text
-            tool_msg = format_tool_message(user_content)
-            tool_ids = self._tokenize_tool_message(tool_msg)
-            prefix_messages = (
-                list(prompt_messages)
-                + [{"role": "assistant", "content": t1_text}]
-                + [tool_msg]
-            )
-            turn2_outputs = self._generate_one_turn(prefix_messages, self.g2)
+            # The task goes on: what follows the first reply is what
+            # `execute_turn` returned for it (a tool response per call, or the
+            # notice that there was none), as in evaluation.
+            tool_ids = self._between_reply_ids(prompt_messages, t1_text, t1_ids, tr1.messages)
+            turn2_outputs = self._generate_from_ids(p_ids + t1_ids + tool_ids, self.g2)
 
             row_rewards: list[float] = []
             for j, (_, t2_ids, t2_text) in enumerate(turn2_outputs):
@@ -898,6 +899,39 @@ class BranchedGRPOTrainer(GRPOTrainer):
         """
         task = self.task_map[inputs[0]["task_id"]]
         return ERROR_PENALTY_PER_SCENARIO * len(task.get("scenarios", [1]))
+
+
+def between_reply_ids(
+    tokenizer,
+    chat_tools: list[dict] | None,
+    prompt_messages: list[dict],
+    turn1_text: str,
+    turn1_ids: list[int],
+    messages: tuple[dict, ...] | list[dict],
+) -> list[int]:
+    """Token ids that lie between the first reply and the second.
+
+    The chat template is rendered three times: up to the header of the first
+    reply, with the first reply closed, and with the messages that follow it
+    plus the header of the second reply. Each rendering is a prefix of the
+    next, so the difference between them is exactly what the template puts
+    after the reply's text. If the model ended its reply itself, its last
+    token is the end-of-turn marker and is not repeated.
+    """
+    def render(msgs, gen):
+        return tokenizer.apply_chat_template(msgs, tools=chat_tools, tokenize=False, add_generation_prompt=gen)
+
+    reply = {"role": "assistant", "content": turn1_text}
+    opened = render(list(prompt_messages), True) + turn1_text
+    closed = render(list(prompt_messages) + [reply], False)
+    full = render(list(prompt_messages) + [reply] + list(messages), True)
+    if not (closed.startswith(opened) and full.startswith(closed)):
+        raise RuntimeError("the chat template does not render the chat as a growing prefix; "
+                           "the tokens between two replies cannot be read off it")
+    ids = tokenizer(full[len(opened):], add_special_tokens=False).input_ids
+    if turn1_ids and ids and turn1_ids[-1] == ids[0]:
+        ids = ids[1:]   # the model wrote the end-of-turn marker itself
+    return ids
 
 
 def _unique_by_task_id(inputs: list[dict[str, Any]]) -> list[dict[str, Any]]:

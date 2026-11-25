@@ -1,13 +1,13 @@
-"""Positional-turn semantics for `08_eval.py:run_n_turn_rollout`.
+"""The eval-side contract of `08_eval.py:run_n_turn_rollout`.
 
-Mocks the generator so the rollout logic can be exercised on CPU. The
-training side is already covered by `test_multi_turn.py`; here we lock
-down the eval-specific contract:
+Mocks the generator so the rollout can be exercised on CPU. What a reply is
+and what follows it is covered by `test_multi_turn.py`; here we lock down
+what the eval script makes of a rollout:
 
-  - Every turn but the last is probe code, run through `execute_turn`;
-    a controller emitted early is just probe code that prints nothing.
-  - The last turn is the controller and must validate; otherwise the
-    rollout is rejected, matching the training-side `is_last_turn=True` rule.
+  - a final run ends the task on any reply, and its controller is the code
+    the script scores;
+  - a rollout whose replies run out without a final run, or whose controller
+    fails validation, is reported as not successful with the reason.
 """
 import importlib.util
 import sys
@@ -17,6 +17,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from src.agent_loop import TOOL_FINAL, TOOL_PROBE, render_tool_call  # noqa: E402
 from src.prompts import load_template  # noqa: E402
 
 TEMPLATE = load_template(str(REPO_ROOT / "configs" / "prompt_template.txt"))
@@ -70,70 +71,37 @@ def _tiny_task() -> dict:
 
 
 class _ScriptedGenerator:
-    """Drop-in stand-in for generate_code / generate_code_from_messages.
-
-    Returns successive scripted completions; the rollout doesn't care
-    what the prompt looks like, only what the next assistant turn says.
-    Mimics `generate_code` by running `extract_code` on the raw text so
-    the single-turn legacy path receives a populated `code` field.
-    """
+    """Drop-in stand-in for `generate_reply`: returns the scripted replies in
+    turn. The rollout does not care what the chat looks like, only what the
+    next reply says."""
 
     def __init__(self, completions: list[str]):
         self._queue = list(completions)
         self.calls = 0
 
     def __call__(self, *_args, **_kwargs):
-        from src.hf_generator import extract_code
         self.calls += 1
-        if not self._queue:
-            return {
-                "code": "",
-                "success": False,
-                "error": "scripted generator exhausted",
-                "raw_response": "",
-            }
-        text = self._queue.pop(0)
-        return {
-            "code": extract_code(text),
-            "success": True,
-            "error": None,
-            "raw_response": text,
-        }
+        return self._queue.pop(0) if self._queue else ""
 
 
 def _patch_generators(monkeypatch, completions: list[str]):
     gen = _ScriptedGenerator(completions)
-    monkeypatch.setattr(_eval_mod, "generate_code", gen)
-    monkeypatch.setattr(_eval_mod, "generate_code_from_messages", gen)
+    monkeypatch.setattr(_eval_mod, "generate_reply", gen)
     return gen
 
 
-# All of the rollout's downstream actions need an `env.step(...)` to
-# succeed, but our scripted assistant turns include only valid syntax;
-# `validate_code` passes and `score_sample` runs `policy(state)` against
-# `TinyEnv`. The policies below all return `(0.5, 0.0)` so the env
-# completes its 5-step horizon — sufficient for the scoring path to
-# return a non-None reward and exercise the eval's accept/reject branch.
-_POLICY_A = """```python
-def policy(state):
-    return (0.5, 0.0)  # marker A
-```"""
-
-_POLICY_B = """```python
-def policy(state):
-    return (0.5, 0.0)  # marker B
-```"""
-
-_MAIN_BLOCK = """```python
-print("probe")
-```"""
-
-_INVALID_BLOCK = """no fenced block here, model output garbage"""
+# The controllers below return `(0.5, 0.0)` so the tiny env completes its
+# 5-step horizon: enough for the scoring path to return a reward.
+_POLICY_A = render_tool_call(TOOL_FINAL, "def policy(state):\n    return (0.5, 0.0)  # marker A")
+_POLICY_B = render_tool_call(TOOL_FINAL, "def policy(state):\n    return (0.5, 0.0)  # marker B")
+_MAIN_BLOCK = render_tool_call(TOOL_PROBE, 'print("probe")')
+_INVALID_BLOCK = """no tool call here, model output garbage"""
+_NOT_A_CONTROLLER = render_tool_call(TOOL_FINAL, 'print("no policy defined")')
 
 
 def test_a_controller_in_turn_one_ends_the_rollout(monkeypatch):
-    """The probe is optional: a reply that defines `policy` is the controller
-    and the task ends there; the second scripted completion is never asked for."""
+    """A final run in the first reply ends the task there; the second scripted
+    reply is never asked for."""
     gen = _patch_generators(monkeypatch, [_POLICY_A, _POLICY_B])
     out = run_n_turn_rollout(
         model=None, tokenizer=None, template=TEMPLATE,
@@ -161,11 +129,13 @@ def test_main_then_policy_uses_final_policy(monkeypatch):
     )
     assert out["success"] is True
     assert "marker B" in out["code"]
+    assert out["actions"] == ["probe_run", "final_run"]
+    assert [m["role"] for m in out["transcript"]] == ["user", "assistant", "tool", "assistant"]
 
 
 def test_probe_then_probe_is_rejected(monkeypatch):
-    """The last turn must be a controller: two probe-style replies in a row
-    leave the rollout without one."""
+    """The last reply has to hold the final run: two probe runs in a row leave
+    the rollout without one."""
     _patch_generators(monkeypatch, [_MAIN_BLOCK, _MAIN_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
@@ -177,11 +147,11 @@ def test_probe_then_probe_is_rejected(monkeypatch):
     )
     assert out["success"] is False
     assert out["code"] == ""
-    assert "not a valid controller" in out["error"]
+    assert "no final run" in out["error"]
 
 
 def test_final_turn_invalid_is_rejected(monkeypatch):
-    """Turn 2 emits text that is not code → reject, regardless of turn 1."""
+    """The second reply holds no tool call → no final run, whatever the first was."""
     _patch_generators(monkeypatch, [_MAIN_BLOCK, _INVALID_BLOCK])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
@@ -192,12 +162,25 @@ def test_final_turn_invalid_is_rejected(monkeypatch):
         scoring_timeout=10, scoring_max_steps=10,
     )
     assert out["success"] is False
-    assert "not a valid controller" in out["error"]
+    assert "no final run" in out["error"]
 
 
-def test_n_turns_one_path_unchanged(monkeypatch):
-    """Single-turn legacy path still produces the expected success
-    result (back-compat for DPO-loop callers)."""
+def test_final_run_with_an_invalid_controller_is_rejected(monkeypatch):
+    _patch_generators(monkeypatch, [_NOT_A_CONTROLLER])
+    out = run_n_turn_rollout(
+        model=None, tokenizer=None,
+        template=TEMPLATE,
+        task=_tiny_task(),
+        n_turns=2,
+        temperature=0.0, top_p=1.0, max_tokens=128,
+        scoring_timeout=10, scoring_max_steps=10,
+    )
+    assert out["success"] is False and out["code"] == ""
+    assert "is not valid" in out["error"]
+
+
+def test_one_reply_is_the_final_run(monkeypatch):
+    """With one reply the model has only `final_run`."""
     _patch_generators(monkeypatch, [_POLICY_A])
     out = run_n_turn_rollout(
         model=None, tokenizer=None,
@@ -207,14 +190,9 @@ def test_n_turns_one_path_unchanged(monkeypatch):
         temperature=0.0, top_p=1.0, max_tokens=128,
         scoring_timeout=10, scoring_max_steps=10,
     )
-    # generate_code returns the scripted text in raw_response and the
-    # code-extracting `extract_code` runs separately; for n_turns=1 the
-    # rollout passes through the result unmodified, so success follows
-    # whatever the underlying generate_code returned.
     assert out["success"] is True
-    # The legacy path's `code` is whatever extract_code() pulled. It
-    # contains the policy body since the script wraps it in a fence.
-    assert "marker A" in out["code"] or "def policy" in out["code"]
+    assert "marker A" in out["code"]
+    assert out["actions"] == ["final_run"]
 
 
 def test_n_turns_zero_raises():

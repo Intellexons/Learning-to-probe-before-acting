@@ -221,6 +221,45 @@ def generate_code_from_messages(
         }
 
 
+def generate_reply(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    messages: list[dict],
+    *,
+    tools: list[dict] | None = None,
+    temperature: float = 0.8,
+    top_p: float = 0.95,
+    max_tokens: int = 1000,
+) -> str:
+    """The model's next reply to a chat, as text, for the agent loop.
+
+    `tools` goes to the chat template, which writes the tool block the model
+    was trained on. The reply is returned whole, tool-call tags included
+    (`<tool_call>` is an ordinary token for the tokenizer, so decoding keeps
+    it); `src.agent_loop.parse_tool_calls` reads it. A generation failure
+    returns an empty reply, which the loop treats as a reply with no call.
+    """
+    text = tokenizer.apply_chat_template(
+        messages, tools=tools, tokenize=False, add_generation_prompt=True,
+        enable_thinking=False,   # hybrid Qwen3 models reply without a think block; others ignore it
+    )
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    try:
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        return tokenizer.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+    except Exception as e:   # noqa: BLE001  one failed sample must not end a long run
+        logger.warning(f"generation failed: {e}")
+        return ""
+
+
 def generate_batch(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,

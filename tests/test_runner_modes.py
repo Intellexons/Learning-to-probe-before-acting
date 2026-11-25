@@ -4,7 +4,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.runner import (  # noqa: E402
-    defines_policy,
     extract_code,
     score_main_turn,
     score_policy_turn,
@@ -51,20 +50,6 @@ def test_extract_takes_first_fence():
 def test_extract_empty_is_empty():
     assert extract_code("") == ""
     assert extract_code("   \n") == ""
-
-
-def test_defines_policy_is_a_top_level_def_named_policy():
-    assert defines_policy("def policy(state):\n    return 0\n")
-    assert defines_policy("# MODE: policy\nimport math\nmem = {}\ndef policy(state):\n    return 0\n")
-    assert not defines_policy("def helper(state):\n    return 0\n")
-    assert not defines_policy("class A:\n    def policy(self, s):\n        return 0\n")
-    assert not defines_policy("def policy(state:\n")  # cut off: not a controller
-    assert not defines_policy("")
-
-
-# ---------------------------------------------------------------------------
-# Static checks
-# ---------------------------------------------------------------------------
 
 
 def test_score_policy_turn_alias_matches_score_sample():

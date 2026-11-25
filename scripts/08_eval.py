@@ -1,10 +1,11 @@
 """Evaluate the current model on the held-out tasks.
 
-Single-turn (eval.n_turns = 1): the model writes the controller from the brief.
-Multi-turn (eval.n_turns = N): every turn but the last is a probe run, executed
-in the sandbox with its stdout returned to the model; the last turn is the
-controller, which is scored. Turn kinds are positional, exactly as in training
-(`src/multi_turn.execute_turn`), so eval and training see the same messages.
+The model acts through tool calls (`src.agent_loop`). With one reply
+(eval.n_turns = 1) the only tool is `final_run`: the model writes the
+controller from the brief. With N replies it also has `probe_run`, whose
+printed output comes back as the tool response. The loop is
+`src.multi_turn.run_rollout`, built on the `execute_turn` training uses, so
+eval and training see the same messages.
 """
 import argparse
 import json
@@ -15,18 +16,12 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.hf_generator import (  # noqa: E402
-    generate_batch,
-    generate_code,
-    generate_code_from_messages,
-    load_model_for_generation,
-)
-from src.multi_turn import execute_turn  # noqa: E402
-from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
+from src.hf_generator import generate_reply, load_model_for_generation  # noqa: E402
+from src.multi_turn import run_rollout  # noqa: E402
+from src.prompts import load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     ERROR_PENALTY_PER_SCENARIO,
     error_floor_result,
-    extract_code,
     score_sample,
     validate_code,
 )
@@ -51,124 +46,45 @@ def run_n_turn_rollout(
     scoring_timeout: int,
     scoring_max_steps: int,
 ) -> dict:
-    """Run an `n_turns`-turn rollout for one task; never short-circuit.
+    """One sample of one task through the agent loop, with `n_turns` replies.
 
-    Returns a dict shaped like the existing single-turn `generate_code`
-    result so the surrounding loop can consume it identically:
+    Returns a dict the surrounding loop consumes:
 
       {
-        "code":          the final turn's controller (or "" if the rollout
-                         ended without a valid one),
-        "success":       True iff the final turn is a valid controller,
-        "error":         None on success, otherwise a short reason string,
-        "raw_response":  raw text of the FINAL turn (matches single-turn
-                         semantics; the full transcript is available via
-                         `transcript` for callers that need it),
-        "transcript":    [{"role": ..., "content": ...}, ...] — the full
-                         chat history the model saw, for debug logging.
+        "code":          the controller of the final run ("" if the task ended
+                         without a valid one),
+        "success":       True iff there was a final run and its controller
+                         passes `validate_code`,
+        "error":         None on success, otherwise a short reason,
+        "raw_response":  the model's last reply,
+        "transcript":    the full chat, for the debug log,
+        "actions":       what each reply was (`src.multi_turn.ACTION_*`).
       }
-
-    The turn position decides what each completion is: every turn but the
-    last is probe code (executed via `execute_turn`, stdout returned to the
-    model), the last is the controller. The controller must pass
-    `validate_code`; otherwise the rollout is rejected, matching the rule
-    training enforces in `src/multi_turn.execute_turn` (`is_last_turn=True`).
     """
     if n_turns < 1:
         raise ValueError(f"n_turns must be >= 1, got {n_turns}")
 
-    # Single-turn path is preserved separately to keep the surface area
-    # of legacy DPO-loop runs unchanged.
-    if n_turns == 1:
-        prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
-        sample = generate_code(
-            model, tokenizer, prompt,
-            temperature=temperature, top_p=top_p, max_tokens=max_tokens,
-        )
-        return {
-            **sample,
-            "transcript": [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": sample.get("raw_response", "")},
-            ],
-        }
+    def generate(messages, tools):
+        return generate_reply(model, tokenizer, messages, tools=tools, temperature=temperature,
+                              top_p=top_p, max_tokens=max_tokens)
 
-    # Multi-turn path. Build the chat history incrementally; never short-circuit.
-    transcript: list[dict] = []
-    final_code = ""
-    final_raw = ""
-
-    # The single scenario the probe-run env is built from (same hidden
-    # parameters as the final run, probe batch). Tasks are single-scenario,
-    # so this matches what the trainer's `execute_turn` resolves.
-    scenario = (task.get("scenarios") or [{}])[0]
-
-    for turn_idx in range(1, n_turns + 1):
-        is_last = (turn_idx == n_turns)
-
-        if turn_idx == 1:
-            prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=n_turns)
-            transcript.append({"role": "user", "content": prompt_t1})
-            sample = generate_code(
-                model, tokenizer, prompt_t1,
-                temperature=temperature, top_p=top_p, max_tokens=max_tokens,
-            )
-        else:
-            sample = generate_code_from_messages(
-                model, tokenizer, transcript,
-                temperature=temperature, top_p=top_p, max_tokens=max_tokens,
-            )
-
-        if not sample["success"]:
-            logger.warning(f"  turn {turn_idx} generation failed: {sample.get('error')}")
-            return {
-                "code": "",
-                "success": False,
-                "error": f"turn {turn_idx}: {sample.get('error')}",
-                "raw_response": sample.get("raw_response", ""),
-                "transcript": transcript,
-            }
-
-        raw = sample["raw_response"]
-        final_raw = raw
-        transcript.append({"role": "assistant", "content": raw})
-
-        if is_last:
-            final_code = extract_code(raw)
-            break
-
-        # Probe turn, or a controller written early: dispatch via the same
-        # execute_turn used in training so the tool-message text is
-        # byte-identical to the training rollout. A controller ends the task.
-        tool_result = execute_turn(
-            raw, task,
-            is_last_turn=False,
-            scenario=scenario,
-            timeout_policy=scoring_timeout,
-            max_steps=scoring_max_steps,
-        )
-        if tool_result.ended:
-            final_code = extract_code(raw)
-            break
-        next_prompt = render_prompt(template, task, turn_idx=turn_idx + 1, total_turns=n_turns)
-        transcript.append({"role": "user", "content": compose_turn_message(next_prompt, tool_result.text)})
-
-    ok, err = validate_code(final_code)
-    if ok:
-        return {
-            "code": final_code,
-            "success": True,
-            "error": None,
-            "raw_response": final_raw,
-            "transcript": transcript,
-        }
-    return {
-        "code": "",
-        "success": False,
-        "error": f"final turn (turn {n_turns}) is not a valid controller: {err}",
-        "raw_response": final_raw,
-        "transcript": transcript,
+    brief = render_prompt(template, task, total_turns=n_turns)
+    roll = run_rollout(generate, brief, task, n_turns,
+                       timeout_policy=scoring_timeout, max_steps=scoring_max_steps)
+    out = {
+        "raw_response": roll["transcript"][-1]["content"],   # a rollout ends on a reply
+        "transcript": roll["transcript"],
+        "actions": [t.action for t in roll["turns"]],
     }
+    if roll["final_run"]:
+        ok, err = validate_code(roll["code"])
+        if ok:
+            return {**out, "code": roll["code"], "success": True, "error": None}
+        error = f"the controller of the final run is not valid: {err}"
+    else:
+        error = roll["turns"][-1].text
+    return {**out, "code": "", "success": False, "error": error}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -210,41 +126,21 @@ def main():
         task_id = task["task_id"]
         logger.info(f"Eval task {task_id}: rolling out {N_EVAL_SAMPLES} samples × {n_turns} turn(s)")
 
-        if n_turns == 1:
-            # Legacy fast path: same shape as before so DPO loops are unaffected.
-            prompt = render_prompt(template, task)
-            samples = generate_batch(
+        samples = []
+        for sample_id in range(N_EVAL_SAMPLES):
+            logger.info(f"  Sample {sample_id+1}/{N_EVAL_SAMPLES}")
+            samples.append(run_n_turn_rollout(
                 model=model,
                 tokenizer=tokenizer,
-                prompt=prompt,
-                n_samples=N_EVAL_SAMPLES,
+                template=template,
+                task=task,
+                n_turns=n_turns,
                 temperature=gen_cfg["temperature"],
                 top_p=gen_cfg["top_p"],
                 max_tokens=gen_cfg["max_tokens"],
-            )
-            samples = [
-                {**s, "transcript": [
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": s.get("raw_response", "")},
-                ]}
-                for s in samples
-            ]
-        else:
-            samples = []
-            for sample_id in range(N_EVAL_SAMPLES):
-                logger.info(f"  Sample {sample_id+1}/{N_EVAL_SAMPLES}")
-                samples.append(run_n_turn_rollout(
-                    model=model,
-                    tokenizer=tokenizer,
-                    template=template,
-                    task=task,
-                    n_turns=n_turns,
-                    temperature=gen_cfg["temperature"],
-                    top_p=gen_cfg["top_p"],
-                    max_tokens=gen_cfg["max_tokens"],
-                    scoring_timeout=score_cfg["timeout_seconds"],
-                    scoring_max_steps=score_cfg["max_steps"],
-                ))
+                scoring_timeout=score_cfg["timeout_seconds"],
+                scoring_max_steps=score_cfg["max_steps"],
+            ))
 
         best_reward = 0.0
         task_rewards = []

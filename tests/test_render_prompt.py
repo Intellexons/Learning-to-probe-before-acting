@@ -1,10 +1,9 @@
 """The brief: what the model is told, and nothing else.
 
-The prompt is a briefing (goal and physics in words, what is observed, what is
-not, what the probe run is for, how the final run is scored, the format). No
-environment source, no format example, no mode directives. Turn kinds are
-positional, so turn 1 of a two-turn rollout asks for probe code and the last
-turn asks for the controller.
+The brief states what exists: the goal and the physics in words, what is
+observed, what is not, what a probe run is, what the final run is, and that
+the model acts through tool calls with a number of replies. It carries no
+environment source, no example, and no sentence about what to do first.
 """
 import sys
 from pathlib import Path
@@ -12,7 +11,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
+from src.prompts import load_template, render_prompt  # noqa: E402
 from src.runner import MAIN_DEFAULT_TIMEOUT, MAIN_STDOUT_TRUNCATE  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,7 +28,6 @@ def _toy_task() -> dict:
         "unobserved": "the goal position wobbles.",
         "earlier_batches": "Run A: step 1 x=0.1\nstep 2 x=0.3 crashed",
         "probe_spec": "the same cart, a different start",
-        "final_spec": "the same cart as your probe run",
     }
 
 
@@ -37,7 +35,7 @@ def _render(**kw) -> str:
     return render_prompt(load_template(str(TEMPLATE_PATH)), _toy_task(), **kw)
 
 
-def test_single_turn_is_the_brief_asking_for_the_controller():
+def test_one_reply_is_the_brief_with_the_final_run_only():
     rendered = _render()
     assert rendered.startswith("You run a toy cart.")
     assert "## Goal" in rendered and "drive the cart to the goal." in rendered
@@ -45,76 +43,65 @@ def test_single_turn_is_the_brief_asking_for_the_controller():
     assert "(ax, ay) — 2-tuple of floats" in rendered
     assert "## What you do not observe" in rendered and "the goal position wobbles." in rendered
     assert "## What you know from earlier batches" in rendered and "step 2 x=0.3 crashed" in rendered
-    assert "## The final run (this message)" in rendered
-    assert "## Your probe run" not in rendered
-    assert rendered.rstrip().endswith("the controller, defining `def policy(state)`.")
+    assert "## The final run" in rendered and "`final_run` takes the controller, `def policy(state)`" in rendered
+    assert "## The probe run" not in rendered and "probe_run" not in rendered and "env" not in rendered.split("## The final run")[1]
+    assert rendered.rstrip().endswith("You act through a tool call: `final_run`. You have one reply.")
 
 
-def test_default_args_match_explicit_single_turn():
-    assert _render() == _render(turn_idx=1, total_turns=1)
+def test_default_is_one_reply():
+    assert _render() == _render(total_turns=1)
 
 
-def test_the_env_source_is_not_in_the_prompt():
-    for kw in ({}, {"turn_idx": 1, "total_turns": 2}, {"turn_idx": 2, "total_turns": 2}):
-        assert "class FakeEnv" not in _render(**kw)
+def test_the_env_source_is_not_in_the_brief():
+    for n in (1, 2, 3):
+        assert "class FakeEnv" not in _render(total_turns=n)
 
 
-def test_no_mode_directives_or_example_anywhere():
-    for kw in ({}, {"turn_idx": 1, "total_turns": 2}, {"turn_idx": 2, "total_turns": 2}):
-        rendered = _render(**kw)
+def test_no_mode_directives_example_or_reply_format():
+    for n in (1, 2):
+        rendered = _render(total_turns=n)
         assert "# MODE" not in rendered and "## Example" not in rendered
+        assert "## Format" not in rendered and "code block" not in rendered
 
 
-def test_two_turn_first_turn_offers_the_probe_and_the_choice():
-    rendered = _render(turn_idx=1, total_turns=2)
-    assert "## Your probe run (optional, this message)" in rendered
-    assert "the same cart, a different start" in rendered
+def test_two_replies_describe_the_probe_run_and_the_final_run():
+    rendered = _render(total_turns=2)
+    assert "## The probe run" in rendered
+    assert "`probe_run` runs your code on the same cart, a different start." in rendered
     for line in ("env.reset()", "env.step(action)", "env.failure_reason", "env.showered, env.done"):
         assert line in rendered
     # the flags are attributes of env, not state keys: the sentence that stops the KeyError
     assert "`done` is returned by `env.step`; `env.done`, `env.showered` and `env.failure_reason` are attributes of `env`, not keys of `state`." in rendered
-    assert f"within {MAIN_DEFAULT_TIMEOUT} seconds" in rendered
-    assert f"beyond {MAIN_STDOUT_TRUNCATE} characters" in rendered
-    assert "## The final run (your controller)" in rendered
-    # the choice: a controller ends the task, anything else is probe code
-    assert "If it defines `def policy(state)`, it is your controller" in rendered
-    assert "Anything else is probe code" in rendered
+    assert f"as fit in {MAIN_DEFAULT_TIMEOUT} seconds" in rendered
+    assert f"up to {MAIN_STDOUT_TRUNCATE} characters" in rendered
+    assert "## The final run" in rendered and "It has no access to `env`." in rendered
     assert "## What you know from earlier batches" in rendered
+    assert rendered.rstrip().endswith(
+        "You act through tool calls: `probe_run` and `final_run`. You have 2 replies; "
+        "the task ends with the final run or when the replies run out.")
 
 
-def test_two_turn_final_turn_is_the_short_instruction():
-    rendered = _render(turn_idx=2, total_turns=2)
-    assert rendered.startswith("Now the final run.")
-    assert "def policy(state)" in rendered
-    assert "the same cart as your probe run" in rendered
-    assert "## Goal" not in rendered  # the brief is already in the chat history
+def test_the_brief_says_nothing_about_what_to_do_first():
+    """The tools exist; whether and when to call them is the behaviour under
+    study, so the sections that describe them must not steer."""
+    rendered = _render(total_turns=2)
+    tail = rendered[rendered.index("## The probe run"):].lower()
+    for phrase in ("first", "before", "you should", "you must", "you may", "optional", "then ", "afterwards", "start by"):
+        assert phrase not in tail.replace("from its first step", ""), f"the brief steers: {phrase!r}"
 
 
-def test_compose_turn_message_puts_the_output_first():
-    msg = compose_turn_message(_render(turn_idx=2, total_turns=2), "LIMIT=0.18")
-    assert msg.startswith("Output of your probe run:\nLIMIT=0.18\n\n")
-    assert msg.endswith(_render(turn_idx=2, total_turns=2))
+def test_more_replies_change_only_the_count():
+    assert _render(total_turns=3) == _render(total_turns=2).replace("You have 2 replies", "You have 3 replies")
 
 
-def test_three_turns_middle_turn_offers_more_probe_code_or_the_controller():
-    rendered = _render(turn_idx=2, total_turns=3)
-    assert "more probe code" in rendered and "def policy(state)" in rendered
-    first = _render(turn_idx=1, total_turns=3)
-    assert "## Your probe run (optional, this message and the next 1)" in first
-
-
-def test_turn_idx_out_of_range_raises():
+def test_zero_replies_raises():
     with pytest.raises(ValueError):
-        _render(turn_idx=3, total_turns=2)
-    with pytest.raises(ValueError):
-        _render(turn_idx=0, total_turns=2)
-    with pytest.raises(ValueError):
-        _render(turn_idx=1, total_turns=0)
+        _render(total_turns=0)
 
 
 def test_optional_fields_have_defaults():
     task = {"goal": "g", "state_spec": "s", "action_spec": "a"}
-    rendered = render_prompt(load_template(str(TEMPLATE_PATH)), task, turn_idx=1, total_turns=2)
+    rendered = render_prompt(load_template(str(TEMPLATE_PATH)), task, total_turns=2)
     assert "## What you do not observe" not in rendered
     assert "## What you know from earlier batches" not in rendered
     assert "the same environment, with the same hidden parameters" in rendered

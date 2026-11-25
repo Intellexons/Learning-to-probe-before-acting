@@ -1,19 +1,22 @@
-"""Frozen-model references on the crystallizer: Stage 1 (one turn) and Stage 2 (two turns).
+"""Frozen-model references on the crystallizer: Stage 1 (one reply) and Stage 2 (two replies).
 
-No training. Stage 1 (--turns 1): the model writes `policy(state)` in a single
-turn from the brief, no probe run. Stage 2 (--turns 2): the model gets a probe
-run (turn 1, arbitrary code against the probe-run env: same hidden limit,
-different batch, limit masked, interface as the brief states it) and then
-writes the controller (turn 2). Turn kinds are positional, as in training.
+No training. The model acts through tool calls (`src.agent_loop`). Stage 1
+(--turns 1): one reply and one tool, `final_run`; the model writes the
+controller from the brief. Stage 2 (--turns 2): two replies and two tools; the
+model may spend the first reply on `probe_run` (its code runs on the probe
+batch: same hidden limit, different batch, limit masked; what it prints comes
+back as the tool response) and the second on `final_run`, or call `final_run`
+straight away. The loop is `src.multi_turn.run_rollout`, the one training
+uses turn by turn.
 
 For every task in the task file (default: the held-out eval set) N samples
-are drawn and scored with the same `score_sample` the trainer uses. Per task
-and overall the script reports success, fast success (within 1.25x the
-time-optimal batch), normalised time (oracle steps / own steps, 0 on failure)
-and reward, next to two hand-written references computed in-process: the
-blind cautious controller (rides at 0.077, safe for every limit in the range)
-and the oracle (knows the limit and holds the end-of-step sigma at it). For
-Stage 2 the probe code and the tool output are kept per sample, so the record
+are drawn. Per task and overall the script reports success, fast success
+(within 1.25x the time-optimal batch), normalised time (oracle steps / own
+steps, 0 on failure) and reward, next to two hand-written references computed
+in-process: the blind cautious controller (rides at 0.077, safe for every
+limit in the range) and the oracle (knows the limit and holds the end-of-step
+sigma at it). Every sample keeps what each reply was (`actions`), the code of
+the first call, the tool response and the full transcript, so the record
 shows what the frozen model does with the probe run.
 
 usage:
@@ -34,21 +37,14 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts" / "seed_tasks"))
 
 from src.dataset import load_jsonl, save_jsonl  # noqa: E402
-from src.hf_generator import (  # noqa: E402
-    generate_code,
-    generate_code_from_messages,
-    load_model_for_generation,
-)
-from src.multi_turn import execute_turn  # noqa: E402
+from src.hf_generator import generate_reply, load_model_for_generation  # noqa: E402
+from src.multi_turn import ACTION_PROBE, run_rollout  # noqa: E402
 from src.provenance import provenance  # noqa: E402
-from src.prompts import compose_turn_message, load_template, render_prompt  # noqa: E402
+from src.prompts import load_template, render_prompt  # noqa: E402
 from src.runner import (  # noqa: E402
     DEFAULT_MAX_STEPS,
     FAST_FACTOR,
     POLICY_DEFAULT_TIMEOUT,
-    error_floor_result,
-    extract_code,
-    score_sample,
     validate_code,
 )
 from crystallizer_env import HiddenParams  # noqa: E402
@@ -85,74 +81,58 @@ def reference_rows(task: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def one_turn_rollout(model, tokenizer, template: str, task: dict, *,
-                     temperature: float, top_p: float, max_tokens: int) -> dict:
-    """Stage 1: a single turn, `policy(state)` straight from the brief."""
-    prompt = render_prompt(template, task, turn_idx=1, total_turns=1)
-    sample = generate_code(model, tokenizer, prompt, temperature=temperature,
-                           top_p=top_p, max_tokens=max_tokens)
-    raw = sample.get("raw_response", "")
-    transcript = [{"role": "user", "content": prompt},
-                  {"role": "assistant", "content": raw}]
-    if not sample["success"]:
-        return {"code": "", "success": False, "error": sample.get("error"),
-                "transcript": transcript}
-    code = sample["code"]
-    ok, err = validate_code(code)
-    return {"code": code if ok else "", "success": ok, "error": None if ok else err,
-            "transcript": transcript}
+def rollout(model, tokenizer, template: str, task: dict, total_turns: int, *,
+            temperature: float, top_p: float, max_tokens: int,
+            timeout: int, max_steps: int) -> dict:
+    """One sample: the agent loop from the brief to the end of the task.
 
-
-def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
-                     temperature: float, top_p: float, max_tokens: int,
-                     timeout: int, max_steps: int) -> dict:
-    """Stage 2: probe run (turn 1, unscored), then the final run's controller (turn 2).
-
-    Mirrors `08_eval.run_n_turn_rollout` for n_turns=2 and keeps the turn-1
-    details: the probe code and the tool output the model read before turn 2.
+    Returns what the row needs: the score of the task, the controller of the
+    final run ("" if there was none or it failed validation), what each reply
+    was, and the first reply's code and tool response.
     """
-    scenario = task["scenarios"][0]
-    prompt_t1 = render_prompt(template, task, turn_idx=1, total_turns=2)
-    t1 = generate_code(model, tokenizer, prompt_t1, temperature=temperature,
-                       top_p=top_p, max_tokens=max_tokens)
-    t1_raw = t1.get("raw_response", "")
-    transcript = [{"role": "user", "content": prompt_t1},
-                  {"role": "assistant", "content": t1_raw}]
-    if not t1["success"]:
-        return {"code": "", "success": False, "error": f"turn 1: {t1.get('error')}",
-                "probed": None, "t1_code": "", "tool_output": "", "transcript": transcript}
+    def generate(messages, tools):
+        return generate_reply(model, tokenizer, messages, tools=tools, temperature=temperature,
+                              top_p=top_p, max_tokens=max_tokens)
 
-    t1_code = extract_code(t1_raw)
-    tool = execute_turn(t1_raw, task, is_last_turn=False, scenario=scenario,
-                        timeout_policy=timeout, timeout_main=timeout, max_steps=max_steps)
-    if tool.ended:
-        # The model wrote the controller straight away: no probe run.
-        valid, verr = validate_code(t1_code)
-        return {"code": t1_code if valid else "", "success": valid,
-                "error": None if valid else f"controller invalid: {verr}",
-                "probed": False, "t1_code": t1_code, "tool_output": "", "transcript": transcript}
-    prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
-    transcript.append({"role": "user", "content": compose_turn_message(prompt_t2, tool.text)})
-    t2 = generate_code_from_messages(model, tokenizer, transcript, temperature=temperature,
-                                     top_p=top_p, max_tokens=max_tokens)
-    t2_raw = t2.get("raw_response", "")
-    transcript.append({"role": "assistant", "content": t2_raw})
-    t2_code = extract_code(t2_raw)
-    valid, verr = validate_code(t2_code)
-    ok = bool(t2["success"]) and valid
-    if ok:
-        error = None
-    elif not t2["success"]:
-        error = f"turn 2: {t2.get('error')}"
+    brief = render_prompt(template, task, total_turns=total_turns)
+    roll = run_rollout(generate, brief, task, total_turns,
+                       timeout_policy=timeout, timeout_main=timeout, max_steps=max_steps)
+    turns = roll["turns"]
+    first = turns[0]
+    if roll["final_run"]:
+        valid, verr = validate_code(roll["code"])
+        error = None if valid else f"controller invalid: {verr}"
     else:
-        error = f"final controller invalid: {verr}"
-    return {"code": t2_code if ok else "", "success": ok, "error": error,
-            "probed": True, "t1_code": t1_code, "tool_output": tool.text, "transcript": transcript}
+        valid, error = False, turns[-1].text
+    return {
+        "score": roll["score"],
+        "code": roll["code"] if valid else "",
+        "success": valid, "error": error,
+        "actions": [t.action for t in turns],
+        "call_errors": [c.error for t in turns for c in t.calls if c.error],
+        # the first reply was a probe run whose output came back to the model
+        "probed": first.action == ACTION_PROBE,
+        "t1_code": first.code,
+        "tool_output": "" if first.ended else first.text,
+        "transcript": roll["transcript"],
+    }
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
+# Names the interaction protocol in every sample and summary, so a reader of
+# the result files can tell these runs from the code-block protocol before them.
+PROTOCOL = "agent-loop"
+
+
+def _count(values) -> dict:
+    out: dict = {}
+    for v in values:
+        out[v] = out.get(v, 0) + 1
+    return dict(sorted(out.items()))
 
 
 def _mean(xs):
@@ -178,7 +158,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--turns", type=int, default=1, choices=[1, 2],
-                        help="1 = Stage 1 (one turn, no probe run), 2 = Stage 2 (probe run, then final run)")
+                        help="1 = Stage 1 (one reply: the final run), 2 = Stage 2 (two replies: a probe run is possible)")
     parser.add_argument("--model-path", default="models/hf_base/iter_000")
     parser.add_argument("--task-file", default="scripts/seed_tasks/crystallizer_eval.jsonl")
     parser.add_argument("--n-samples", type=int, default=8, help="rollouts per task")
@@ -217,23 +197,16 @@ def main() -> None:
         refs = reference_rows(task)
         rows = []
         for i in range(args.n_samples):
-            logger.info(f"{tid}: sample {i + 1}/{args.n_samples} ({stage}-turn)")
-            if stage == 1:
-                roll = one_turn_rollout(model, tokenizer, template, task,
-                                        temperature=args.temperature, top_p=args.top_p,
-                                        max_tokens=args.max_tokens)
-            else:
-                roll = two_turn_rollout(model, tokenizer, template, task,
-                                        temperature=args.temperature, top_p=args.top_p,
-                                        max_tokens=args.max_tokens, timeout=args.timeout,
-                                        max_steps=args.max_steps)
-            if roll["success"] and roll["code"]:
-                score = score_sample(roll["code"], task, timeout=args.timeout,
-                                     max_steps=args.max_steps)
-            else:
-                score = error_floor_result(task, [roll.get("error") or "no valid final policy"])
+            logger.info(f"{tid}: sample {i + 1}/{args.n_samples} ({stage} repl{'y' if stage == 1 else 'ies'})")
+            roll = rollout(model, tokenizer, template, task, stage,
+                           temperature=args.temperature, top_p=args.top_p,
+                           max_tokens=args.max_tokens, timeout=args.timeout,
+                           max_steps=args.max_steps)
+            score = roll["score"]
             row = {
                 "task_id": tid, "sample_id": i, "sigma_max": sc["hidden"]["sigma_max"],
+                "protocol": PROTOCOL, "first_action": roll["actions"][0], "actions": roll["actions"],
+                "call_errors": roll["call_errors"],
                 "generated": bool(roll["success"]), "generation_error": roll.get("error"),
                 "ran": bool(score["ran_successfully"]),
                 "success": bool(score["success_per_scenario"].get(sid, False)),
@@ -253,7 +226,7 @@ def main() -> None:
                                          if roll.get("probed") else None)
             rows.append(row)
             samples_out.append({**row, "transcript": roll.get("transcript", [])})
-            logger.info(f"  success={row['success']} fast={row['fast']} "
+            logger.info(f"  {'+'.join(row['actions'])}: success={row['success']} fast={row['fast']} "
                         f"norm_time={row['norm_time']:.3f} reward={row['reward']:.1f}")
 
         summary = {
@@ -292,6 +265,8 @@ def main() -> None:
         "mean_ride_ratio": _mean_or_none(t["mean_ride_ratio"] for t in per_task),
         "earlier_batches_in_brief": not args.no_earlier_batches,
         "max_tokens": args.max_tokens,
+        "protocol": PROTOCOL,
+        "first_action_counts": _count(r["first_action"] for r in samples_out),
         "blind": {
             "fast_rate": _mean(t["blind"]["fast"] for t in per_task),
             "mean_norm_time": _mean(t["blind"]["norm_time"] for t in per_task),
@@ -318,7 +293,7 @@ def main() -> None:
         json.dump(overall, f, indent=2)
 
     # Table
-    print(f"\n=== Stage {stage}: frozen model, {stage} turn(s), "
+    print(f"\n=== Stage {stage}: frozen model, {stage} repl{'y' if stage == 1 else 'ies'}, "
           f"{len(tasks)} tasks x {args.n_samples} samples ===")
     head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
             f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s} {'ride':>5s}")
@@ -339,6 +314,7 @@ def main() -> None:
     print(f"\noverall: ran {100 * overall['ran_rate']:.1f}%  success {100 * overall['success_rate']:.1f}%  "
           f"fast {100 * overall['fast_rate']:.1f}%  norm-time {overall['mean_norm_time']:.3f}  "
           f"reward {overall['mean_reward']:.1f}  ride {(overall['mean_ride_ratio'] if overall['mean_ride_ratio'] is not None else float('nan')):.2f}")
+    print(f"first reply: {overall['first_action_counts']}")
     if stage == 2:
         err = overall["mean_estimate_error"]
         print(f"probe:   rate {100 * overall['probe_rate']:.1f}%  with an estimate {100 * overall['estimate_rate']:.1f}%  "

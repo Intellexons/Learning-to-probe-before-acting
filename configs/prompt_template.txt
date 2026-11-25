@@ -10,7 +10,7 @@
 
 {action_spec}
 
-{unobserved_section}{turn_section}
-## Format
+{unobserved_section}{run_sections}
+## How you act
 
-{format}
+{act}
