@@ -130,6 +130,20 @@ def _forward_trainer_log_history(wandb_run, run_name: str, k: int, step_offset: 
     return step_offset + max_local_step + 1
 
 
+def should_evaluate(k: int, eval_every: int) -> bool:
+    """Whether the loop evaluates after iteration `k` (0-based).
+
+    `loop.eval_every` is the evaluation period in iterations: 1 evaluates
+    after every iteration, 4 after iterations 3, 7, 11, ... A period longer
+    than the run means the loop never evaluates; each iteration's adapter is
+    saved all the same, so any checkpoint can be evaluated afterwards, on
+    another machine.
+    """
+    if eval_every < 1:
+        raise ValueError(f"loop.eval_every must be >= 1, got {eval_every}")
+    return (k + 1) % eval_every == 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -146,6 +160,8 @@ def main():
     validate_config(cfg)
 
     K = cfg["loop"]["iterations"]
+    eval_every = int(cfg["loop"].get("eval_every", 1))
+    should_evaluate(0, eval_every)  # reject a bad period before any training
     gcs_bucket = cfg.get("paths", {}).get("gcs_bucket")
 
     # Generate run name if not provided
@@ -264,12 +280,19 @@ def main():
                 f"Iteration {k}: Training DPO LoRA adapter",
             )
 
-        # Evaluate (loads base + merges adapters 0..k)
+        # Evaluate (loads base + merges adapters 0..k), every `eval_every`
+        # iterations.
         next_iter = k + 1
-        run_step(
-            f"uv run python scripts/08_eval.py --iter {next_iter} --config {args.config} {run_flag}",
-            f"Iteration {k}: Evaluating model with {next_iter} adapters merged",
-        )
+        if should_evaluate(k, eval_every):
+            run_step(
+                f"uv run python scripts/08_eval.py --iter {next_iter} --config {args.config} {run_flag}",
+                f"Iteration {k}: Evaluating model with {next_iter} adapters merged",
+            )
+        else:
+            logger.info(
+                f"Iteration {k}: no evaluation in the loop (loop.eval_every={eval_every}); "
+                f"the adapter of this iteration is saved"
+            )
 
         logger.info(f"\nIteration {k} complete.")
 

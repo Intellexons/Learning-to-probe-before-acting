@@ -17,6 +17,12 @@ paths:
 loop:
   iterations: 23
   trainer: "grpo_branched"
+  # Evaluation period, in iterations. One evaluation of the 48 held-out tasks
+  # takes about as long as an iteration of training on an A30 (66 min, job
+  # 3458956), and nothing in training reads it. The period is set longer than
+  # the run, so the loop does not evaluate; every iteration saves its adapter,
+  # and the checkpoints are evaluated by separate jobs on another machine.
+  eval_every: 1000
 
 # Branched-rollout (VinePPO-style) sizing. Total trajectories per prompt
 # is g1 * g2. Start with g1=g2=4 (16 trajectories, ~20 LLM forward calls —
