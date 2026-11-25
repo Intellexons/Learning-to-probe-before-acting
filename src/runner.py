@@ -86,6 +86,17 @@ def extract_code(text: str) -> str:
     return text.strip()
 
 
+def defines_policy(code: str) -> bool:
+    """Does the code define `policy` at top level? This is what makes a turn
+    the controller rather than probe code: a reply that defines
+    `def policy(state)` is run on the scored batch and ends the task."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+    return any(isinstance(node, ast.FunctionDef) and node.name == "policy" for node in tree.body)
+
+
 def _check_sandbox_ast(tree: ast.AST) -> str | None:
     """Static checks shared by policy and probe code: no dangerous imports, none
     of the forbidden builtins, no dunder attribute or name access (the routes to
@@ -201,14 +212,20 @@ def _run_episode(seed, max_steps):
     state, _ = env.reset()
     total_reward = 0.0
     steps = 0
+    peak_sigma = None
     for _ in range(max_steps):
         try:
             action = policy(state)
         except Exception as e:
-            return {{"reward": total_reward, "steps": steps, "success": None, "error": f"policy() error: {{e}}"}}
+            return {{"reward": total_reward, "steps": steps, "success": None, "peak_sigma": peak_sigma, "error": f"policy() error: {{e}}"}}
         state, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         steps += 1
+        try:
+            sig = float(state["sigma"])
+            peak_sigma = sig if peak_sigma is None else max(peak_sigma, sig)
+        except Exception:
+            pass
         if terminated:
             break
     # Task outcome, distinct from "code ran without crashing". Envs that
@@ -221,7 +238,7 @@ def _run_episode(seed, max_steps):
             success = None
     else:
         success = None
-    return {{"reward": total_reward, "steps": steps, "success": success, "error": None}}
+    return {{"reward": total_reward, "steps": steps, "success": success, "peak_sigma": peak_sigma, "error": None}}
 
 print(json.dumps(_run_episode({seed}, {max_steps})))
 '''
@@ -451,6 +468,7 @@ def error_floor_result(task: dict, errors: list[str]) -> dict:
         "norm_time_per_scenario": {sid: 0.0 for sid in ids},
         "mean_norm_time": 0.0,
         "steps_per_scenario": {sid: 0 for sid in ids},
+        "peak_sigma_per_scenario": {sid: None for sid in ids},
         "errors": list(errors),
         "ran_successfully": False,
     }
@@ -484,6 +502,7 @@ def score_sample(
     fast_per_scenario: dict = {}
     norm_time_per_scenario: dict = {}
     steps_per_scenario: dict = {}
+    peak_sigma_per_scenario: dict = {}
     errors: list[str] = []
     ran_any = False
     env_class = task.get("env_class", DEFAULT_ENV_CLASS)
@@ -501,6 +520,7 @@ def score_sample(
             fast_per_scenario[sid] = False
             norm_time_per_scenario[sid] = 0.0
             steps_per_scenario[sid] = int(result.get("steps") or 0)
+            peak_sigma_per_scenario[sid] = result.get("peak_sigma")
             errors.append(f"{sid}: {result['error']}")
         else:
             reward_per_scenario[sid] = result["reward"]
@@ -513,6 +533,7 @@ def score_sample(
             fast_per_scenario[sid] = fast
             norm_time_per_scenario[sid] = norm_time
             steps_per_scenario[sid] = steps
+            peak_sigma_per_scenario[sid] = result.get("peak_sigma")
             ran_any = True
 
     n = max(len(scenarios), 1)
@@ -526,6 +547,7 @@ def score_sample(
         "norm_time_per_scenario": norm_time_per_scenario,
         "mean_norm_time": sum(norm_time_per_scenario.values()) / n,
         "steps_per_scenario": steps_per_scenario,
+        "peak_sigma_per_scenario": peak_sigma_per_scenario,
         "errors": errors,
         "ran_successfully": ran_any,
     }

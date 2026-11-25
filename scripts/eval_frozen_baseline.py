@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -118,11 +119,17 @@ def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
                   {"role": "assistant", "content": t1_raw}]
     if not t1["success"]:
         return {"code": "", "success": False, "error": f"turn 1: {t1.get('error')}",
-                "t1_code": "", "tool_output": "", "transcript": transcript}
+                "probed": None, "t1_code": "", "tool_output": "", "transcript": transcript}
 
     t1_code = extract_code(t1_raw)
     tool = execute_turn(t1_raw, task, is_last_turn=False, scenario=scenario,
                         timeout_policy=timeout, timeout_main=timeout, max_steps=max_steps)
+    if tool.ended:
+        # The model wrote the controller straight away: no probe run.
+        valid, verr = validate_code(t1_code)
+        return {"code": t1_code if valid else "", "success": valid,
+                "error": None if valid else f"controller invalid: {verr}",
+                "probed": False, "t1_code": t1_code, "tool_output": "", "transcript": transcript}
     prompt_t2 = render_prompt(template, task, turn_idx=2, total_turns=2)
     transcript.append({"role": "user", "content": compose_turn_message(prompt_t2, tool.text)})
     t2 = generate_code_from_messages(model, tokenizer, transcript, temperature=temperature,
@@ -139,7 +146,7 @@ def two_turn_rollout(model, tokenizer, template: str, task: dict, *,
     else:
         error = f"final controller invalid: {verr}"
     return {"code": t2_code if ok else "", "success": ok, "error": error,
-            "t1_code": t1_code, "tool_output": tool.text, "transcript": transcript}
+            "probed": True, "t1_code": t1_code, "tool_output": tool.text, "transcript": transcript}
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +159,20 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else 0.0
 
 
+def _mean_or_none(xs):
+    xs = [x for x in xs if x is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+def probe_estimate_error(tool_output: str, sigma_max: float):
+    """How far the closest plausible level in the probe output is from the true
+    limit: a diagnostic of what the probe found. Numbers in [0.03, 0.5] count as
+    candidate levels; None if the output holds none."""
+    nums = [float(x) for x in re.findall(r"(?<![\d.])0\.\d{2,6}(?![\d])", tool_output or "")]
+    nums = [x for x in nums if 0.03 <= x <= 0.5]
+    return min(abs(x - sigma_max) for x in nums) if nums else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -162,7 +183,9 @@ def main() -> None:
     parser.add_argument("--n-samples", type=int, default=8, help="rollouts per task")
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--max-tokens", type=int, default=600)
+    parser.add_argument("--max-tokens", type=int, default=1000)
+    parser.add_argument("--no-earlier-batches", action="store_true",
+                        help="drop the 'What you know from earlier batches' section from the brief (ablation)")
     parser.add_argument("--timeout", type=int, default=POLICY_DEFAULT_TIMEOUT)
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--out-dir", default=None, help="default data/frozen/stage<turns>")
@@ -173,6 +196,9 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tasks = load_jsonl(args.task_file)
+    if args.no_earlier_batches:
+        for t in tasks:
+            t.pop("earlier_batches", None)
     template = load_template("configs/prompt_template.txt")
 
     logger.info(f"Loading model from {args.model_path}")
@@ -213,11 +239,16 @@ def main() -> None:
                 "norm_time": float(score["norm_time_per_scenario"].get(sid, 0.0)),
                 "reward": float(score["reward_per_scenario"].get(sid, score["reward_total"])),
                 "steps": int(score["steps_per_scenario"].get(sid, 0)),
+                "peak_sigma": score.get("peak_sigma_per_scenario", {}).get(sid),
                 "errors": score["errors"],
                 "code": roll["code"],
             }
+            row["ride_ratio"] = (row["peak_sigma"] / sc["hidden"]["sigma_max"]
+                                 if row["peak_sigma"] is not None else None)
             if stage == 2:
-                row.update({k: roll.get(k) for k in ("t1_code", "tool_output")})
+                row.update({k: roll.get(k) for k in ("probed", "t1_code", "tool_output")})
+                row["estimate_error"] = (probe_estimate_error(roll.get("tool_output"), sc["hidden"]["sigma_max"])
+                                         if roll.get("probed") else None)
             rows.append(row)
             samples_out.append({**row, "transcript": roll.get("transcript", [])})
             logger.info(f"  success={row['success']} fast={row['fast']} "
@@ -233,8 +264,17 @@ def main() -> None:
             "fast_rate": _mean(r["fast"] for r in rows),
             "mean_norm_time": _mean(r["norm_time"] for r in rows),
             "mean_reward": _mean(r["reward"] for r in rows),
+            "mean_ride_ratio": _mean_or_none(r["ride_ratio"] for r in rows),
             "blind": refs["blind"], "oracle": refs["oracle"],
         }
+        if stage == 2:
+            probed = [r for r in rows if r.get("probed")]
+            with_est = [r for r in probed if r.get("estimate_error") is not None]
+            summary.update({
+                "probe_rate": _mean(bool(r.get("probed")) for r in rows),
+                "estimate_rate": len(with_est) / len(probed) if probed else 0.0,
+                "mean_estimate_error": _mean_or_none(r["estimate_error"] for r in with_est),
+            })
         per_task.append(summary)
 
     overall = {
@@ -246,6 +286,9 @@ def main() -> None:
         "fast_rate": _mean(t["fast_rate"] for t in per_task),
         "mean_norm_time": _mean(t["mean_norm_time"] for t in per_task),
         "mean_reward": _mean(t["mean_reward"] for t in per_task),
+        "mean_ride_ratio": _mean_or_none(t["mean_ride_ratio"] for t in per_task),
+        "earlier_batches_in_brief": not args.no_earlier_batches,
+        "max_tokens": args.max_tokens,
         "blind": {
             "fast_rate": _mean(t["blind"]["fast"] for t in per_task),
             "mean_norm_time": _mean(t["blind"]["norm_time"] for t in per_task),
@@ -258,6 +301,15 @@ def main() -> None:
         },
         "per_task": per_task,
     }
+    if stage == 2:
+        probed = [r for r in samples_out if r.get("probed")]
+        with_est = [r for r in probed if r.get("estimate_error") is not None]
+        overall.update({
+            "probe_rate": _mean(bool(r.get("probed")) for r in samples_out),
+            "estimate_rate": len(with_est) / len(probed) if probed else 0.0,
+            "mean_estimate_error": _mean_or_none(r["estimate_error"] for r in with_est),
+        })
+
     save_jsonl(samples_out, str(out_dir / f"stage{stage}_samples.jsonl"))
     with open(out_dir / f"stage{stage}_summary.json", "w") as f:
         json.dump(overall, f, indent=2)
@@ -266,17 +318,28 @@ def main() -> None:
     print(f"\n=== Stage {stage}: frozen model, {stage} turn(s), "
           f"{len(tasks)} tasks x {args.n_samples} samples ===")
     head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
-            f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s}")
+            f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s} {'ride':>5s}")
+    if stage == 2:
+        head += f" {'probe':>5s} {'est':>5s} {'err':>6s}"
     print(head)
     for t in sorted(per_task, key=lambda t: t["sigma_max"]):
         line = (f"{t['task_id']:24s} {t['sigma_max']:6.3f} {t['oracle_steps']:6d} | "
                 f"{100 * t['blind']['fast']:4.0f}% {t['blind']['norm_time']:5.2f} | "
                 f"{100 * t['ran_rate']:4.0f}% {100 * t['success_rate']:4.0f}% "
-                f"{100 * t['fast_rate']:4.0f}% {t['mean_norm_time']:5.2f} {t['mean_reward']:7.1f}")
+                f"{100 * t['fast_rate']:4.0f}% {t['mean_norm_time']:5.2f} {t['mean_reward']:7.1f} "
+                f"{(t['mean_ride_ratio'] if t['mean_ride_ratio'] is not None else float('nan')):5.2f}")
+        if stage == 2:
+            err = t["mean_estimate_error"]
+            line += (f" {100 * t['probe_rate']:4.0f}% {100 * t['estimate_rate']:4.0f}% "
+                     f"{(err if err is not None else float('nan')):6.3f}")
         print(line)
     print(f"\noverall: ran {100 * overall['ran_rate']:.1f}%  success {100 * overall['success_rate']:.1f}%  "
           f"fast {100 * overall['fast_rate']:.1f}%  norm-time {overall['mean_norm_time']:.3f}  "
-          f"reward {overall['mean_reward']:.1f}")
+          f"reward {overall['mean_reward']:.1f}  ride {(overall['mean_ride_ratio'] if overall['mean_ride_ratio'] is not None else float('nan')):.2f}")
+    if stage == 2:
+        err = overall["mean_estimate_error"]
+        print(f"probe:   rate {100 * overall['probe_rate']:.1f}%  with an estimate {100 * overall['estimate_rate']:.1f}%  "
+              f"mean |estimate - limit| {(err if err is not None else float('nan')):.3f}")
     print(f"blind:   fast {100 * overall['blind']['fast_rate']:.1f}%  "
           f"norm-time {overall['blind']['mean_norm_time']:.3f}  reward {overall['blind']['mean_reward']:.1f}")
     print(f"oracle:  fast {100 * overall['oracle']['fast_rate']:.1f}%  "

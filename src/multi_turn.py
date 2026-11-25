@@ -36,6 +36,7 @@ from src.runner import (
     ERROR_PENALTY_PER_SCENARIO,
     MAIN_DEFAULT_TIMEOUT,
     POLICY_DEFAULT_TIMEOUT,
+    defines_policy,
     extract_code,
     score_main_turn,
     score_policy_turn,
@@ -82,14 +83,17 @@ def _main_tool_text(stdout: str) -> str:
 class ToolResult:
     """Result of executing a single turn's code.
 
-    `mode` is the turn kind by position ("main" for a probe run, "policy" for
-    the final run). `reward` is the policy-reward total (only for "policy").
+    `mode` is the turn kind ("main" for a probe run, "policy" for a
+    controller). `reward` is the policy-reward total (only for "policy").
     `text` is the body of the user-role message that gets fed back to the
-    model as the next-turn prompt context.
+    model as the next-turn prompt context. `ended` is True when the turn was a
+    controller: the scored batch has run and the task is over, whatever the
+    turn index.
     """
     mode: str
     reward: float | None
     text: str
+    ended: bool = False
 
 
 def _score_policy(
@@ -113,20 +117,23 @@ def execute_turn(
 ) -> ToolResult:
     """Run the code from one turn's completion and return a ToolResult.
 
-    The turn position decides what the code is. On the **last turn** it is the
-    controller: validated and scored as the final run, with a validation
-    failure or runtime error at the error floor (see `score_sample`). On every
-    other turn it is probe code: executed in the sandbox against the probe-run
-    env and its stdout returned as the tool text, `reward` None (turn-1 credit
-    comes from the branched V̂_1 estimate, not from the immediate tool result).
-    A probe run that fails to validate or errors still yields a tool message
+    What the code is follows from its content and the turn position. A reply
+    that defines `def policy(state)` is the controller, on any turn: it is
+    validated and scored as the final run (validation failure or runtime
+    error at the error floor, see `score_sample`) and the task ends
+    (`ended=True`). On the **last turn** the reply must be the controller, so
+    it is scored as one whatever it contains. Any other reply before the last
+    turn is probe code: executed in the sandbox against the probe-run env and
+    its stdout returned as the tool text, `reward` None (turn-1 credit comes
+    from the branched V̂_1 estimate, not from the immediate tool result). A
+    probe run that fails to validate or errors still yields a tool message
     ("[main rejected: ...]" / "[main error: ...]"), so the chat stays well-formed.
     """
     code = extract_code(raw_completion)
 
-    if is_last_turn:
+    if is_last_turn or defines_policy(code):
         reward, text = _score_policy(code, task, timeout_policy, max_steps)
-        return ToolResult(mode=MODE_POLICY, reward=reward, text=text)
+        return ToolResult(mode=MODE_POLICY, reward=reward, text=text, ended=True)
 
     # The probe run uses the task's (single) scenario: same hidden parameters
     # as the final run, on the scenario's probe batch.

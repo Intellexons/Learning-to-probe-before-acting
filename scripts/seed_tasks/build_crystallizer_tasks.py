@@ -19,8 +19,9 @@ written into the task file. Each scenario carries
 The env source is embedded verbatim in every task's env_code so the runner can
 execute it in its sandbox; the model never sees it. What the model sees is the
 brief, rendered by src/prompts.py from the task's `intro`, `goal`, `state_spec`,
-`action_spec`, `unobserved`, `probe_spec` and `final_spec`: the goal and the
-physics in words, what is observed, what is not, and what the probe run is for.
+`action_spec`, `unobserved`, `earlier_batches`, `probe_spec` and `final_spec`:
+the goal and the physics in words, what is observed, what is not, the quench
+logs of two earlier batches, and what the probe run is for.
 No equation, no source. Run this whenever the env source or the text changes.
 """
 from __future__ import annotations
@@ -83,6 +84,32 @@ UNOBSERVED = (
     "depends on it."
 )
 
+# What the model knows from earlier batches: the logs of two quenched batches of
+# other material lots, with different shower levels, as the batch record would
+# hold them. Data, not code: they show what a shower looks like in the readings
+# and that the level varies between batches; they say nothing about this task's
+# level. Seeds outside every task file.
+EARLIER_BATCH_LOGS = [("A", 777, 0.11), ("B", 778, 0.21)]
+
+
+def quench_log(label: str, seed: int, sigma_max: float) -> str:
+    env = CrystallizerEnv(seed=seed, hidden=HiddenParams(sigma_max=sigma_max))
+    s, _ = env.reset()
+    lines = [f"Batch {label}, quenched at full cooling from {s['T']:.1f} degC (target {s['T_target']:.1f} degC):",
+             "step    T      sigma"]
+    for _ in range(CFG.max_steps):
+        s, _, done, _, _ = env.step(-1.0)
+        mark = "   showered -> batch ruined" if env.showered else ""
+        lines.append(f"{int(s['t']):4d}  {s['T']:5.1f}  {s['sigma']:.3f}{mark}")
+        if done:
+            break
+    return "\n".join(lines)
+
+
+EARLIER_BATCHES = "\n\n".join(quench_log(*spec) for spec in EARLIER_BATCH_LOGS) + (
+    "\n\nEach batch showers at its own level; this batch's level is unknown."
+)
+
 PROBE_SPEC = (
     "the same crystallizer, with the same sigma_max, on a different batch (its own start "
     "temperature, target and seed loading)"
@@ -124,6 +151,7 @@ def task_entry(task_id_prefix: str, seed: int, sigma_max: float | None = None) -
         "state_spec": STATE_SPEC,
         "action_spec": ACTION_SPEC,
         "unobserved": UNOBSERVED,
+        "earlier_batches": EARLIER_BATCHES,
         "probe_spec": PROBE_SPEC,
         "final_spec": FINAL_SPEC,
         "scenarios": [

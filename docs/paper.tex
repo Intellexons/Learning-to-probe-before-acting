@@ -37,7 +37,7 @@ We instantiate the method on a two-turn code-policy task in which a first-turn p
 
 Modern outcome-reward RL for LLMs samples a completion, scores it, and broadcasts a single advantage across every generated token. When the completion is one block of text, that approximation is at worst coarse: each token influences later tokens only by extending the prefix. When the trajectory contains environment probes, scratchpad programs, tool calls, and drafts whose effects reach later turns through external state, it can be wrong. An early turn that gathers information is rewarded only if the final answer happens to succeed; a final answer that succeeds despite an uninformative early turn rewards the early turn anyway. The trajectory's structure --- which turns matter, and through what channel --- is invisible to the gradient.
 
-We study this in code-policy generation. The agent is given an environment interface, interacts for two chat turns, and emits a Python \texttt{policy(state)} function. Only this final policy is executed and scored; the deployed object is a program, not an LLM queried online. The first turn is free: scratchpad arithmetic, environment probes, draft policies. Useful first-turn behavior receives credit only through its effect on the second turn. The setting borrows the executable-artifact framing of FunSearch and AlphaEvolve and the broader motivation of AI-Scientist-style discovery loops~\cite{romera-paredes2024funsearch,novikov2025alphaevolve,lu2024aiscientist}, but isolates the credit-assignment problem inside one prompt rather than building a full discovery system.
+We study this in code-policy generation. The agent is briefed on a process in words, may spend one chat turn on a probe run against a throwaway batch, and emits a Python \texttt{policy(state)} function. Only this controller is executed and scored; the deployed object is a program, not an LLM queried online. The probe run is optional and free, and nothing it does is rewarded directly: useful first-turn behavior receives credit only through its effect on the controller that follows. The setting borrows the executable-artifact framing of FunSearch and AlphaEvolve and the broader motivation of AI-Scientist-style discovery loops~\cite{romera-paredes2024funsearch,novikov2025alphaevolve,lu2024aiscientist}, but isolates the credit-assignment problem inside one prompt rather than building a full discovery system.
 
 The concrete instance is probe-and-adapt control of a seeded batch crystallizer. The policy sets the cooling rate; the fastest safe recipe rides just below a hidden metastable limit, and crossing the limit ruins the batch. The limit leaves no trace in the readings until it is crossed, so a first-turn program can find it only by crossing it on a throwaway batch; a second-turn policy can then ride just below it. If the final policy succeeds, a flat reward cannot say whether the probe was informative or whether the second-turn code happened to work without it.
 
@@ -97,38 +97,40 @@ the physics in words, the readings it will see, the quantity it will not
 (the metastable limit, with its range), what the probe run is for and
 what it offers (\texttt{env.reset()}, \texttt{env.step(a)}, the end flag
 and the failure reason), how the final run is scored, and the reply
-format. It receives neither the environment's source nor any equation;
-the brief is reproduced in Appendix~\ref{app:brief}. Turn kinds are
-positional. Every turn but the last is a \emph{probe run}: one block of
-Python, fenced or bare, executed in a sandbox against a probe-run
-environment with the same hidden parameters as the scored batch on a
-different batch; the tool returns its stdout, truncated to 2000
-characters, and nothing else. The environment's source runs in a
-private namespace and the probe-run object is a whitelist, so the probe
-code has no class to instantiate and no constants to read: what it
-learns about the batch, it learns by running it. The last turn is the
-\emph{final run}: it must define \texttt{def policy(state)}, which the
-tool executes on the scored batch from its first step and rewards. A
-final turn that does not validate is floored; a probe run that does not
-parse yields a textual rejection and no reward of its own, since its
-credit comes only through the controllers that follow it. A length-$N$
+format. It also receives the batch record: the full-cooling logs of two
+earlier batches of other lots, which showered at different levels. They
+are data, not code: they show what a shower looks like in the readings
+and that the level varies from batch to batch, and say nothing about
+this batch's level. It receives neither the environment's source nor any
+equation; the brief is reproduced in Appendix~\ref{app:brief}. The probe
+run is optional, and what a reply is follows from its content. A reply
+that defines \texttt{def policy(state)} is the \emph{controller}: the
+tool executes it on the scored batch from its first step, rewards it,
+and the task ends, on whatever turn it comes. Any other block of Python,
+fenced or bare, is a \emph{probe run}: it is executed in a sandbox
+against a probe-run environment with the same hidden parameters as the
+scored batch on a different batch, and the tool returns its stdout,
+truncated to 2000 characters, and nothing else. The environment's
+source runs in a private namespace and the probe-run object is a
+whitelist, so the probe code has no class to instantiate and no
+constants to read: what it learns about the batch, it learns by running
+it. The last turn must be the controller. A controller that does not
+validate is floored; a probe run that does not parse yields a textual
+rejection and no reward of its own, since its credit comes only through
+the controller that follows it. Whether to probe at all is therefore the
+model's first decision, and the probe rate is a quantity we measure. A length-$N$
 trajectory is
 \(
   \tau = (s,\, y^{(1)},\, m^{(1)},\, \dots,\, y^{(N-1)},\, m^{(N-1)},\, y^{(N)}),
 \)
 with completions $y^{(n)}$ alternating with tool messages $m^{(n)}$,
 and $R(\tau) = R(\text{code in }y^{(N)})$ the only scalar reward.
-The remainder of the paper specializes to $N{=}2$: one probe run
-followed by the controller. Generalizing the rollout, advantages, and
+The remainder of the paper specializes to $N{=}2$: at most one probe
+run, then the controller. Generalizing the rollout, advantages, and
 loss decomposition below to $N{>}2$ is straightforward (see
 \S\ref{sec:limitations}).
 
-An earlier version of the protocol (used for the runs of 2026-10-25,
-\S\ref{sec:plan}) shipped the environment's source in the prompt, a
-mode directive on the first line of each block and a format example.
-The frozen model copied the example's probe in 83 of 96 cases and,
-without it, built crystallizers of its own with limits of its own
-choosing; the brief replaced it on 2026-10-26.
+An earlier protocol-style prompt, with the environment's source, a mode directive on each block and a format example, was replaced by the brief on 2026-10-26; the diary records why.
 
 \subsection{Token-summed clipped surrogate}
 
@@ -415,15 +417,13 @@ The experiments form a ladder of stages. Each stage asks one question and is a g
 \textbf{Question.} Can the base model write a working cooling policy from the prompt alone, and how fast is it without a probe run?
 \textbf{Protocol.} $N$ one-turn samples per held-out task, scored exactly as in training; fast success, normalised time and reward next to the blind and oracle references.
 \textbf{Decides.} The floor of the study. A rate near the blind reference shows the headroom a probe run can buy. A model that cannot write a running controller at all is a prompt problem to fix before anything else.
-\textbf{Status.} Done on 2026-10-25 under the protocol prompt (12 held-out batches, 8 samples each, temperature 0.8). \textbf{Result.} The code runs in 99\% of samples, but the batch is ruined in 79 of 96: the model takes the top of the stated range as its target (the constant 0.25 appears in 92 of 96 policies) and cools too hard from the first step. Success 12.5\%, fast success 1\%, normalised time 0.075, mean reward $-61$, against $+89$ for the blind cautious controller and $+107$ for the oracle. The frozen model sits far below the blind reference, so the headroom is the whole scale: caution first, then the probe. \textbf{Under the brief} (2026-10-26, changed environment, rewards not comparable): 68 of 96 controllers are valid, 28 are cut off by the 600-token budget mid-code; 14 slow successes, no fast one, 27 ruined after a median of 23 steps, 24 timeouts, most of them controllers that never cool. Mean reward $-160$ with the floor at $-300$, against $+27$ blind and $+82$ oracle.
+\textbf{Status.} Done under the brief on 2026-10-26 (12 held-out batches, 8 samples each, temperature 0.8, 600-token turns). \textbf{Result.} 68 of 96 controllers are valid; 28 are cut off by the token budget mid-code. 14 slow successes, no fast one, 27 ruined after a median of 23 steps, 24 timeouts, most of them controllers that never cool. Mean reward $-160$ with the floor at $-300$, against $+27$ for the blind cautious controller and $+82$ for the oracle. The frozen model sits far below the blind reference, so the headroom is the whole scale: caution first, then the probe. Runs under an earlier protocol-style prompt are recorded in the diary (2026-10-25) and are not comparable. \textbf{With the optional probe, the batch record and 1000-token turns} (2026-10-26): \emph{to be filled.}
 
 \subsection{Stage 2: the frozen model with a probe run (arm B)}
 \textbf{Question.} Does the frozen model already write a useful probe run and use its output?
-\textbf{Protocol.} As Stage~1, with two turns under the training protocol: the final turn must be a policy, and an early policy does not end the rollout. The turn-1 mode and code are kept per sample, so the record shows which probe the model writes: none, a slow creep, or a fast one.
+\textbf{Protocol.} As Stage~1, with two turns under the training protocol: a first reply that defines the controller ends the task without a probe; any other reply is a probe run, and the second reply must be the controller. The probe code and its output are kept per sample, so the record shows whether the model probes, what it measures, what it reads off, and whether the controller uses it (probe rate, estimate error, ride ratio).
 \textbf{Decides.} If arm B is already near the informed ceiling, RL has nothing left to teach about probing and the environment must get harder before any training run (hide the growth constant too, or add a jacket lag). If arm B is near arm A, the gap between them is the training target.
-\textbf{Status.} Done on 2026-10-25 under the protocol prompt. \textbf{Result.} The model used the probe run in all 96 samples, but 83 probe runs only reset the environment and print its initial state, the shape of the prompt's format example; 9 step a few times at full cooling, on an environment they construct themselves with a random limit; none brackets the limit. The final policies paste numbers from the probe batch into code that runs on a different batch (93 of 96) and all contain the constant 0.25: success 3 of 96, no fast success, normalised time 0.013, mean reward $-76$, below arm A. The probe run is a ritual, not an experiment, and the risk that the frozen model already writes the one-batch probe did not materialise. \textbf{Under the brief} (2026-10-26): the ritual is gone. 87 of 96 probes step the environment, 61 cool at the jacket limit, 92 check the end flag or the failure reason, 30 run several batches, none builds its own crystallizer; the experiment has the right shape in nearly every sample. But 44 probes are cut off by the 600-token budget before they can run, 22 crash on reading the end flag as a state key, and only 5 outputs hold the limit to within $0.01$. Only 7 controllers reuse a number the probe printed; when the probe failed, several invented its results. Success 24 of 96 (2 fast, the fast one on invented results), 24 ruined after a median of 20 steps at full cooling towards a setpoint of $0.18$--$0.20$ with no margin, 33 timeouts, mean reward $-116$ against $+27$ blind and $+82$ oracle. The training target is now concrete: get the number out of the probe and leave a margin.
-
-\textbf{Example ablation} (2026-10-26, config key \texttt{prompt.example}). The same protocol with three versions of the prompt's format example, 96 samples each: the original (\emph{full}: reset the environment and print the state), the same two blocks with a comment in place of the probe code (\emph{format}), and no example (\emph{none}). Full replicated the result above: 80 of 96 probe runs copy the example. None removed the probe run altogether: the model answered with a policy in all 96 first turns, 59 of them without the required fence, so they were rejected. Format removed the copying (31 of 96) and produced experiments: 61 probe runs say they will find the limit and 44 step an environment in a loop and check the end flag, but every one constructs a fresh crystallizer instead of using the one provided, 39 with a limit of the model's own choosing, so the experiment can only confirm a guess; 5 heat instead of cool; and no final policy takes a number from its probe output, 92 of 96 keep the constant 0.25 (success 7 of 96, fast 1). The probes are three times longer and 17 ran out of the 600-token turn budget. The format example is the default from here on. What the frozen model lacks is not the idea of an experiment but two facts about the given environment: that the probe must run on it rather than on a copy, and that the number found there must become the setpoint.
+\textbf{Status.} Done under the brief on 2026-10-26 (mandatory probe run, 600-token turns, no batch record). \textbf{Result.} The probe run is an experiment of the right shape in nearly every sample: 87 of 96 probes step the environment, 61 cool at the jacket limit, 92 check the end flag or the failure reason, 30 run several batches, none builds its own crystallizer. But 44 are cut off by the 600-token budget before they run, 22 crash on reading the end flag as a state key, and only 5 outputs hold the limit to within $0.01$. Only 7 controllers reuse a number the probe printed; when the probe failed, several invented its results. Success 24 of 96 (2 fast, the fast one on invented results), 24 ruined after a median of 20 steps at full cooling towards a setpoint of $0.18$--$0.20$ with no margin, 33 timeouts, mean reward $-116$ against $+27$ blind and $+82$ oracle. The training target is concrete: get the number out of the probe and leave a margin. The earlier protocol-style prompt, under which the probe run was a ritual copied from a format example, is recorded in the diary (2026-10-25 and 2026-10-26) and was replaced by the brief. \textbf{With the optional probe, the batch record and 1000-token turns} (2026-10-26): \emph{to be filled.}
 
 \subsection{Stage 3: single-turn GRPO (arm C)}
 \textbf{Question.} Does RL fine-tuning help without a probe run?
@@ -446,6 +446,10 @@ The experiments form a ladder of stages. Each stage asks one question and is a g
 \textbf{Status.} Pending. \textbf{Result.} \emph{To be filled.}
 
 Stages 3 to 6 share the protocol of \S\ref{sec:eval}: at least three seeds per arm, median and interquartile range at the best checkpoint, curves against gradient steps and against wall-clock, and a paired Wilcoxon test with effect size.
+
+\subsection{Planned extensions: how much of the brief is needed}
+\label{sec:plan-extensions}
+The brief tells the model that the shower level is not observable, gives the range it lies in, shows the batch record, and offers the probe run. That is the premise of the study, chosen because without it the frozen model never probed (0 of 96 first turns, \S\ref{sec:protocol}). How much of the premise is needed is a question in its own right, and the measurements that answer it are the probe rate (does the model choose to probe), the estimate error (what the probe found against the true limit) and the ride ratio (how close to the limit the controller then rides). Three frozen-model arms remove what the model is told, in order, each a Stage~2 run: (1) drop the paragraph on what is not observed, keeping the logs and the range: the two logs still show different shower levels, so the model has to infer that this batch's level is unknown from data; (2) drop the stated range as well, so the logs alone carry the prior; (3) drop the logs, leaving the physics in words, the version that produced no probes. A step that keeps the probe rate above about ten percent is trainable, and a training arm on it supports the stronger claim that the model learns that it needs to probe; a step that drives the rate to zero marks where the premise has to stay. A second extension gives the probe run a price, a sacrificed batch, so that whether to probe becomes a judgement rather than a habit: at a cost of 20 against a gain of about 53 probing still pays, at 60 it does not, and varying the cost across tasks asks the model to tell the two apart. Both extensions are prompt and reward changes only; the code supports the first already.
 
 \section{Evaluating the per-turn credit assignment}
 \label{sec:eval}
@@ -506,6 +510,8 @@ The implementation and experiments use $N=2$. Extending to more turns is concept
 The method also assumes deterministic rewards given the seed. In stochastic environments, the same estimator applies but $G_2$ must grow to separate prefix quality from environment noise. The current implementation uses $\beta=0$ and \texttt{num\_iterations}$=1$; KL penalties and cached old log-probabilities can be supported by storing the same quantities per turn segment.
 
 A natural memory/variance extension is token subsampling within a turn. Since each turn uses one scalar advantage broadcast across its tokens, subsampling tokens is an unbiased estimator of the same token-summed gradient when $N_{\rm tok}$ counts only kept positions. We leave uniform and asymmetric subsampling variants to future work.
+
+The brief states the premise that something is unobservable and that a probe run is available, so the study measures how well the model probes and acts on the result, not whether it discovers that probing is needed; the extensions of \S\ref{sec:plan-extensions} remove that premise in steps and attach a price to the probe, and are the path to the stronger claim. The brief also states the prior range of the hidden limit, which the frozen model anchors on; whether a stated prior helps or hurts a trained model is part of the same ladder.
 
 \section{Conclusion}
 
@@ -633,9 +639,54 @@ state, and nothing in the readings depends on it until it is crossed. It is
 fixed for this task and lies between 0.08 and 0.25. How fast you can safely
 cool depends on it.
 
-## Your probe run (this message)
+## What you know from earlier batches
 
-Before the scored batch you get a probe run on the same crystallizer, with the
+Batch A, quenched at full cooling from 57.7 degC (target 20.4 degC):
+step    T      sigma
+   1   57.2  0.010
+   2   56.7  0.020
+   3   56.2  0.030
+   4   55.7  0.041
+   5   55.2  0.051
+   6   54.7  0.061
+   7   54.2  0.072
+   8   53.7  0.082
+   9   53.2  0.092
+  10   52.7  0.103
+  11   52.2  0.113   showered -> batch ruined
+
+Batch B, quenched at full cooling from 63.3 degC (target 24.3 degC):
+step    T      sigma
+   1   62.8  0.010
+   2   62.3  0.019
+   3   61.8  0.029
+   4   61.3  0.039
+   5   60.8  0.048
+   6   60.3  0.058
+   7   59.8  0.068
+   8   59.3  0.078
+   9   58.8  0.088
+  10   58.3  0.097
+  11   57.8  0.107
+  12   57.3  0.117
+  13   56.8  0.126
+  14   56.3  0.136
+  15   55.8  0.145
+  16   55.3  0.154
+  17   54.8  0.163
+  18   54.3  0.172
+  19   53.8  0.180
+  20   53.3  0.188
+  21   52.8  0.196
+  22   52.3  0.203
+  23   51.8  0.210
+  24   51.3  0.216   showered -> batch ruined
+
+Each batch showers at its own level; this batch's level is unknown.
+
+## Your probe run (optional, this message)
+
+Before the scored batch you may run a probe on the same crystallizer, with the
 same sigma_max, on a different batch (its own start temperature, target and
 seed loading). It is the object `env`, already constructed:
 
@@ -648,26 +699,33 @@ seed loading). It is the object `env`, already constructed:
     env.showered, env.done                                   # True once the
         batch has showered / has ended
 
-Drive it however you like, as many batches as you want, within 30 seconds of
-compute. Print what you learn: only your printed output reaches the next step,
-and output beyond 2000 characters is cut off. The controller you write
-afterwards has no access to `env`, to this code or to its variables.
+`done` is returned by `env.step`; `env.done`, `env.showered` and
+`env.failure_reason` are attributes of `env`, not keys of `state`. Drive it
+however you like, as many batches as you want, within 30 seconds of compute.
+Print what you learn: only your printed output reaches the next step, and
+output beyond 2000 characters is cut off. The controller you write afterwards
+has no access to `env`, to this code or to its variables.
 
-## The final run (the last message)
+## The final run (your controller)
 
-You will receive your printed output and then write `def policy(state)`, the
-controller. It runs on the scored batch from its first step. It is called once
-per step with the state dict and returns the action. It may keep state between
-calls (module-level variables are fine); it runs on one batch. Import only
-`math` and `random`. Read only the state keys listed above.
+Whether now or after a probe run, the controller is `def policy(state)`; after
+a probe run you will receive your printed output first. It runs on the scored
+batch from its first step. It is called once per step with the state dict and
+returns the action. It may keep state between calls (module-level variables
+are fine); it runs on one batch. Import only `math` and `random`. Read only
+the state keys listed above.
 
 ## Format
 
-Reply with one Python code block and nothing else: the probe code.
+Reply with one Python code block and nothing else. If it defines `def
+policy(state)`, it is your controller: the scored batch runs with it and the
+task ends. Anything else is probe code: it runs on `env`, its printed output
+comes back to you, and you then write the controller.
 \end{verbatim}
 \end{scriptsize}
 
-The second user message: the probe run's output, then the instruction for the final run.
+The second user message, after a probe run: its printed output, then the instruction for the
+final run.
 
 \begin{scriptsize}
 \begin{verbatim}

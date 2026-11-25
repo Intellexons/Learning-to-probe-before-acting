@@ -315,3 +315,28 @@ def test_dtypes_and_devices():
     assert out["turn2_advantages"].dtype == torch.float32
     for t in out.values():
         assert t.device == DEVICE
+
+
+def test_segment_tensors_with_a_controller_leaf_in_turn_one():
+    """A controller written in turn 1 is a leaf: no tool message, no turn-2
+    tokens. Its rows must still build (integer ids, an empty but well-typed
+    turn-2 segment) next to ordinary two-turn rows."""
+    import torch
+    from src.branched_trainer import _Trajectory, build_segment_tensors
+
+    two_turn = _Trajectory(i=0, j=0, prompt_ids=[1, 2, 3], turn1_ids=[4, 5], tool_ids=[6], turn2_ids=[7, 8, 9],
+                           turn1_text="p", turn2_text="c", turn1_mode="main", turn2_mode="policy",
+                           reward=1.0, a_turn1=0.5, a_turn2=-0.5)
+    leaf = _Trajectory(i=1, j=0, prompt_ids=[1, 2, 3], turn1_ids=[10, 11, 12], tool_ids=[], turn2_ids=[],
+                       turn1_text="c", turn2_text="", turn1_mode="policy", turn2_mode="none",
+                       reward=2.0, a_turn1=1.5, a_turn2=0.0)
+    out = build_segment_tensors([two_turn, leaf], torch.device("cpu"), pad_id=0)
+    assert out["turn1_completion_ids"].dtype == torch.long and out["turn2_completion_ids"].dtype == torch.long
+    assert out["turn2_completion_ids"].shape == (2, 3)
+    assert out["turn2_completion_mask"][1].sum() == 0 and out["turn2_completion_mask"][0].sum() == 3
+    assert out["turn1_completion_mask"][1].sum() == 3
+    assert torch.allclose(out["turn1_advantages"][1], torch.tensor([1.5, 1.5, 1.5]))
+    assert out["pass2_prompt_mask"][1].sum() == 6  # prompt + turn1, no tool message
+    # all leaves: the turn-2 segment has width 0 and the loss pass must skip it
+    out = build_segment_tensors([leaf], torch.device("cpu"), pad_id=0)
+    assert out["turn2_completion_ids"].shape == (1, 0)

@@ -8,19 +8,19 @@
 # Sizing vs configs/loop_grpo_branched_crystallizer.yaml:
 #   loop.iterations         23  ->  1   (one full outer cycle is enough)
 #   branched.g1,g2           4  ->  2   (16 trajectories/step -> 4)
-#   branched.max_turn_tokens 400 -> 400 (matched to the full config)
+#   branched.max_turn_tokens 1000 (matched to the full config)
 #   train tasks              24 ->  2   (one limit near each end of the range)
 #   per_device_train_batch   16 ->  4   (= g1 * g2)
 #
 # Net: max_steps/outer = 2, total = 2 inner steps + 1 eval pass.
 #
-# Why max_turn_tokens=400: matches the full config so the smoke exercises
-# realistic generation lengths. T<<400 leaves the model hitting
+# Why max_turn_tokens=1000: matches the full config so the smoke exercises
+# realistic generation lengths. T<<1000 leaves the model hitting
 # EOS-by-truncation mid-statement, and with
 # `mask_truncated_completions: true` those rollouts get masked out of the
 # loss — so we'd be testing pipeline plumbing without any learning signal.
 # Memory at smoke sizing: B=pdtbs=4 (one branched tree per step), so the
-# LM-head gradient tensor is ≈ 4 × 400 × |V| × 4B ≈ 0.97 GiB.
+# LM-head gradient tensor is ≈ 4 × 1000 × |V| × 4B ≈ 2.4 GiB.
 
 base_model:
   # Documentation only — the actual model id is read by 00_setup_env.sh
@@ -41,7 +41,7 @@ loop:
 branched:
   g1: 2
   g2: 2
-  max_turn_tokens: 600
+  max_turn_tokens: 1000
 
 grpo:
   num_iterations: 1
@@ -58,7 +58,7 @@ generation:
   n_samples_per_task: 4
   temperature: 0.8
   top_p: 0.95
-  max_tokens: 600
+  max_tokens: 1000
 
 # Same horizon as the full config: a slow but safe batch needs close to the
 # env's 600-step limit, and the smoke must not cut it short.

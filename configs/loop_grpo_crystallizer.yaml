@@ -40,7 +40,7 @@ generation:
   n_samples_per_task: 8
   temperature: 0.8
   top_p: 0.95
-  max_tokens: 600
+  max_tokens: 1000
 
 # One batch is at most 600 steps of 20 s (EnvConfig.max_steps).
 scoring:

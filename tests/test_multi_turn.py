@@ -186,6 +186,18 @@ def test_execute_turn_last_turn_junk_is_at_the_floor():
     assert tr.reward == error_floor_reward(1)
 
 
+def test_execute_turn_controller_on_a_non_last_turn_is_scored_and_ends_the_task():
+    task = _tiny_task_one_scenario()
+    tr = execute_turn("```python\ndef policy(state):\n    return (1.0, 0.0)\n```", task,
+                      is_last_turn=False, timeout_policy=10, max_steps=10)
+    assert tr.mode == "policy" and tr.ended is True
+    assert tr.reward == pytest.approx(-5.0, abs=0.01)
+    # a helper that is not called `policy` is still probe code
+    tr = execute_turn("def helper(x):\n    return x\nprint(helper(2))\n", task,
+                      is_last_turn=False, timeout_policy=10, max_steps=10)
+    assert tr.mode == "main" and tr.ended is False and "2" in tr.text
+
+
 def test_execute_turn_probe_turn_returns_stdout_no_reward():
     task = _tiny_task_one_scenario()
     completion = """```python
@@ -194,7 +206,7 @@ print('answer:', math.sqrt(16))
 ```
 """
     tr = execute_turn(completion, task, is_last_turn=False, timeout_policy=10, max_steps=10)
-    assert tr.mode == "main"
+    assert tr.mode == "main" and tr.ended is False
     assert tr.reward is None
     assert "answer:" in tr.text and "4.0" in tr.text
 
