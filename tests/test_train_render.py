@@ -66,3 +66,15 @@ def test_a_checkpoint_is_named_in_the_model_column():
     assert frozen_render.model_label({"model": "models/hf_base/iter_000"}) == "iter_000"
     assert frozen_render.model_label({"model": "models/hf_base/iter_000",
                                       "checkpoint": {"n_adapters": 3, "lora_dir": "/x"}}) == "checkpoint 3"
+
+
+def test_the_pace_table_separates_ruined_from_successful_batches():
+    rows = [{"ran": True, "success": False, "steps": 10, "reward": -83.0},
+            {"ran": True, "success": False, "steps": 30, "reward": -89.0},
+            {"ran": True, "success": True, "steps": 100, "reward": 90.0},
+            {"ran": True, "success": False, "steps": 600, "reward": -260.0},   # ran out of steps: a timeout
+            {"ran": False, "success": False, "steps": 0, "reward": -300.0}]    # did not run: an error
+    row = frozen_render.pace_row({"rows": rows})
+    assert (row["ruined"], row["success"]) == (2, 1)
+    assert row["ruined_steps"] == 20 and row["ruined_reward"] == pytest.approx(-86.0)
+    assert row["success_steps"] == 100 and row["success_reward"] == pytest.approx(90.0)

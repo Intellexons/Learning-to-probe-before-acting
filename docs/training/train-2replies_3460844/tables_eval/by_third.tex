@@ -3,14 +3,16 @@
 % ckpt1: docs/training/train-2replies_3460844/eval-train-2replies-ckpt01_3461865, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3461865, model models/hf_base/iter_000 with the first 1 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
 % ckpt2: docs/training/train-2replies_3460844/eval-train-2replies-ckpt02_3462056, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3462056, model models/hf_base/iter_000 with the first 2 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
 % ckpt3: docs/training/train-2replies_3460844/eval-train-2replies-ckpt03_3462280, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3462280, model models/hf_base/iter_000 with the first 3 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
-\begin{tabular}{@{}llrrrrrrrrrrrr@{}}
+% ckpt5: docs/training/train-2replies_3460844/eval-train-2replies-ckpt05_3470604, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3470604, model models/hf_base/iter_000 with the first 5 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
+% ckpt23: docs/training/train-2replies_3460844/eval-train-2replies-ckpt23_3470605, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3470605, model models/hf_base/iter_000 with the first 23 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
+\begin{tabular}{@{}llrrrrrrrrrrrrrrrrrr@{}}
 \toprule
- & & \multicolumn{3}{c}{frozen} & \multicolumn{3}{c}{ckpt1} & \multicolumn{3}{c}{ckpt2} & \multicolumn{3}{c}{ckpt3} \\
-\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-11}\cmidrule(lr){12-14}
-Third & $n$ & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward \\
+ & & \multicolumn{3}{c}{frozen} & \multicolumn{3}{c}{ckpt1} & \multicolumn{3}{c}{ckpt2} & \multicolumn{3}{c}{ckpt3} & \multicolumn{3}{c}{ckpt5} & \multicolumn{3}{c}{ckpt23} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-11}\cmidrule(lr){12-14}\cmidrule(lr){15-17}\cmidrule(lr){18-20}
+Third & $n$ & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward & Fast & Succ. & Reward \\
 \midrule
-low & 64 & 0.0\% & 3.1\% & $-$235.3 & 0.0\% & 6.2\% & $-$121.4 & 0.0\% & 1.6\% & $-$104.0 & 0.0\% & 1.6\% & $-$101.7 \\
-middle & 64 & 0.0\% & 6.2\% & $-$243.9 & 0.0\% & 23.4\% & $-$85.2 & 1.6\% & 14.1\% & $-$96.5 & 0.0\% & 6.2\% & $-$103.4 \\
-high & 64 & 3.1\% & 18.8\% & $-$216.0 & 3.1\% & 37.5\% & $-$91.0 & 6.2\% & 59.4\% & $-$27.9 & 7.8\% & 59.4\% & $-$37.5 \\
+low & 64 & 0.0\% & 3.1\% & $-$235.3 & 0.0\% & 6.2\% & $-$121.4 & 0.0\% & 1.6\% & $-$104.0 & 0.0\% & 1.6\% & $-$101.7 & 0.0\% & 0.0\% & $-$87.2 & 0.0\% & 0.0\% & $-$85.4 \\
+middle & 64 & 0.0\% & 6.2\% & $-$243.9 & 0.0\% & 23.4\% & $-$85.2 & 1.6\% & 14.1\% & $-$96.5 & 0.0\% & 6.2\% & $-$103.4 & 3.1\% & 10.9\% & $-$81.5 & 0.0\% & 0.0\% & $-$84.8 \\
+high & 64 & 3.1\% & 18.8\% & $-$216.0 & 3.1\% & 37.5\% & $-$91.0 & 6.2\% & 59.4\% & $-$27.9 & 7.8\% & 59.4\% & $-$37.5 & 12.5\% & 87.5\% & 42.8 & 75.0\% & 76.6\% & 47.0 \\
 \bottomrule
 \end{tabular}

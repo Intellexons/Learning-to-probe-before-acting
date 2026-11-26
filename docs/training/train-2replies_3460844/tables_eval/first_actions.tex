@@ -3,24 +3,26 @@
 % ckpt1: docs/training/train-2replies_3460844/eval-train-2replies-ckpt01_3461865, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3461865, model models/hf_base/iter_000 with the first 1 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
 % ckpt2: docs/training/train-2replies_3460844/eval-train-2replies-ckpt02_3462056, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3462056, model models/hf_base/iter_000 with the first 2 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
 % ckpt3: docs/training/train-2replies_3460844/eval-train-2replies-ckpt03_3462280, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3462280, model models/hf_base/iter_000 with the first 3 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
-\begin{tabular}{@{}lrrrr@{}}
+% ckpt5: docs/training/train-2replies_3460844/eval-train-2replies-ckpt05_3470604, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3470604, model models/hf_base/iter_000 with the first 5 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
+% ckpt23: docs/training/train-2replies_3460844/eval-train-2replies-ckpt23_3470605, code commit b80823043e95e55a41fd518734c287892743d7c4, Slurm job 3470605, model models/hf_base/iter_000 with the first 23 adapter(s) of /sc/home/nima.hamidisiboni/work/lora4vr-train-654ad1b/models/lora/train-2replies_3460844 merged in, 48 tasks x 4 samples, max_tokens 1000
+\begin{tabular}{@{}lrrrrrr@{}}
 \toprule
- & frozen & ckpt1 & ckpt2 & ckpt3 \\
+ & frozen & ckpt1 & ckpt2 & ckpt3 & ckpt5 & ckpt23 \\
 \midrule
-samples & 192 & 192 & 192 & 192 \\
+samples & 192 & 192 & 192 & 192 & 192 & 192 \\
 \midrule
-\multicolumn{5}{@{}l}{the first reply is} \\
-\quad a final run (the controller straight away) & 19 & 22 & 167 & 140 \\
-\quad a probe run, whose output came back & 171 & 163 & 21 & 52 \\
-\quad \quad the probe code ran without an error & 107 & 145 & 18 & 38 \\
-\quad \quad the output holds a number within 0.01 of the limit & 11 & 30 & 3 & 3 \\
-\quad \quad the task went on to a final run & 38 & 140 & 14 & 36 \\
-\quad a tool call that could not be acted on & 2 & 7 & 4 & 0 \\
-\quad \quad cut off by the token budget & 2 & 6 & 4 & 0 \\
-\quad \quad not valid JSON & 0 & 1 & 0 & 0 \\
-\quad \quad other (unknown tool, no code) & 0 & 0 & 0 & 0 \\
+\multicolumn{7}{@{}l}{the first reply is} \\
+\quad a final run (the controller straight away) & 19 & 22 & 167 & 140 & 191 & 192 \\
+\quad a probe run, whose output came back & 171 & 163 & 21 & 52 & 1 & 0 \\
+\quad \quad the probe code ran without an error & 107 & 145 & 18 & 38 & 1 & 0 \\
+\quad \quad the output holds a number within 0.01 of the limit & 11 & 30 & 3 & 3 & 1 & 0 \\
+\quad \quad the task went on to a final run & 38 & 140 & 14 & 36 & 1 & 0 \\
+\quad a tool call that could not be acted on & 2 & 7 & 4 & 0 & 0 & 0 \\
+\quad \quad cut off by the token budget & 2 & 6 & 4 & 0 & 0 & 0 \\
+\quad \quad not valid JSON & 0 & 1 & 0 & 0 & 0 & 0 \\
+\quad \quad other (unknown tool, no code) & 0 & 0 & 0 & 0 & 0 & 0 \\
 \midrule
-samples that ended without a final run & 134 & 25 & 9 & 16 \\
-samples in which some reply mentions the reply budget & 0 & 0 & 0 & 0 \\
+samples that ended without a final run & 134 & 25 & 9 & 16 & 0 & 0 \\
+samples in which some reply mentions the reply budget & 0 & 0 & 0 & 0 & 0 & 0 \\
 \bottomrule
 \end{tabular}

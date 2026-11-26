@@ -22,7 +22,8 @@ the probes that found the limit to the controller and the final run,
 answered.tex splits each run into the samples that ended without a final run
 and the rest, first_reply_value.tex gives the mean outcome of a sample by what
 its first reply was (the quantity a per-turn baseline credits the first reply
-with), and the error table gains the ways a task can end without a
+with), pace.tex gives how soon the ruined batches were ruined and how fast
+the successful ones were, and the error table gains the ways a task can end without a
 final run. The first version of the loop
 (`"protocol": "agent-loop"`, superseded the day it ran) had a second tool,
 `final_run`; its samples render through the same code, with two more rows.
@@ -698,6 +699,17 @@ def first_reply_rows(run: dict) -> list[dict]:
     return out
 
 
+def pace_row(run: dict) -> dict:
+    """How soon the ruined batches of a run were ruined and how fast the successful ones were,
+    with the mean reward of each. The reward takes 0.3 per step off either outcome, so a batch
+    ruined sooner scores higher than one ruined later."""
+    ruined = [r for r in run["rows"] if outcome(r) == "ruined"]
+    won = [r for r in run["rows"] if outcome(r) == "success"]
+    med = lambda rs: statistics.median(r["steps"] for r in rs) if rs else None  # noqa: E731
+    return {"ruined": len(ruined), "ruined_steps": med(ruined), "ruined_reward": mean(r["reward"] for r in ruined),
+            "success": len(won), "success_steps": med(won), "success_reward": mean(r["reward"] for r in won)}
+
+
 def model_label(summary: dict) -> str:
     """The model column: the base model's directory name, or `checkpoint N` for the model after
     N iterations of a training run."""
@@ -867,6 +879,19 @@ def main() -> None:
                              f"{pct(row['success'])} & {pct(row['fast'])} & {num(row['reward'])} \\\\")
         lines += ["\\bottomrule", "\\end{tabular}"]
         write("first_reply_value.tex", lines)
+        n_fragments += 1
+
+        # how soon the ruined batches were ruined, how fast the successful ones were
+        lines = ["\\begin{tabular}{@{}lrrrrrr@{}}", "\\toprule",
+                 " & \\multicolumn{3}{c}{Ruined batches} & \\multicolumn{3}{c}{Successful batches} \\\\",
+                 "\\cmidrule(lr){2-4}\\cmidrule(l){5-7}",
+                 "Run & $n$ & Median steps & Reward & $n$ & Median steps & Reward \\\\", "\\midrule"]
+        for label, r in loop_runs:
+            row = pace_row(r)
+            lines.append(f"{tex(label)} & {row['ruined']} & {num(row['ruined_steps'])} & {num(row['ruined_reward'])} & "
+                         f"{row['success']} & {num(row['success_steps'])} & {num(row['success_reward'])} \\\\")
+        lines += ["\\bottomrule", "\\end{tabular}"]
+        write("pace.tex", lines)
         n_fragments += 1
 
         # every probe run, by how it ended

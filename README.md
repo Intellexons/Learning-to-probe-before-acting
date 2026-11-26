@@ -104,7 +104,8 @@ paper, ending with our branched method with per-turn baselines. A first training
 Stage 6 (two replies, reward only, one seed; `docs/training_two_replies.tex`, 2026-11-26) learned to
 answer after its probe within one iteration and dropped the probe within four: at that starting point a
 first reply that probes is worth less than one that answers, because a probe does not yet lead to a
-better controller. Stages 3 to 5 have not been run. The full plan with pass criteria and status
+better controller. It ended as a gamble on a high limit (fast there, ruined elsewhere; -41 on the
+held-out tasks against +38 for the cautious blind controller). Stages 3 to 5 have not been run. The full plan with pass criteria and status
 is the "Experiment plan" section of `docs/paper.tex`; the evidence is in
 `docs/findings.tex`.
 
