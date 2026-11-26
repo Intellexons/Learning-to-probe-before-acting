@@ -100,7 +100,12 @@ with a probe run) were re-run under the agent loop on 2026-11-25
 (`docs/stage12_agent_loop.tex`): the frozen model probes in about nine first
 replies of ten, but with two replies it usually probes again and never
 answers, and its probes rarely return the limit. Stages 3 to 6 are the trained arms C to F of the
-paper, ending with our branched method with per-turn baselines. The full plan with pass criteria and status
+paper, ending with our branched method with per-turn baselines. A first training run at the sizing of
+Stage 6 (two replies, reward only, one seed; `docs/training_two_replies.tex`, 2026-11-26) learned to
+answer after its probe within one iteration and dropped the probe within four: at that starting point a
+first reply that probes is worth less than one that answers, because a probe does not yet lead to a
+better controller. It ended as a gamble on a high limit (fast there, ruined elsewhere; -41 on the
+held-out tasks against +38 for the cautious blind controller). Stages 3 to 5 have not been run. The full plan with pass criteria and status
 is the "Experiment plan" section of `docs/paper.tex`; the evidence is in
 `docs/findings.tex`.
 
@@ -154,11 +159,12 @@ directly. It chains training and eval subprocesses for each outer iteration.
 | Script | Purpose |
 |---|---|
 | `00_setup_env.sh` | One-time bootstrap: dependencies, base model, directory layout |
-| `09_run_loop.py` | Outer loop, train + eval per iteration, orchestrator W&B run |
+| `09_run_loop.py` | Outer loop: one training subprocess per iteration, and an evaluation every `loop.eval_every` iterations (the branched config sets the period past the run: checkpoints are evaluated by separate jobs) |
 | `05_train_grpo_branched.py` | One iteration's training subprocess (the current trainer) |
 | `08_eval.py` | One iteration's eval subprocess (multi-turn rollouts) |
-| `eval_frozen_baseline.py` | Stages 1 and 2: frozen model through the agent loop, with one reply (the final answer) or more (`probe_run` on offer), next to the blind and oracle references |
-| `frozen_render.py` | Renders the frozen-model results into the LaTeX tables of the Stage 1 and 2 documents |
+| `eval_frozen_baseline.py` | Stages 1 and 2: frozen model through the agent loop, with one reply (the final answer) or more (`probe_run` on offer), next to the blind and oracle references. With `--lora-dir` and `--n-adapters N`: the same evaluation for the model after N iterations of a training run |
+| `frozen_render.py` | Renders the frozen-model results, and the evaluations of checkpoints, into LaTeX tables |
+| `train_render.py` | Renders the per-step record of a training run (and a timing run) into LaTeX tables |
 | `render_brief_appendix.py` | Renders the paper's appendix (the prompt as the model receives it) from the code that builds it |
 | `stage0_gate.py` | Stage 0: the environment gate. Blind vs informed hand-written controllers (G1, G2) and the hand-written probe run + controller through the real execution path (G3); references on the held-out tasks |
 | `stage0_solution.py` | The hand-written probe variants and controller, from the brief alone (readings only), used by the gate's G3 |
@@ -197,6 +203,10 @@ docs/
   methodology.tex
   stage0/<job>/                   # Stage 0 results: summary, JSON with provenance, job log, rendered tables
   stage0_gate.tex                 # Stage 0 protocol and results, every table with its commit and job
+  stage12_agent_loop.tex          # Stages 0 to 2 under the agent loop
+  training_two_replies.tex        # the first training run (two replies, reward only) and its checkpoints
+  training/<run>/                 # a training run: its record (train/), the evaluations of its checkpoints, rendered tables
+  train_timing/<job>/             # the timing run of the trainer
 models/
   hf_base/iter_000/               # base weights downloaded by 00_setup_env.sh
   lora/<run>/iter_NNN/            # LoRA adapter per outer iteration
@@ -208,7 +218,8 @@ scripts/
   09_run_loop.py                  # orchestrator
   01..03_*.py, 04_train_dpo_lora.py   # DPO pipeline (not used in the study)
   eval_frozen_baseline.py         # Stages 1-2: frozen model through the agent loop
-  frozen_render.py                # renders the Stage 1-2 result files into LaTeX tables
+  frozen_render.py                # renders the Stage 1-2 result files, and checkpoint evaluations, into LaTeX tables
+  train_render.py                 # renders the record of a training run into LaTeX tables
   render_brief_appendix.py        # renders the paper's prompt appendix from the code
   stage0_gate.py                  # Stage 0: the environment gate (search, G1-G3, references)
   stage0_solution.py              # the hand-written probe run and controller from the brief alone

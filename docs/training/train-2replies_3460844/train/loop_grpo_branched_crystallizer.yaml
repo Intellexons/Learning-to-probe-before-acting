@@ -1,0 +1,100 @@
+# Branched-rollout multi-turn GRPO on the crystallizer (Stage 6, arm F).
+# Turn 1 is the probe run (unscored), turn 2 the final run (scored).
+
+base_model:
+  # Documentation only — the actual model id is read by 00_setup_env.sh
+  # from the LORA4VR_BASE_MODEL env var (default Qwen/Qwen3-4B-Instruct-2507).
+  # Keep this in sync with the env-var default.
+  hf: "Qwen/Qwen3-4B-Instruct-2507"
+
+paths:
+  hf_base_dir: "models/hf_base"
+  lora_dir: "models/lora"
+  rollouts_dir: "data/rollouts"
+  tasks_train: "scripts/seed_tasks/crystallizer_train.jsonl"
+  tasks_eval: "scripts/seed_tasks/crystallizer_eval.jsonl"
+
+loop:
+  iterations: 23
+  trainer: "grpo_branched"
+  # Evaluation period, in iterations. One evaluation of the 48 held-out tasks
+  # takes about as long as an iteration of training on an A30 (66 min, job
+  # 3458956), and nothing in training reads it. The period is set longer than
+  # the run, so the loop does not evaluate; every iteration saves its adapter,
+  # and the checkpoints are evaluated by separate jobs on another machine.
+  eval_every: 1000
+
+# Branched-rollout (VinePPO-style) sizing. Total trajectories per prompt
+# is g1 * g2. Start with g1=g2=4 (16 trajectories, ~20 LLM forward calls —
+# saves ~40% compute over flat G=16, N=2).
+branched:
+  g1: 4
+  g2: 4
+  max_turn_tokens: 1000
+  # Split each per-turn forward+backward along the row dim. Shrinks the
+  # (B, K, |V|) logits/gradient tensors linearly with this value while
+  # keeping the gradient identity (sum of chunk losses == single-pass loss
+  # because num_items_in_batch is the global token count, passed unchanged
+  # to every chunk).
+  #
+  # Required on 24 GB L4: at mb=4 the per-chunk forward holds
+  # (4, 1000, |V|) ≈ 2.4 GiB instead of the 9.7 GiB tensor plus its
+  # transient duplicate at the turn-2 `logits / temperature` allocation.
+  # Cost: 4x LM-head kernel launches per turn (~5% wall-clock).
+  #
+  # On A100-40GB+ this is unnecessary — leave it set since the gradient
+  # is identical regardless of chunk size.
+  loss_micro_batch_size: 4
+
+grpo:
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  beta: 0.0
+  loss_type: "dapo"
+  temperature: 0.8
+  top_p: 0.95
+  mask_truncated_completions: true
+  log_completions: true
+
+generation:
+  n_samples_per_task: 8
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 1000
+
+# One batch is at most 600 steps of 20 s (EnvConfig.max_steps); the runner
+# must not cut a slow but safe batch short.
+scoring:
+  timeout_seconds: 30
+  max_steps: 600
+
+# End-of-iteration eval (scripts/08_eval.py). Multi-turn rollouts match
+# the training protocol so the W&B curves reflect what the trainer is
+# actually optimising. The last `# MODE: policy` block in the rollout is
+# the one scored; a final-turn `# MODE: main` is rejected.
+eval:
+  n_turns: 2
+
+training:
+  learning_rate: 1.0e-4
+  per_device_train_batch_size: 16    # = g1 * g2 — one prompt's worth of trajectories per step
+  gradient_accumulation_steps: 1
+  num_train_epochs: 1
+  warmup_ratio: 0.1
+  bf16: true
+  gradient_checkpointing: true
+  logging_steps: 1
+  report_to: "wandb"
+  wandb_project: "lora4vr"
+
+lora:
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  task_type: "CAUSAL_LM"

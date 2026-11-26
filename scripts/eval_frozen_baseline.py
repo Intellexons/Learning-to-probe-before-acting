@@ -1,4 +1,5 @@
-"""Frozen-model references on the crystallizer: Stage 1 (one reply) and Stage 2 (two replies).
+"""Frozen-model references on the crystallizer: Stage 1 (one reply) and Stage 2 (two replies);
+and the same evaluation for a checkpoint of a training run.
 
 No training. The model acts as a tool-using agent (`src.agent_loop`). Stage 1
 (--turns 1): one reply and no tool; the reply is the final answer, the
@@ -19,10 +20,18 @@ sigma at it). Every sample keeps what each reply was (`actions`), the code of
 the first call, the tool response and the full transcript, so the record
 shows what the frozen model does with the probe run.
 
+With --lora-dir and --n-adapters the model is a checkpoint of a training run:
+the base model with the run's first N adapters merged in (`src.checkpoints`),
+which is the model after N iterations of training. Everything else is the
+same, so a checkpoint's numbers stand next to the frozen model's. The summary
+names the adapters and the hash of their weights.
+
 usage:
   uv run python scripts/eval_frozen_baseline.py --turns 1 --n-samples 8
   uv run python scripts/eval_frozen_baseline.py --turns 2 --n-samples 8
   uv run python scripts/eval_frozen_baseline.py --turns 4 --n-samples 8   # Stage 2 with four replies
+  uv run python scripts/eval_frozen_baseline.py --turns 2 --n-samples 4 \
+      --lora-dir models/lora/<run> --n-adapters 4                          # the model after 4 iterations
 """
 from __future__ import annotations
 
@@ -38,6 +47,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts" / "seed_tasks"))
 
 from src.dataset import load_jsonl, save_jsonl  # noqa: E402
+from src.checkpoints import checkpoint_adapters  # noqa: E402
 from src.hf_generator import generate_reply, load_model_for_generation  # noqa: E402
 from src.multi_turn import ACTION_PROBE, run_rollout  # noqa: E402
 from src.provenance import provenance  # noqa: E402
@@ -163,6 +173,12 @@ def main() -> None:
                         help="the number of replies the model has: 1 = Stage 1 (the final answer only), "
                              "2 = Stage 2 (a probe run is possible); more than 2 is Stage 2 with a longer budget")
     parser.add_argument("--model-path", default="models/hf_base/iter_000")
+    parser.add_argument("--lora-dir", default=None,
+                        help="the adapter directory of a training run (holds iter_000, iter_001, ...); "
+                             "with --n-adapters the model evaluated is a checkpoint of that run")
+    parser.add_argument("--n-adapters", type=int, default=0,
+                        help="the checkpoint: how many of the run's adapters are merged into the base model, "
+                             "in order; N is the model after N iterations of training, 0 the frozen model")
     parser.add_argument("--task-file", default="scripts/seed_tasks/crystallizer_eval.jsonl")
     parser.add_argument("--n-samples", type=int, default=8, help="rollouts per task")
     parser.add_argument("--temperature", type=float, default=0.8)
@@ -180,6 +196,12 @@ def main() -> None:
 
     if args.turns < 1:
         parser.error("--turns must be at least 1")
+    if args.n_adapters < 0:
+        parser.error("--n-adapters must be at least 0")
+    if args.n_adapters > 0 and not args.lora_dir:
+        parser.error("--n-adapters needs --lora-dir, the adapter directory of the training run")
+    # Before anything is loaded: a checkpoint that is not on disk in full is an error, not a wait.
+    adapters = checkpoint_adapters(args.lora_dir, args.n_adapters) if args.n_adapters else []
     turns = args.turns
     stage = 1 if turns == 1 else 2   # the stage is whether a probe run is on offer; `turns` is the reply budget
     out_dir = Path(args.out_dir or f"data/frozen/stage{stage}")
@@ -191,9 +213,11 @@ def main() -> None:
             t.pop("earlier_batches", None)
     template = load_template("configs/prompt_template.txt")
 
-    logger.info(f"Loading model from {args.model_path}")
+    logger.info(f"Loading model from {args.model_path}"
+                + (f", checkpoint {len(adapters)} of {args.lora_dir}" if adapters else ""))
     model, tokenizer = load_model_for_generation(
-        base_model_path=args.model_path, lora_base=None, iter_num=0,
+        base_model_path=args.model_path,
+        lora_base=args.lora_dir if adapters else None, iter_num=len(adapters),
     )
 
     per_task = []
@@ -263,6 +287,10 @@ def main() -> None:
     overall = {
         "provenance": prov,
         "stage": stage, "turns": turns, "model": args.model_path,
+        # None for the frozen model; for a checkpoint, the run's adapter directory, how many of its
+        # adapters were merged (the model after that many iterations) and the hash of each one's weights.
+        "checkpoint": ({"lora_dir": str(Path(args.lora_dir).resolve()), "n_adapters": len(adapters),
+                        "adapters": adapters} if adapters else None),
         "task_file": args.task_file, "n_tasks": len(tasks), "n_samples_per_task": args.n_samples,
         "generated_rate": _mean(t["generated_rate"] for t in per_task),
         "ran_rate": _mean(t["ran_rate"] for t in per_task),
@@ -302,7 +330,8 @@ def main() -> None:
         json.dump(overall, f, indent=2)
 
     # Table
-    print(f"\n=== Stage {stage}: frozen model, {turns} repl{'y' if turns == 1 else 'ies'}, "
+    which = f"checkpoint {len(adapters)} of {args.lora_dir}" if adapters else "frozen model"
+    print(f"\n=== Stage {stage}: {which}, {turns} repl{'y' if turns == 1 else 'ies'}, "
           f"{len(tasks)} tasks x {args.n_samples} samples ===")
     head = (f"{'task':24s} {'smax':>6s} {'oracle':>6s} | {'blind':>5s} {'norm':>5s} | "
             f"{'ran':>5s} {'succ':>5s} {'fast':>5s} {'norm':>5s} {'reward':>7s} {'ride':>5s}")

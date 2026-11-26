@@ -69,7 +69,7 @@ Stage & What it asks & Status & Entry \\
 3  & Single-turn GRPO (arm C) & pending & \\
 4  & Flat multi-turn training, StarPO (arm D) & pending & \\
 5  & Branched rollouts, flat advantage (arm E) & pending & \\
-6  & Branched rollouts, per-turn baselines, ours (arm F) & pending & \\
+6  & Branched rollouts, per-turn baselines, ours (arm F) & a first run at this sizing, one seed, ahead of Stages 3 to 5: the model learns to answer after its probe in the first iteration and drops the probe by the fourth, and ends as a gamble on a high limit; held-out reward $-99$, $-76$, $-81$, $-42$, $-41$ at checkpoints 1, 2, 3, 5 and 23 against $-232$ frozen and $+38$ for the cautious blind reference; not yet a result for the arm & 2026-11-26, the first training run \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1695,6 +1695,152 @@ Job 3459459 on gx17v1. Results in
 \texttt{docs/stage12\_agent/tables\_left/}, rendered by the command in the
 Reproduce section of \texttt{docs/stage12\_agent\_loop.tex}, whose section
 \emph{A check on the reply budget} is the full account.
+\end{sloppypar}
+
+% ============================================================
+\section*{2026-11-26 \quad The first training run: the model learns to answer,
+then stops probing}
+% ============================================================
+
+\commit{654ad1b} $\cdot$ \textit{\texttt{Qwen3-4B-Instruct-2507}, LoRA rank 16;
+one A30 job of 12.4 hours for the training, five A30 jobs of 40 to 80
+minutes for the checkpoints}
+
+\subsection*{Setup / motivation}
+
+The user chose two replies for training, as they are, and reward as the only
+signal. The open question of the entry above was whether reward teaches a
+two-reply model to answer on its second reply before it teaches it not to
+probe. The run: the branched trainer at the sizing of
+\texttt{configs/loop\_grpo\_branched\_crystallizer.yaml} (4 first replies,
+4 second replies each, 1000 tokens per reply, 23 iterations of 24 steps, one
+task per step, default seed). Three things were set up for it. A timing run
+of four steps (job 3460791, \commit{50df616}) measured 229~s per step and at
+most 17.8~GiB on an A30. The loop's evaluation after every iteration, about
+as long as the iteration itself and read by nothing in training, was given a
+period (\texttt{loop.eval\_every}, set longer than the run). And a
+checkpoint, the model after $k$ iterations, is evaluated by a separate job
+exactly as the frozen model is in Stage~2
+(\texttt{scripts/eval\_frozen\_baseline.py --lora-dir \ldots\ --n-adapters
+$k$}, \texttt{jobs/hpi/eval\_checkpoint.sbatch}, \commit{b808230}). The
+training job ran from its own code directory on the cluster, so that later
+pushes could not change it.
+
+\subsection*{Results}
+
+The training record, on the training tasks (job 3460844). A first reply
+that is followed by a second is a probe run, or rarely a tool call that
+could not be acted on:
+
+% provenance: the header of the fragment names the result files, commit and job
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{training/train-2replies_3460844/tables/phases.tex}}
+\end{center}
+
+The frozen model and checkpoints 1, 2, 3, 5 and 23 on the 48 held-out tasks,
+4 samples each (jobs 3458956, 3461865, 3462056, 3462280, 3470604, 3470605):
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\resizebox{\linewidth}{!}{\input{training/train-2replies_3460844/tables_eval/comparison.tex}}
+\end{center}
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\input{training/train-2replies_3460844/tables_eval/sequences.tex}
+\end{center}
+
+After one iteration 140 of 192 samples are a probe followed by a final
+answer, against 38 for the frozen model, and the first reply is still a
+probe run in 163. After two iterations the first reply is a probe run in 21
+samples and the final answer in 167. From the fifth iteration on about one
+first reply in a hundred is followed by a second; at checkpoint~5 one
+held-out sample of 192 probes, at checkpoint~23 none. The run finished in 12.4
+hours, not the 35 the timing run implied, because a conversation without a
+probe is one reply. What a first reply is worth, by its kind:
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\resizebox{0.9\linewidth}{!}{\input{training/train-2replies_3460844/tables_eval/first_reply_value.tex}}
+\end{center}
+
+How soon the ruined batches were ruined, and how fast the successful ones
+were:
+
+% provenance: the header of the fragment names the result directories, commits and jobs
+\begin{center}\small
+\input{training/train-2replies_3460844/tables_eval/pace.tex}
+\end{center}
+
+\subsection*{Interpretation}
+
+The run answered the open question twice. Reward taught the model to answer
+after its probe within 24 steps, and its probes got better on the way (30
+of 163 print a number within 0.01 of the limit, against 11 of 171). Then it
+taught the model not to probe. The table above is why: the method credits a
+first reply with its mean outcome less the mean over the tree, and a probe
+is worth 174 points less than a direct answer for the frozen model and
+still 54 less after the first iteration. Part of what is left is the probe
+that still ends without an answer (23 of 163). The rest is that a probe does
+not yet buy a better controller: samples that probe and then answer score
+$-71.9$, those that answer straight away $-51.0$; and of the 15 controllers
+at checkpoint~1 that carry a number the probe found, 13 ruin the batch by a
+shower, 9 of them holding a number above the true limit. The model rides at
+the level where the probe batch showered, with no margin.
+
+Without the probe the run trains toward a gamble. The ruined batches rise
+to 113, 117, 116 and 142 of 192 at checkpoints 2, 3, 5 and 23. Checkpoint~23
+succeeds in $76.6\%$ of the samples whose limit lies in the high third of
+its range, nearly always fast, and in none of the other two thirds: $+47.0$
+in the high third, about $-85$ elsewhere, $-41.1$ overall, level with
+checkpoint~5 ($-41.9$). The fall of the reward on the training tasks after
+iteration~5 ($-26.6$, then about $-55$) is therefore not seen on the
+held-out tasks. The run ends 80 points below the cautious blind controller
+($+38.4$). The last table suggests why it goes there: the reward takes 0.3
+per step off a ruined batch as off a successful one, so among the samples of
+a low-limit task, all ruined, the one ruined sooner scores higher, and among
+those of a high-limit task the faster success does. Both push toward cooling
+harder, and once no sample of a step is cautious the comparison within the
+step has nothing else to offer.
+
+It is one seed and one learning rate, with a schedule that restarts every
+iteration, and it is not a result for arm F. It shows that at this starting
+point the reward gives no pull toward the probe, and what is missing for it
+to do so: a controller that keeps a margin under a measured limit.
+
+\subsection*{Hypotheses / next steps}
+
+\begin{enumerate}[nosep]
+\item Decide whether a ruined batch should score higher the sooner it is
+  ruined ($-80$ less 0.3 per step). It is a question about the environment
+  and the user's call; nothing was changed.
+\item Count, from the Stage~2 samples, how often the frozen model writes a
+  controller after a probe that rides safely under the measured limit and
+  beats the blind ones. That number says how many conversations per step a
+  reward-only run would need to see the probe pay.
+\item A longer reply budget removes the probe that ends without an answer;
+  it does not make a probe worth more than a direct answer. Whether to
+  change the budget is the user's call.
+\item Stage~3 (one reply, no tool) would say whether the gamble of
+  iterations 5 to 23 is that of training without a probe run.
+\end{enumerate}
+
+\subsection*{Open questions}
+
+How to keep the probe until it pays, with the reward as the only signal and
+the brief untouched.
+
+\subsection*{Reproduce}
+
+\begin{sloppypar}
+\commit{654ad1b} for the training run (job 3460844), \commit{b808230} for
+the evaluations of the checkpoints, \commit{50df616} for the timing run.
+The commands, the result directories and the full account are in
+\texttt{docs/training\_two\_replies.tex}; the record of the run is
+\texttt{docs/training/train-2replies\_3460844/train/}, the evaluations are
+beside it, and the tables are rendered by \texttt{scripts/train\_render.py}
+and \texttt{scripts/frozen\_render.py}. The 23 adapters are on the cluster,
+\texttt{\textasciitilde/work/lora4vr-train-654ad1b/models/lora/train-2replies\_3460844/}.
 \end{sloppypar}
 
 \end{document}
